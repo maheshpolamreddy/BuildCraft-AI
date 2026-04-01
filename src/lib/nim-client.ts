@@ -6,8 +6,7 @@ const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
 
 /**
  * Per-request timeout (ms) for the OpenAI-compatible client.
- * Default 270s — long enough for large completions; cap keeps under typical 300s serverless limits.
- * Set AI_UPSTREAM_TIMEOUT_MS in env to tune (e.g. 180000 on slow networks).
+ * Local default ~270s; on Vercel (without VERCEL_AI_FULL_CHAIN) defaults to 8s to avoid 504s — override with AI_UPSTREAM_TIMEOUT_MS.
  */
 /**
  * OpenRouter requires a real site URL in HTTP-Referer. On Vercel, NEXT_PUBLIC_APP_URL is often unset
@@ -26,12 +25,27 @@ function openRouterHttpReferer(): string {
   return "http://localhost:3000";
 }
 
-const UPSTREAM_TIMEOUT_MS = Math.min(
-  285_000,
-  Math.max(45_000, Number(process.env.AI_UPSTREAM_TIMEOUT_MS) || 270_000),
-);
+/**
+ * On Vercel (unless VERCEL_AI_FULL_CHAIN=1), default to a short upstream timeout so
+ * serverless invocations return before the platform 504 (Hobby ~10s). Override with AI_UPSTREAM_TIMEOUT_MS.
+ */
+function getDefaultUpstreamTimeoutMs(): number {
+  const fromEnv = Number(process.env.AI_UPSTREAM_TIMEOUT_MS);
+  if (Number.isFinite(fromEnv) && fromEnv >= 4_000) {
+    return Math.min(285_000, fromEnv);
+  }
+  if (process.env.VERCEL === "1" && process.env.VERCEL_AI_FULL_CHAIN !== "1") {
+    return 8_000;
+  }
+  return Math.min(285_000, Math.max(45_000, 270_000));
+}
 
 function openAiMaxRetries(): number {
+  if (process.env.VERCEL === "1" && process.env.VERCEL_AI_FULL_CHAIN !== "1") {
+    const n = Number(process.env.AI_OPENAI_MAX_RETRIES);
+    if (Number.isFinite(n) && n >= 0 && n <= 4) return Math.floor(n);
+    return 0;
+  }
   const n = Number(process.env.AI_OPENAI_MAX_RETRIES);
   if (Number.isFinite(n) && n >= 0 && n <= 4) return Math.floor(n);
   return 2;
@@ -49,7 +63,7 @@ function makeOpenAIClient(
   defaultHeaders?: Record<string, string>,
   opts?: OpenAIClientOpts,
 ): OpenAI {
-  const timeout = opts?.timeoutMs ?? UPSTREAM_TIMEOUT_MS;
+  const timeout = opts?.timeoutMs ?? getDefaultUpstreamTimeoutMs();
   const maxRetries = opts?.maxRetries ?? openAiMaxRetries();
   return new OpenAI({
     apiKey,
@@ -112,6 +126,14 @@ export function getNimClientForStitch(): OpenAI | null {
   const raw = Number(process.env.STITCH_UPSTREAM_TIMEOUT_MS);
   const t = Number.isFinite(raw) && raw >= 20_000 && raw <= 58_000 ? raw : 52_000;
   return makeNimClientFromEnv({ timeoutMs: t, maxRetries: 0 });
+}
+
+/**
+ * Short-timeout primary client for Vercel compact AI chain (avoids 504 when Hobby ~10s cap applies).
+ */
+export function getNimClientForServerlessCompact(timeoutMs: number, maxRetries = 0): OpenAI | null {
+  const t = Number.isFinite(timeoutMs) && timeoutMs >= 4_000 && timeoutMs <= 30_000 ? timeoutMs : 9_000;
+  return makeNimClientFromEnv({ timeoutMs: t, maxRetries });
 }
 
 /**

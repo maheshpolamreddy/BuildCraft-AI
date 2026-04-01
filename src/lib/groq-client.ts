@@ -8,17 +8,22 @@ function groqTimeoutMs(): number {
   return 90_000;
 }
 
+type GroqClientOpts = {
+  timeoutMs?: number;
+  maxRetries?: number;
+};
+
 /**
  * Groq OpenAI-compatible client (fast fallback for UI JSON and Stitch HTML).
  */
-export function getGroqClient(): OpenAI | null {
+export function getGroqClient(opts?: GroqClientOpts): OpenAI | null {
   const key = process.env.GROQ_API_KEY?.trim();
   if (!key) return null;
   return new OpenAI({
     apiKey: key,
     baseURL: GROQ_BASE_URL,
-    timeout: groqTimeoutMs(),
-    maxRetries: 1,
+    timeout: opts?.timeoutMs ?? groqTimeoutMs(),
+    maxRetries: opts?.maxRetries ?? 1,
   });
 }
 

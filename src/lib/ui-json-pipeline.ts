@@ -14,6 +14,7 @@ import { pickTemplateByKeywords, getTemplateByKind } from "@/lib/ui-templates";
 import { enhanceUIScreenJson } from "@/lib/ui-quality-enhancer";
 import { MAX_TOKENS_GENERATE_UI_JSON } from "@/lib/ai-limits";
 import { LANDING_SECTION_TYPES } from "@/lib/ui-json-normalize";
+import { useCompactServerlessAiChain } from "@/lib/vercel-ai";
 
 export const SYSTEM_UI_JSON = `You are a senior product designer for BuildCraft. Convert the user's request into structured UI JSON only. The UI will render as a premium dark glassmorphism interface with gradients — think Stripe / Vercel / Linear quality.
 
@@ -75,6 +76,8 @@ export async function runUiJsonPipeline(input: {
   projectIdea: string;
 }): Promise<{ ui: UIScreenJson; meta: UiJsonPipelineMeta }> {
   const userMsg = buildUserMessageUiJson(input.prompt, input.projectName, input.projectIdea);
+  const compact = useCompactServerlessAiChain();
+  const maxTokUi = compact ? Math.min(MAX_TOKENS_GENERATE_UI_JSON, 2_800) : MAX_TOKENS_GENERATE_UI_JSON;
 
   const genOnce = async (): Promise<{ text: string; provider: string }> => {
     return completeChatMultiModel(
@@ -82,7 +85,7 @@ export async function runUiJsonPipeline(input: {
         { role: "system", content: SYSTEM_UI_JSON },
         { role: "user", content: userMsg },
       ],
-      { max_tokens: MAX_TOKENS_GENERATE_UI_JSON, temperature: 0.25 },
+      { max_tokens: maxTokUi, temperature: 0.25 },
     );
   };
 
@@ -125,30 +128,34 @@ export async function runUiJsonPipeline(input: {
   })();
 
   if (!validated.ok) {
-    const fixMsg = `Your previous output failed validation. Fix and return ONLY corrected JSON.
+    if (compact) {
+      validated = { ok: false as const, errors: ["compact_skip_retry"] };
+    } else {
+      const fixMsg = `Your previous output failed validation. Fix and return ONLY corrected JSON.
 Errors:
 ${"errors" in validated ? validated.errors.join("\n") : "Unparseable JSON"}
 
 Original request:
 ${userMsg}`;
 
-    try {
-      const second = await completeChatMultiModel(
-        [
-          { role: "system", content: SYSTEM_UI_JSON },
-          { role: "user", content: fixMsg },
-        ],
-        { max_tokens: MAX_TOKENS_GENERATE_UI_JSON, temperature: 0.2 },
-      );
-      rawText = second.text;
-      provider = second.provider;
       try {
-        validated = parseAndValidate(rawText);
+        const second = await completeChatMultiModel(
+          [
+            { role: "system", content: SYSTEM_UI_JSON },
+            { role: "user", content: fixMsg },
+          ],
+          { max_tokens: MAX_TOKENS_GENERATE_UI_JSON, temperature: 0.2 },
+        );
+        rawText = second.text;
+        provider = second.provider;
+        try {
+          validated = parseAndValidate(rawText);
+        } catch {
+          validated = { ok: false as const, errors: ["parse"] };
+        }
       } catch {
-        validated = { ok: false as const, errors: ["parse"] };
+        validated = { ok: false as const, errors: ["retry_failed"] };
       }
-    } catch {
-      validated = { ok: false as const, errors: ["retry_failed"] };
     }
   }
 

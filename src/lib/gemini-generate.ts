@@ -9,10 +9,18 @@ export function getGeminiModelId(): string {
   return process.env.GEMINI_MODEL_ID?.trim() || "gemini-2.0-flash";
 }
 
+export type GeminiGenerateOpts = {
+  maxOutputTokens?: number;
+};
+
 /**
  * Non-streaming text generation via Gemini (primary UI brain when configured).
  */
-export async function geminiGenerateText(systemInstruction: string, userText: string): Promise<string> {
+export async function geminiGenerateText(
+  systemInstruction: string,
+  userText: string,
+  genOpts?: GeminiGenerateOpts,
+): Promise<string> {
   const key = getGeminiApiKey();
   if (!key) throw new Error("GEMINI_NOT_CONFIGURED");
 
@@ -26,7 +34,7 @@ export async function geminiGenerateText(systemInstruction: string, userText: st
     contents: [{ role: "user", parts: [{ text: userText }] }],
     generationConfig: {
       temperature: 0.25,
-      maxOutputTokens: 8192,
+      maxOutputTokens: genOpts?.maxOutputTokens ?? 8192,
     },
   });
 
