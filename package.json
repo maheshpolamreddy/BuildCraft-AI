@@ -6,20 +6,36 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "vercel:sync-dev-env": "node scripts/sync-prod-env-to-preview.mjs",
+    "deploy:firestore": "node ./node_modules/firebase-tools/lib/bin/firebase.js deploy --only firestore:rules",
+    "login:firebase": "node ./node_modules/firebase-tools/lib/bin/firebase.js login"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@google/stitch-sdk": "^0.0.3",
+    "clsx": "^2.1.1",
+    "firebase": "^12.11.0",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^0.577.0",
     "next": "16.2.1",
+    "nodemailer": "^8.0.3",
+    "ogl": "^1.0.11",
+    "openai": "^6.32.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "tailwind-merge": "^3.5.0",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/nodemailer": "^7.0.11",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
+    "firebase-tools": "^14.0.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

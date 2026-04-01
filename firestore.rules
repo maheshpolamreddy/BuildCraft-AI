@@ -1,0 +1,180 @@
+rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BuildCraft — Firestore security rules
+//
+// Firebase project (see .firebaserc): buildcraft-ai-d7b48
+//
+// Publish rules (pick one):
+//
+// A) Console (no CLI): open
+//    https://console.firebase.google.com/project/buildcraft-ai-d7b48/firestore/rules
+//    Replace or merge with this file, click "Publish".
+//
+// B) CLI (from the buildcraft/ folder):
+//    npm run login:firebase
+//    npm run deploy:firestore
+//
+// If you still see "Firebase blocked loading developer profiles":
+//   • Rules were not published yet, OR
+//   • The browser user is not signed in with Firebase Auth for THIS project.
+//
+// developerProfiles: any signed-in user may READ (for employer matching queries).
+// Only the profile owner may WRITE their own document.
+// ═══════════════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // hire token documents are 24 random bytes as hex = 48 chars
+    function isHireTokenId(id) {
+      return id is string && id.matches('^[a-f0-9]{48}$');
+    }
+
+    // Signed-in user is creator or developer on the chat room doc (must exist)
+    function isChatDocParticipant(chatId) {
+      return exists(/databases/$(database)/documents/chats/$(chatId))
+        && (
+          get(/databases/$(database)/documents/chats/$(chatId)).data.creatorUid == request.auth.uid
+          || get(/databases/$(database)/documents/chats/$(chatId)).data.developerUid == request.auth.uid
+        );
+    }
+
+    // Hire accepted and this user is a party (works even if chats/{id} is missing briefly)
+    function isAcceptedHireParty(chatId) {
+      return isHireTokenId(chatId)
+        && exists(/databases/$(database)/documents/hireRequests/$(chatId))
+        && get(/databases/$(database)/documents/hireRequests/$(chatId)).data.status == 'accepted'
+        && (
+          get(/databases/$(database)/documents/hireRequests/$(chatId)).data.creatorUid == request.auth.uid
+          || get(/databases/$(database)/documents/hireRequests/$(chatId)).data.developerUid == request.auth.uid
+        );
+    }
+
+    function canAccessChatThread(chatId) {
+      return signedIn() && (isChatDocParticipant(chatId) || isAcceptedHireParty(chatId));
+    }
+
+    // ── User app profile (auth onboarding) ─────────────────────────────────
+    match /users/{userId} {
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+
+    // ── Developer directory (employer matching / discovery / project-room) ─
+    // Any authenticated user can read profiles so queries like
+    // where("registrationDone", "==", true) and limit() scans work.
+    // Only the profile owner may write their doc.
+    match /developerProfiles/{userId} {
+      allow read: if signedIn();
+      allow create, update, delete: if signedIn() && request.auth.uid == userId;
+    }
+
+    // ── Saved employer projects ────────────────────────────────────────────
+    match /projects/{projectId} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // ── Audit log ───────────────────────────────────────────────────────────
+    match /auditLog/{entryId} {
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // ── Hire requests
+    // get: invite page + server API read by secret token (unauthenticated OK).
+    // list: creator/developer dashboards (signed-in, per-document check).
+    // update: hire-respond API uses Firestore client without user auth — keep open or use Admin SDK.
+    match /hireRequests/{token} {
+      allow get: if true;
+      allow list: if signedIn() && (
+        resource.data.creatorUid == request.auth.uid ||
+        resource.data.developerUid == request.auth.uid
+      );
+      allow create: if signedIn() && request.resource.data.creatorUid == request.auth.uid;
+      allow update: if true;
+      // Creator may remove a pending invite (e.g. after failed email send retry flow)
+      allow delete: if signedIn()
+        && resource.data.creatorUid == request.auth.uid
+        && resource.data.status == "pending";
+    }
+
+    // ── PRDs ───────────────────────────────────────────────────────────────
+    match /prds/{prdId} {
+      allow read: if signedIn() && (
+        resource.data.creatorUid == request.auth.uid ||
+        resource.data.developerUid == request.auth.uid
+      );
+      // Client: signed-in party. Server /api/generate-prd (no auth): hire must be accepted and UIDs must match hireRequests/{hireToken}
+      allow create: if (signedIn() && (
+        request.resource.data.creatorUid == request.auth.uid ||
+        request.resource.data.developerUid == request.auth.uid
+      )) || (
+        request.resource.data.hireToken is string
+        && request.resource.data.hireToken.matches('^[a-f0-9]{48}$')
+        && exists(/databases/$(database)/documents/hireRequests/$(request.resource.data.hireToken))
+        && get(/databases/$(database)/documents/hireRequests/$(request.resource.data.hireToken)).data.status == 'accepted'
+        && request.resource.data.creatorUid == get(/databases/$(database)/documents/hireRequests/$(request.resource.data.hireToken)).data.creatorUid
+        && request.resource.data.developerUid == get(/databases/$(database)/documents/hireRequests/$(request.resource.data.hireToken)).data.developerUid
+      );
+      allow update, delete: if signedIn() && (
+        resource.data.creatorUid == request.auth.uid ||
+        resource.data.developerUid == request.auth.uid
+      );
+    }
+
+    // ── Chat (chatId = hire token) ─────────────────────────────────────────
+    match /chats/{chatId} {
+      // Server: get when doc missing. Client: room participants OR accepted hire party (same token id).
+      allow read: if !exists(/databases/$(database)/documents/chats/$(chatId))
+        || (signedIn() && (
+          resource.data.creatorUid == request.auth.uid
+          || resource.data.developerUid == request.auth.uid
+          || isAcceptedHireParty(chatId)
+        ));
+      // Client: signed-in party. Server (no auth): hireRequests/{chatId} must be accepted and party fields must match
+      allow create: if (signedIn() && (
+        request.resource.data.creatorUid == request.auth.uid ||
+        request.resource.data.developerUid == request.auth.uid
+      )) || (
+        chatId.matches('^[a-f0-9]{48}$')
+        && request.resource.data.chatId == chatId
+        && exists(/databases/$(database)/documents/hireRequests/$(chatId))
+        && get(/databases/$(database)/documents/hireRequests/$(chatId)).data.status == 'accepted'
+        && request.resource.data.creatorUid == get(/databases/$(database)/documents/hireRequests/$(chatId)).data.creatorUid
+        && request.resource.data.developerUid == get(/databases/$(database)/documents/hireRequests/$(chatId)).data.developerUid
+        && request.resource.data.creatorEmail is string
+        && request.resource.data.developerEmail is string
+        && request.resource.data.projectName is string
+        && request.resource.data.creatorName is string
+        && request.resource.data.developerName is string
+      );
+      // Last-message preview: participant on doc, or accepted hire party (UIDs on doc must stay fixed)
+      allow update: if signedIn()
+        && exists(/databases/$(database)/documents/chats/$(chatId))
+        && (
+          resource.data.creatorUid == request.auth.uid
+          || resource.data.developerUid == request.auth.uid
+          || isAcceptedHireParty(chatId)
+        )
+        && request.resource.data.creatorUid == resource.data.creatorUid
+        && request.resource.data.developerUid == resource.data.developerUid;
+
+      match /messages/{msgId} {
+        // Listen/query messages: participant on chat doc OR accepted hire party (avoids get() on missing chat)
+        allow read: if canAccessChatThread(chatId);
+        // Only write messages as yourself; must be allowed on this thread
+        allow create: if canAccessChatThread(chatId)
+          && request.resource.data.senderUid == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.senderName is string;
+        allow update: if canAccessChatThread(chatId);
+      }
+    }
+  }
+}
