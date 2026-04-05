@@ -29,6 +29,7 @@ export interface SavedProject {
   approvedTools: Record<string, boolean | undefined>;
   createdAt:    Timestamp | null;
   updatedAt:    Timestamp | null;
+  deletedAt?:   Timestamp | null;
 }
 
 // ── User profile ──────────────────────────────────────────────────────────────
@@ -98,8 +99,7 @@ export async function getUserProjects(uid: string): Promise<SavedProject[]> {
   try {
     const q = query(
       collection(db, "projects"),
-      where("uid", "==", uid),
-      orderBy("createdAt", "desc"),
+      where("uid", "==", uid)
     );
     const snap = await getDocs(q);
     return snap.docs.map((d) => d.data() as SavedProject);
@@ -115,10 +115,24 @@ export async function getProject(docId: string): Promise<SavedProject | null> {
   } catch { return null; }
 }
 
-/** Delete a saved project. */
+/** Soft Delete a saved project. */
 export async function deleteProject(docId: string) {
   if (!docId) return;
   try {
-    await deleteDoc(doc(db, "projects", docId));
+    await updateDoc(doc(db, "projects", docId), {
+      deletedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
   } catch (err) { console.warn("[firestore] deleteProject failed:", err); }
+}
+
+/** Restore a soft-deleted project. */
+export async function restoreProject(docId: string) {
+  if (!docId) return;
+  try {
+    await updateDoc(doc(db, "projects", docId), {
+      deletedAt: null,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) { console.warn("[firestore] restoreProject failed:", err); }
 }

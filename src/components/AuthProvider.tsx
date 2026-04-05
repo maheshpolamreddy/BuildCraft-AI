@@ -28,6 +28,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
   const setCurrentUser = useStore((s) => s.setCurrentUser);
 
   useEffect(() => {
+    let lastUid: string | null = null;
     const unsubscribe = onAuthChange((user) => {
       const { userRoles } = useStore.getState();
       if (!user) {
@@ -36,8 +37,15 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
           devRegistrationStep: 1,
           userRoles: userRoles.filter(r => r !== "developer"),
         });
+        lastUid = null;
       } else {
         clearStaleDeveloperStateForUid(user.uid);
+        
+        // When a new user logs in, ensure Discovery opens in a fresh state
+        if (lastUid !== user.uid) {
+           useStore.getState().clearProject();
+           lastUid = user.uid;
+        }
       }
       setCurrentUser(user);
     });

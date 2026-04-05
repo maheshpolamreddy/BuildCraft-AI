@@ -26,8 +26,10 @@ function openRouterHttpReferer(): string {
 }
 
 /**
- * On Vercel (unless VERCEL_AI_FULL_CHAIN=1), default to a short upstream timeout so
- * serverless invocations return before the platform 504 (Hobby ~10s). Override with AI_UPSTREAM_TIMEOUT_MS.
+ * On Vercel (unless VERCEL_AI_FULL_CHAIN=1), default upstream timeout stays below route maxDuration
+ * (see vercel.json / route `maxDuration`). Older 8s default caused SDK aborts while the model was still
+ * generating — surfaced as "timed out". Override with AI_UPSTREAM_TIMEOUT_MS. Hobby plans still cap
+ * execution at ~10s at the platform; use a fast model or VERCEL_AI_FULL_CHAIN on Pro+ for heavy tasks.
  */
 function getDefaultUpstreamTimeoutMs(): number {
   const fromEnv = Number(process.env.AI_UPSTREAM_TIMEOUT_MS);
@@ -35,7 +37,7 @@ function getDefaultUpstreamTimeoutMs(): number {
     return Math.min(285_000, fromEnv);
   }
   if (process.env.VERCEL === "1" && process.env.VERCEL_AI_FULL_CHAIN !== "1") {
-    return 8_000;
+    return 52_000;
   }
   return Math.min(285_000, Math.max(45_000, 270_000));
 }
@@ -202,4 +204,29 @@ export function getStitchModelId(): string {
   if (fast) return fast;
   if (process.env.OPENROUTER_API_KEY?.trim()) return "openai/gpt-4o-mini";
   return getAiFastModelId();
+}
+
+/**
+ * Task-specific models (OpenAI-compatible ids) — use different models per workload for speed vs quality.
+ * All fall back to sensible defaults so a single `AI_MODEL_ID` still works.
+ *
+ * - `AI_MODEL_ARCHITECTURE_ID` — deep architecture JSON (layers, tools, risks). Defaults to primary chat model.
+ * - `AI_MODEL_PROMPTS_ID` — long blueprint + 6 build prompts. Defaults to primary chat model.
+ * - `AI_MODEL_STRUCTURED_JSON_ID` — milestones, PRD, analyze JSON, etc. Defaults to fast model (lower latency).
+ * - `AI_MODEL_CODE_ID` — React/HTML component generation. Defaults to primary chat model.
+ */
+export function getAiArchitectureModelId(): string {
+  return process.env.AI_MODEL_ARCHITECTURE_ID?.trim() || getAiChatModelId();
+}
+
+export function getAiPromptGenerationModelId(): string {
+  return process.env.AI_MODEL_PROMPTS_ID?.trim() || getAiChatModelId();
+}
+
+export function getAiStructuredJsonModelId(): string {
+  return process.env.AI_MODEL_STRUCTURED_JSON_ID?.trim() || getAiFastModelId();
+}
+
+export function getAiCodeGenerationModelId(): string {
+  return process.env.AI_MODEL_CODE_ID?.trim() || getAiChatModelId();
 }

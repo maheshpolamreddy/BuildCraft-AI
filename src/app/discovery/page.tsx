@@ -12,7 +12,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useStore, analyzeIdea, type ProjectState } from "@/store/useStore";
 import type { Requirement } from "@/store/useStore";
-import { saveProject, getUserProjects, deleteProject, getUserProfile, updateUserProfile, type SavedProject } from "@/lib/firestore";
+import { saveProject, getUserProjects, deleteProject, restoreProject, getUserProfile, updateUserProfile, type SavedProject } from "@/lib/firestore";
+import { useAutoSave } from "@/hooks/useAutoSave";
 import { logAction } from "@/lib/auditLog";
 import { getAllDeveloperProfiles, type DeveloperProfile } from "@/lib/developerProfile";
 import { type MatchedDeveloper } from "@/app/api/match-developers/route";
@@ -45,9 +46,11 @@ function firestoreAccessHint(msg: string): string {
 export default function DiscoveryHub() {
   const router = useRouter();
   const {
-    project, setProject, toggleAssumption, currentUser, setSavedProjectId, approvedTools, setToolApproval,
-    employerProfile, setEmployerProfile,
+    project, setProject, toggleAssumption, currentUser, savedProjectId, setSavedProjectId, approvedTools, setToolApproval,
+    employerProfile, setEmployerProfile, clearProject, incrementVersion,
   } = useStore();
+
+  useAutoSave();
 
   const [profileOpen, setProfileOpen] = useState(true);
   const [profileSaving, setProfileSaving] = useState(false);
@@ -69,6 +72,8 @@ export default function DiscoveryHub() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyOpen,    setHistoryOpen]    = useState(true);
   const [deletingId,     setDeletingId]     = useState<string | null>(null);
+  const [searchQuery,    setSearchQuery]    = useState("");
+  const [showDeleted,    setShowDeleted]    = useState(false);
 
   // ── Hire a developer — AI matching (same engine as Project Workspace) ─────
   const [matchedDevs,   setMatchedDevs]   = useState<MatchedDeveloper[]>([]);
@@ -82,10 +87,14 @@ export default function DiscoveryHub() {
     if (!currentUser) { setHistory([]); return; }
     setHistoryLoading(true);
     getUserProjects(currentUser.uid)
-      .then(projects => setHistory(projects))
+      .then(projects => setHistory(projects.sort((a, b) => {
+        const timeA = (a.updatedAt as any)?.seconds || 0;
+        const timeB = (b.updatedAt as any)?.seconds || 0;
+        return timeB - timeA;
+      })))
       .catch(() => {})
       .finally(() => setHistoryLoading(false));
-  }, [currentUser]);
+  }, [currentUser, savedProjectId]);
 
   // Load employer profile from Firestore into store + local draft (when user changes)
   useEffect(() => {
@@ -166,11 +175,25 @@ export default function DiscoveryHub() {
   async function handleDeleteHistory(id: string) {
     setDeletingId(id);
     await deleteProject(id).catch(() => {});
-    setHistory(prev => prev.filter(p => p.id !== id));
+    setHistory(prev => prev.map(p => p.id === id ? { ...p, deletedAt: { seconds: Date.now() / 1000 } as any } : p));
+    setDeletingId(null);
+  }
+
+  async function handleRestoreHistory(id: string) {
+    setDeletingId(id);
+    await restoreProject(id).catch(() => {});
+    setHistory(prev => prev.map(p => p.id === id ? { ...p, deletedAt: null } : p));
     setDeletingId(null);
   }
 
   const allAccepted = project?.assumptions?.every((a) => a.accepted) ?? false;
+
+  const filteredHistory = history.filter(h => {
+    const isMatch = h.project.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                    (h.project.idea && h.project.idea.toLowerCase().includes(searchQuery.toLowerCase()));
+    const isDeleted = !!h.deletedAt;
+    return isMatch && (showDeleted ? isDeleted : !isDeleted);
+  });
 
   async function runDiscoveryMatching() {
     if (!project) return;
@@ -340,7 +363,7 @@ export default function DiscoveryHub() {
             <Layers className="w-4 h-4 text-blue-400" />
             <span className="text-xs font-bold text-blue-300">Requirements</span>
             {project && (
-              <span className="ml-auto text-[9px] text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded-full border border-blue-500/20 uppercase tracking-widest">v1.0</span>
+              <span className="ml-auto text-[9px] text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded-full border border-blue-500/20 uppercase tracking-widest">{project.version || "v1.0"}</span>
             )}
           </button>
 
@@ -378,8 +401,8 @@ export default function DiscoveryHub() {
             >
               <span className="flex items-center gap-1.5">
                 <History className="w-3 h-3" /> Past Projects
-                {history.length > 0 && (
-                  <span className="px-1.5 py-0.5 rounded-full bg-white/10 text-[9px]">{history.length}</span>
+                {filteredHistory.length > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-white/10 text-[9px]">{filteredHistory.length}</span>
                 )}
               </span>
               <ChevronDown className={`w-3 h-3 transition-transform ${historyOpen ? "rotate-180" : ""}`} />
@@ -393,6 +416,35 @@ export default function DiscoveryHub() {
                   exit={{ height: 0, opacity: 0 }}
                   className="overflow-hidden"
                 >
+                  <button
+                    onClick={() => {
+                      clearProject();
+                      setIdea("");
+                    }}
+                    className="w-full flex items-center justify-center gap-2 mb-3 py-2 bg-gradient-to-r from-blue-500/10 to-indigo-500/10 hover:from-blue-500/20 hover:to-indigo-500/20 border border-blue-500/20 rounded-xl text-[10px] font-bold uppercase tracking-widest text-blue-300 transition-all"
+                  >
+                    + Start New Project
+                  </button>
+
+                  <div className="mb-2 relative">
+                    <input 
+                      type="text" 
+                      placeholder="Search projects..." 
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-[10px] text-white placeholder:text-white/30 focus:outline-none focus:border-blue-500/40"
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between mb-2 px-1">
+                    <span className="text-[9px] text-white/30 uppercase tracking-widest">{showDeleted ? "Deleted Projects" : "Active Projects"}</span>
+                    <button 
+                      onClick={() => setShowDeleted(!showDeleted)}
+                      className="text-[9px] text-indigo-400 hover:text-indigo-300 uppercase tracking-widest transition-colors"
+                    >
+                      {showDeleted ? "Show Active" : "Show Deleted"}
+                    </button>
+                  </div>
                   {historyLoading && (
                     <div className="flex items-center gap-2 py-3 text-white/20">
                       <RefreshCw className="w-3 h-3 animate-spin" />
@@ -400,12 +452,14 @@ export default function DiscoveryHub() {
                     </div>
                   )}
 
-                  {!historyLoading && history.length === 0 && (
-                    <p className="text-[10px] text-white/20 font-light py-2">No projects yet.</p>
+                  {!historyLoading && filteredHistory.length === 0 && (
+                    <p className="text-[10px] text-white/20 font-light py-2">
+                      {searchQuery ? "No matching projects." : (showDeleted ? "No deleted projects." : "No projects yet.")}
+                    </p>
                   )}
 
                   <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
-                    {history.map(saved => {
+                    {filteredHistory.map(saved => {
                       const isActive = saved.id === (useStore.getState().savedProjectId);
                       return (
                         <div key={saved.id}
@@ -426,11 +480,12 @@ export default function DiscoveryHub() {
                             </p>
                           </div>
                           <button
-                            onClick={e => { e.stopPropagation(); handleDeleteHistory(saved.id); }}
+                            onClick={e => { e.stopPropagation(); showDeleted ? handleRestoreHistory(saved.id) : handleDeleteHistory(saved.id); }}
                             disabled={deletingId === saved.id}
-                            className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-red-400/50 hover:text-red-400"
+                            className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-white/40 hover:text-white p-1"
+                            title={showDeleted ? "Restore Project" : "Delete Project"}
                           >
-                            <Trash2 className="w-3 h-3" />
+                            {deletingId === saved.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : (showDeleted ? <RefreshCw className="w-3 h-3 text-emerald-400" /> : <Trash2 className="w-3 h-3 text-red-400" />)}
                           </button>
                         </div>
                       );
@@ -733,17 +788,17 @@ export default function DiscoveryHub() {
                 </div>
               )}
 
-              {!historyLoading && history.length === 0 && (
+              {!historyLoading && filteredHistory.length === 0 && (
                 <div className="text-center py-12 space-y-3">
                   <FolderOpen className="w-10 h-10 text-white/10 mx-auto" />
-                  <p className="text-white/30 text-sm font-light">No saved projects yet.</p>
+                  <p className="text-white/30 text-sm font-light">{searchQuery ? "No matching projects." : (showDeleted ? "No deleted projects." : "No saved projects yet.")}</p>
                   <p className="text-white/20 text-xs">Describe your first project above and it will automatically be saved here.</p>
                 </div>
               )}
 
-              {!historyLoading && history.length > 0 && (
+              {!historyLoading && filteredHistory.length > 0 && (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {history.map((saved, idx) => {
+                  {filteredHistory.map((saved, idx) => {
                     const isLocked = saved.project.locked;
                     const toolCount = Object.values(saved.approvedTools ?? {}).filter(Boolean).length;
                     const reqCount  = saved.project.requirements?.length ?? 0;
@@ -772,13 +827,14 @@ export default function DiscoveryHub() {
                             {isLocked ? <><Lock className="w-3 h-3" /> Locked</> : <><FolderOpen className="w-3 h-3" /> Draft</>}
                           </span>
                           <button
-                            onClick={e => { e.stopPropagation(); handleDeleteHistory(saved.id); }}
+                            onClick={e => { e.stopPropagation(); showDeleted ? handleRestoreHistory(saved.id) : handleDeleteHistory(saved.id); }}
                             disabled={deletingId === saved.id}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-red-400/40 hover:text-red-400 p-1 rounded-lg hover:bg-red-500/10"
+                            className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg ${showDeleted ? "text-emerald-400/40 hover:text-emerald-400 hover:bg-emerald-500/10" : "text-red-400/40 hover:text-red-400 hover:bg-red-500/10"}`}
+                            title={showDeleted ? "Restore Project" : "Delete Project"}
                           >
                             {deletingId === saved.id
                               ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                              : <Trash2 className="w-3.5 h-3.5" />}
+                              : (showDeleted ? <RefreshCw className="w-3.5 h-3.5" /> : <Trash2 className="w-3.5 h-3.5" />)}
                           </button>
                         </div>
 

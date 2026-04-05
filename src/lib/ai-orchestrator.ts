@@ -12,6 +12,10 @@ import {
   getAiFastModelId,
   getSecondaryChatModelId,
   getStitchModelId,
+  getAiArchitectureModelId,
+  getAiPromptGenerationModelId,
+  getAiStructuredJsonModelId,
+  getAiCodeGenerationModelId,
 } from "@/lib/nim-client";
 import { isRetryableWithFallback, runChatWithRetry } from "@/lib/ai-retry";
 import { cloudflareWorkersAiChat } from "@/lib/cloudflare-workers-ai";
@@ -43,6 +47,10 @@ type ChatParams = Omit<Parameters<OpenAI["chat"]["completions"]["create"]>[0], "
   stream?: false;
 };
 
+/**
+ * Picks the best default model per task: fast models for routing/JSON throughput,
+ * primary chat for architecture/code quality, dedicated env overrides per workload.
+ */
 function resolvePrimaryModel(task: OrchestrationTask): string {
   switch (task) {
     case "matching":
@@ -50,9 +58,37 @@ function resolvePrimaryModel(task: OrchestrationTask): string {
       return getAiFastModelId();
     case "stitch_landing":
       return getStitchModelId();
+    case "architecture_deep":
+      return getAiArchitectureModelId();
+    case "prompt_generation":
+      return getAiPromptGenerationModelId();
+    case "structured_json":
+    case "ui_json":
+      return getAiStructuredJsonModelId();
+    case "code_generation":
+      return getAiCodeGenerationModelId();
     default:
       return getAiChatModelId();
   }
+}
+
+/**
+ * Models to try after global fallback + secondary + Cloudflare — excludes primary and
+ * `AI_FALLBACK_MODEL_ID` (already attempted in the catch path) to avoid duplicate calls.
+ */
+function recoveryModelIds(modelPrimary: string, fallbackId: string | undefined): string[] {
+  const seen = new Set<string>([modelPrimary]);
+  if (fallbackId) seen.add(fallbackId);
+  const out: string[] = [];
+  const push = (id: string) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  };
+  push(getAiFastModelId());
+  push(getAiChatModelId());
+  push(getAiStructuredJsonModelId());
+  return out;
 }
 
 function needsMoreContent(content: string, minLen: number | undefined): boolean {
@@ -111,6 +147,20 @@ export async function orchestrateChatCompletion(
       }
     }
 
+    // If no global fallback (or same as primary), try fast tier for short/empty completions.
+    if (needsMoreContent(out, minLen)) {
+      const fast = getAiFastModelId();
+      if (fast !== modelPrimary && fast !== fallbackId) {
+        try {
+          const alt = await runWith(primary, fast);
+          if (!needsMoreContent(alt, minLen)) return alt;
+          if (alt.trim()) out = alt;
+        } catch {
+          /* continue */
+        }
+      }
+    }
+
     if (needsMoreContent(out, minLen) && secondary) {
       try {
         out = await runWith(secondary, secondaryModel);
@@ -156,6 +206,16 @@ export async function orchestrateChatCompletion(
 
     const cf = await cloudflareWorkersAiChat(params);
     if (cf !== null && cf.trim()) return cf;
+
+    // Last resort: same provider, alternate models (fast / chat / structured defaults) — reduces single-model failures.
+    for (const mid of recoveryModelIds(modelPrimary, fallbackId)) {
+      try {
+        const recovered = await runWith(primary, mid);
+        return await improveContent(recovered);
+      } catch {
+        /* try next */
+      }
+    }
 
     throw err;
   }

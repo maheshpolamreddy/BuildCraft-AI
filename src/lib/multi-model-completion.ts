@@ -19,6 +19,7 @@ import { runChatWithRetry } from "@/lib/ai-retry";
 import { huggingfaceGenerateText } from "@/lib/huggingface-generate";
 import { cloudflareWorkersAiChat } from "@/lib/cloudflare-workers-ai";
 import {
+  compactChainBudgetMs,
   compactGeminiMaxMs,
   compactOpenAiTimeoutMs,
   useCompactServerlessAiChain,
@@ -99,17 +100,15 @@ export type CompleteChatMultiModelOpts = {
   maxGeminiMs?: number;
 };
 
-/** Wall-clock budget for the whole compact chain (Vercel Hobby ~10s hard cap). */
-const COMPACT_CHAIN_BUDGET_MS = 9_000;
-
 /**
- * Fast path for Vercel: Groq → primary (short timeout, no SDK retry) → Gemini (capped).
- * Uses a shared wall-clock budget so sequential attempts stay under Hobby limits.
+ * Fast path for Vercel: Groq → primary (short timeout, no SDK retry) → Gemini (capped) → HF → Cloudflare.
+ * Uses a shared wall-clock budget aligned with `maxDuration` / VERCEL_AI_COMPACT_BUDGET_MS.
  */
 async function completeChatMultiModelCompact(
   messages: ChatMessage[],
   opts: CompleteChatMultiModelOpts,
 ): Promise<MultiModelCompletionResult> {
+  const budget = compactChainBudgetMs();
   const started = Date.now();
   const maxTok = Math.min(opts.max_tokens, 2_800);
 
@@ -120,7 +119,7 @@ async function completeChatMultiModelCompact(
     stream: false,
   };
 
-  const msLeft = () => Math.max(0, COMPACT_CHAIN_BUDGET_MS - (Date.now() - started));
+  const msLeft = () => Math.max(0, budget - (Date.now() - started));
   const slot = () => Math.max(2_000, Math.min(compactOpenAiTimeoutMs(), msLeft() - 250));
 
   const groq = getGroqClient({ timeoutMs: slot(), maxRetries: 0 });
@@ -148,6 +147,23 @@ async function completeChatMultiModelCompact(
   if (msLeft() > 900) {
     const geminiText = await tryGemini(messages, gemCap, true);
     if (geminiText) return { text: geminiText, provider: "gemini" };
+  }
+
+  const { system, user } = splitSystemUser(messages);
+  const hfPrompt = `### System\n${system}\n\n### User\n${user}\n\n### Assistant\n`;
+  const hfCap = Math.max(8_000, Math.min(45_000, msLeft() - 500));
+  if (msLeft() > 2_500) {
+    const hfRace = huggingfaceGenerateText(hfPrompt, Math.min(maxTok, 2_048));
+    const hf = await Promise.race([
+      hfRace,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), hfCap)),
+    ]);
+    if (hf?.trim()) return { text: hf.trim(), provider: "huggingface" };
+  }
+
+  if (msLeft() > 1_200) {
+    const cf = await cloudflareWorkersAiChat(openAiParams);
+    if (cf !== null && cf.trim()) return { text: cf.trim(), provider: "cloudflare" };
   }
 
   throw new Error("NO_AI_CLIENT");

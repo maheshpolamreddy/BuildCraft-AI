@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   History, Layers, CheckCircle2, ShieldAlert, Cpu, Database, Cloud, FileCode,
-  ThumbsUp, ThumbsDown, ArrowRight, Lock, Eye, Copy, Check, Terminal,
-  GitBranch, AlertTriangle, Info, Code2, Sparkles, LayoutDashboard,
+  ThumbsUp, ThumbsDown, ArrowRight, Lock, Eye, Copy, Check, Terminal, FolderOpen,
+  GitBranch, AlertTriangle, Info, Code2, Sparkles, LayoutDashboard, Trash2,
   LogIn, Home, User, Bell, Loader2, RefreshCw, ChevronDown, ChevronUp, Users,
   ImageIcon, X, ZoomIn, Wand2, ExternalLink, Monitor, Settings, Link as LinkIcon, KeyRound,
   BookOpen, Zap, Globe, Server, ShieldCheck, Package, CreditCard, Mail, Wifi,
@@ -15,13 +15,14 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/store/useStore";
-import { updateProject } from "@/lib/firestore";
+import { updateProject, getUserProjects, deleteProject, restoreProject, type SavedProject } from "@/lib/firestore";
 import { logAction } from "@/lib/auditLog";
 import { parseApiJson } from "@/lib/parse-api-json";
 import { getUserFacingError } from "@/lib/user-facing-error";
 import Logo from "@/components/Logo";
 import { DynamicUIRenderer } from "@/components/ui-json/DynamicUIRenderer";
 import type { UIScreenJson } from "@/lib/ui-json-schema";
+import { useAutoSave } from "@/hooks/useAutoSave";
 
 type Tab = "architecture" | "tools" | "risks" | "prompts" | "code" | "config";
 
@@ -34,6 +35,31 @@ const ANALYSIS_PHASE_LABELS = [
   "Analyzing security & operational risks (phase 2)…",
   "Synthesizing recommendations…",
 ] as const;
+
+/** Extra status labels when both analysis + prompts requests are in flight (two-step orchestration). */
+const FULL_PLAN_EXTRA_LABELS = [
+  "Drafting blueprint: pages, features, data models…",
+  "Writing six phase-by-phase build prompts…",
+  "Finalizing your technical plan…",
+] as const;
+
+const PROMPT_PHASE_COLORS: Record<string, string> = {
+  indigo: "border-indigo-500/30 bg-indigo-500/5",
+  blue: "border-blue-500/30 bg-blue-500/5",
+  emerald: "border-emerald-500/30 bg-emerald-500/5",
+  yellow: "border-yellow-500/30 bg-yellow-500/5",
+  pink: "border-pink-500/30 bg-pink-500/5",
+  orange: "border-orange-500/30 bg-orange-500/5",
+};
+
+const PROMPT_PHASE_BADGE: Record<string, string> = {
+  indigo: "text-indigo-400 bg-indigo-500/10 border-indigo-500/20",
+  blue: "text-blue-400 bg-blue-500/10 border-blue-500/20",
+  emerald: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+  yellow: "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
+  pink: "text-pink-400 bg-pink-500/10 border-pink-500/20",
+  orange: "text-orange-400 bg-orange-500/10 border-orange-500/20",
+};
 
 interface ComponentTemplate {
   id: string;
@@ -818,9 +844,72 @@ function aiToolId(name: string) {
 
 export default function ArchitectureView() {
   const router = useRouter();
-  const { project, approvedTools, setToolApproval, lockProject, setPromptsViewed, promptsViewed, currentUser, savedProjectId, patchProject } = useStore();
+  const { project, setProject, approvedTools, setToolApproval, lockProject, setPromptsViewed, promptsViewed, currentUser, savedProjectId, setSavedProjectId, patchProject, clearProject, incrementVersion } =
+    useStore();
   const [activeTab, setActiveTab] = useState<Tab>("architecture");
   const version = project?.version ?? "v1.0";
+
+  useAutoSave();
+
+  // History state
+  const [history, setHistory] = useState<SavedProject[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyOpen,    setHistoryOpen]    = useState(true);
+  const [deletingId,     setDeletingId]     = useState<string | null>(null);
+  const [searchQuery,    setSearchQuery]    = useState("");
+  const [showDeleted,    setShowDeleted]    = useState(false);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    setHistoryLoading(true);
+    getUserProjects(currentUser.uid)
+      .then(projects => setHistory(projects.sort((a, b) => {
+        const timeA = (a.updatedAt as any)?.seconds || 0;
+        const timeB = (b.updatedAt as any)?.seconds || 0;
+        return timeB - timeA;
+      })))
+      .catch(console.error)
+      .finally(() => setHistoryLoading(false));
+  }, [currentUser, savedProjectId]);
+
+  function loadFromHistory(saved: SavedProject) {
+    setProject(saved.project);
+    setSavedProjectId(saved.id);
+    Object.entries(saved.approvedTools ?? {}).forEach(([toolId, val]) => {
+      if (val !== undefined) setToolApproval(toolId, val as boolean);
+    });
+    setActiveTab("architecture");
+
+    // Smart navigate based on project state
+    if (saved.project.locked) {
+      router.push("/project-room");
+    } else if (saved.project.assumptions?.every(a => a.accepted)) {
+      // already in architecture, do nothing since it's correctly open
+    } else {
+      router.push("/discovery");
+    }
+  }
+
+  async function handleDeleteHistory(id: string) {
+    setDeletingId(id);
+    await deleteProject(id).catch(() => {});
+    setHistory(prev => prev.map(p => p.id === id ? { ...p, deletedAt: { seconds: Date.now() / 1000 } as any } : p));
+    setDeletingId(null);
+  }
+
+  async function handleRestoreHistory(id: string) {
+    setDeletingId(id);
+    await restoreProject(id).catch(() => {});
+    setHistory(prev => prev.map(p => p.id === id ? { ...p, deletedAt: null } : p));
+    setDeletingId(null);
+  }
+
+  const filteredHistory = history.filter(h => {
+    const isMatch = h.project.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                    (h.project.idea && h.project.idea.toLowerCase().includes(searchQuery.toLowerCase()));
+    const isDeleted = !!h.deletedAt;
+    return isMatch && (showDeleted ? isDeleted : !isDeleted);
+  });
 
   // Code generation state
   const [generatingId, setGeneratingId] = useState<string | null>(null);
@@ -877,19 +966,171 @@ export default function ArchitectureView() {
   const allToolsDecided = effectiveToolIds.length > 0 && decidedCount === effectiveToolIds.length;
   const canProceed = allToolsDecided && promptsViewed;
 
+  const toolNamesForPrompts = useMemo(() => {
+    if (aiAnalysis?.tools?.length) {
+      return aiAnalysis.tools.map((t) => t.name);
+    }
+    return TOOLS.filter((t) => approvedTools[t.id] !== false).map((t) => t.name);
+  }, [aiAnalysis, approvedTools]);
+
+  const orchestrationLabels = useMemo(() => {
+    if (analysisLoading && promptsLoading) {
+      return [...ANALYSIS_PHASE_LABELS, ...FULL_PLAN_EXTRA_LABELS];
+    }
+    if (analysisLoading) {
+      return [...ANALYSIS_PHASE_LABELS];
+    }
+    if (promptsLoading) {
+      return ["Generating build prompts…", "Polishing your prompt pack…"];
+    }
+    return [...ANALYSIS_PHASE_LABELS];
+  }, [analysisLoading, promptsLoading]);
+
   useEffect(() => {
-    if (!analysisLoading) {
+    if (!analysisLoading && !promptsLoading) {
       setAnalysisPhaseIndex(0);
       return;
     }
     setAnalysisPhaseIndex(0);
     let i = 0;
     const id = setInterval(() => {
-      i = Math.min(i + 1, ANALYSIS_PHASE_LABELS.length - 1);
+      i = Math.min(i + 1, orchestrationLabels.length - 1);
       setAnalysisPhaseIndex(i);
     }, 1000);
     return () => clearInterval(id);
-  }, [analysisLoading]);
+  }, [analysisLoading, promptsLoading, orchestrationLabels.length]);
+
+  const autoOrchestrateAttempted = useRef(false);
+
+  const runFullPlanOrchestration = useCallback(async () => {
+    if (!project) return;
+    autoOrchestrateAttempted.current = true;
+    setAnalysisLoading(true);
+    setPromptsLoading(true);
+    setAnalysisError(null);
+    setPromptsError(null);
+    setAnalysisPhaseIndex(0);
+
+    let analysis: ProjectAnalysis | null = null;
+    try {
+      const res = await fetch("/api/analyze-project", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectName: project.name ?? "My App",
+          projectIdea: project.idea ?? "",
+        }),
+      });
+      const data = await parseApiJson<Record<string, unknown>>(res);
+      analysis = data as unknown as ProjectAnalysis;
+      if (!analysis?.overview?.summary) {
+        throw new Error(typeof data.error === "string" ? data.error : "Analysis failed.");
+      }
+      setAiAnalysis(analysis);
+    } catch (err) {
+      setAnalysisError(getUserFacingError(err));
+      autoOrchestrateAttempted.current = false;
+      setAnalysisLoading(false);
+      setPromptsLoading(false);
+      return;
+    }
+
+    setAnalysisLoading(false);
+
+    try {
+      const res2 = await fetch("/api/generate-prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectName: project.name ?? "My App",
+          projectIdea: project.idea ?? "",
+          tools: analysis.tools.map((t) => t.name),
+        }),
+      });
+      const data2 = await parseApiJson<Record<string, unknown>>(res2);
+      const prompts = data2.prompts as AiPrompt[] | undefined;
+      const blueprint = data2.blueprint as ProjectBlueprint | undefined;
+      if (!Array.isArray(prompts) || prompts.length === 0) {
+        throw new Error(
+          typeof data2.error === "string" ? data2.error : "Prompts generation failed.",
+        );
+      }
+      setAiPrompts(prompts);
+      if (blueprint && typeof blueprint === "object") {
+        setAiBlueprint(blueprint);
+      }
+      if (project.autoPlanPipelineDone) {
+        incrementVersion();
+      }
+      patchProject({ autoPlanPipelineDone: true });
+      setPromptsViewed(true);
+    } catch (err) {
+      setPromptsError(getUserFacingError(err));
+      autoOrchestrateAttempted.current = false;
+    } finally {
+      setPromptsLoading(false);
+    }
+  }, [project, patchProject, setPromptsViewed]);
+
+  const generateBuildPrompts = useCallback(async () => {
+    setPromptsLoading(true);
+    setPromptsError(null);
+    try {
+      const res = await fetch("/api/generate-prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectName: project?.name ?? "My App",
+          projectIdea: project?.idea ?? "",
+          tools: toolNamesForPrompts,
+        }),
+      });
+      const data = await parseApiJson(res);
+      const prompts = data.prompts;
+      if (!Array.isArray(prompts) || prompts.length === 0) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "No prompts returned. Please try again.",
+        );
+      }
+      setAiPrompts(prompts as AiPrompt[]);
+      if (data.blueprint && typeof data.blueprint === "object") {
+        setAiBlueprint(data.blueprint as ProjectBlueprint);
+      }
+    } catch (err) {
+      setPromptsError(getUserFacingError(err));
+    } finally {
+      setPromptsLoading(false);
+    }
+  }, [project?.name, project?.idea, toolNamesForPrompts]);
+
+  const requirementsReadyForOrchestration =
+    !!project &&
+    project.requirements.length >= 1 &&
+    (project.idea?.trim().length ?? 0) >= 8;
+
+  useEffect(() => {
+    if (!requirementsReadyForOrchestration) return;
+    if (project?.autoPlanPipelineDone) return;
+    if (analysisLoading || promptsLoading) return;
+    if (autoOrchestrateAttempted.current) return;
+
+    const t = window.setTimeout(() => {
+      void runFullPlanOrchestration();
+    }, 450);
+    return () => clearTimeout(t);
+  }, [
+    requirementsReadyForOrchestration,
+    project?.autoPlanPipelineDone,
+    project?.requirements?.length,
+    project?.idea,
+    analysisLoading,
+    promptsLoading,
+    runFullPlanOrchestration,
+  ]);
+
+  useEffect(() => {
+    autoOrchestrateAttempted.current = false;
+  }, [project?.name]);
 
   // Restore saved premium landing page when returning to Architecture
   useEffect(() => {
@@ -1070,28 +1311,6 @@ export default function ArchitectureView() {
     }
   };
 
-  const analyzeProject = async () => {
-    setAnalysisLoading(true);
-    setAnalysisError(null);
-    setAnalysisPhaseIndex(0);
-    try {
-      const res = await fetch("/api/analyze-project", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectName: project?.name ?? "My App",
-          projectIdea: project?.idea ?? "",
-        }),
-      });
-      const data = await parseApiJson(res);
-      setAiAnalysis(data as unknown as ProjectAnalysis);
-    } catch (err) {
-      setAnalysisError(getUserFacingError(err));
-    } finally {
-      setAnalysisLoading(false);
-    }
-  };
-
   const tabs: { id: Tab; label: string }[] = [
     { id: "architecture", label: "Overview" },
     { id: "tools",        label: "Tools" },
@@ -1189,13 +1408,118 @@ export default function ArchitectureView() {
           )}
         </nav>
 
+        {/* ── Project History in Sidebar ─────────────────────────────────────── */}
+        {currentUser && (
+          <div className="mt-4 flex-shrink-0">
+            <button
+              onClick={() => setHistoryOpen(v => !v)}
+              className="flex items-center justify-between w-full mb-2 text-[10px] font-bold uppercase tracking-widest text-white/30 hover:text-white/60 transition-colors"
+            >
+              <span className="flex items-center gap-1.5">
+                <History className="w-3 h-3" /> Past Projects
+                {filteredHistory.length > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-white/10 text-[9px]">{filteredHistory.length}</span>
+                )}
+              </span>
+              <ChevronDown className={`w-3 h-3 transition-transform ${historyOpen ? "rotate-180" : ""}`} />
+            </button>
+
+            <AnimatePresence>
+              {historyOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden"
+                >
+                  <button
+                    onClick={() => {
+                      clearProject();
+                      router.push("/discovery");
+                    }}
+                    className="w-full flex items-center justify-center gap-2 mb-3 py-2 bg-gradient-to-r from-indigo-500/10 to-purple-500/10 hover:from-indigo-500/20 hover:to-purple-500/20 border border-indigo-500/20 rounded-xl text-[10px] font-bold uppercase tracking-widest text-indigo-300 transition-all"
+                  >
+                    + Start New Project
+                  </button>
+
+                  <div className="mb-2 relative">
+                    <input 
+                      type="text" 
+                      placeholder="Search projects..." 
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-[10px] text-white placeholder:text-white/30 focus:outline-none focus:border-indigo-500/40"
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between mb-2 px-1">
+                    <span className="text-[9px] text-white/30 uppercase tracking-widest">{showDeleted ? "Deleted Projects" : "Active Projects"}</span>
+                    <button 
+                      onClick={() => setShowDeleted(!showDeleted)}
+                      className="text-[9px] text-indigo-400 hover:text-indigo-300 uppercase tracking-widest transition-colors"
+                    >
+                      {showDeleted ? "Show Active" : "Show Deleted"}
+                    </button>
+                  </div>
+                  {historyLoading && (
+                     <div className="flex items-center gap-2 py-3 text-white/20">
+                       <RefreshCw className="w-3 h-3 animate-spin" />
+                       <span className="text-[10px]">Loading…</span>
+                     </div>
+                  )}
+
+                  {!historyLoading && filteredHistory.length === 0 && (
+                    <p className="text-[10px] text-white/20 font-light py-2">
+                       {searchQuery ? "No matching projects." : (showDeleted ? "No deleted projects." : "No projects yet.")}
+                    </p>
+                  )}
+
+                  <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
+                    {filteredHistory.map(saved => {
+                      const isActive = saved.id === savedProjectId;
+                      return (
+                        <div key={saved.id}
+                          className={`group flex items-center gap-2 p-2 rounded-lg cursor-pointer transition-all ${isActive ? "bg-indigo-500/15 border border-indigo-500/20" : "hover:bg-white/5 border border-transparent"}`}
+                          onClick={() => loadFromHistory(saved)}
+                        >
+                          <div className="shrink-0">
+                            {saved.project.locked
+                              ? <Lock className="w-3 h-3 text-emerald-400" />
+                              : <FolderOpen className="w-3 h-3 text-white/30" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[10px] font-bold text-white/70 truncate leading-tight">{saved.project.name}</p>
+                            <p className="text-[9px] text-white/20 truncate">
+                              {saved.createdAt
+                                ? new Date((saved.createdAt as { seconds: number }).seconds * 1000).toLocaleDateString()
+                                : "—"}
+                            </p>
+                          </div>
+                          <button
+                            onClick={e => { e.stopPropagation(); showDeleted ? handleRestoreHistory(saved.id) : handleDeleteHistory(saved.id); }}
+                            disabled={deletingId === saved.id}
+                            className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-white/40 hover:text-white p-1"
+                            title={showDeleted ? "Restore Project" : "Delete Project"}
+                          >
+                            {deletingId === saved.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : (showDeleted ? <RefreshCw className="w-3 h-3 text-emerald-400" /> : <Trash2 className="w-3 h-3 text-red-400" />)}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+
         <div className="mt-auto space-y-2">
           <div className="p-4 bg-gradient-to-b from-white/[0.04] to-white/[0.01] border border-white/8 rounded-2xl space-y-3">
             <div className="text-[9px] uppercase tracking-widest text-white/40 font-bold flex items-center gap-2">
               <GitBranch className="w-3 h-3" /> Version History
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-xs text-white font-bold">v1.0</span>
+              <span className="text-xs text-white font-bold">{version}</span>
               <span className="text-[9px] text-emerald-400 font-bold uppercase tracking-widest px-2 py-0.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full">Current</span>
             </div>
             <p className="text-[10px] text-white/30 font-light">Immutable snapshot on approval.</p>
@@ -1260,6 +1584,16 @@ export default function ArchitectureView() {
             </div>
           </motion.header>
 
+          {aiAnalysis && promptsLoading && (
+            <div className="flex items-center gap-3 rounded-2xl border border-purple-500/25 bg-purple-500/10 px-4 py-3.5 text-xs text-purple-100/95">
+              <Loader2 className="w-4 h-4 animate-spin shrink-0 text-purple-300" />
+              <span>
+                <strong className="text-white font-semibold">Overview, tools &amp; risks are ready.</strong>{" "}
+                Generating AI build prompts in the background…
+              </span>
+            </div>
+          )}
+
           <AnimatePresence mode="wait">
 
             {/* OVERVIEW TAB */}
@@ -1284,10 +1618,13 @@ export default function ArchitectureView() {
                         <span className="text-sm font-bold text-white">Analyze with AI</span>
                         <span className="text-[9px] uppercase tracking-widest text-indigo-300 bg-indigo-500/15 border border-indigo-500/25 px-2.5 py-1 rounded-full font-bold">BuildCraft AI</span>
                       </div>
-                      <p className="text-white/35 text-xs font-light leading-relaxed">Generate a project-specific architecture overview, recommended tools, and risk analysis for <span className="text-white/60 font-medium">{project?.name ?? "your project"}</span>.</p>
+                      <p className="text-white/35 text-xs font-light leading-relaxed">
+                        When your requirements are saved, we run this automatically (overview, tools, risks, and AI prompts in one pass). You can also trigger it here: project-specific architecture, tools, and risk analysis for{" "}
+                        <span className="text-white/60 font-medium">{project?.name ?? "your project"}</span>.
+                      </p>
                     </div>
                     <button 
-                      onClick={analyzeProject} 
+                      onClick={runFullPlanOrchestration} 
                       className="relative z-10 shrink-0 px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 text-white text-[10px] font-black uppercase tracking-widest rounded-2xl transition-all flex items-center gap-2 shadow-[0_0_30px_rgba(99,102,241,0.4)] hover:shadow-[0_0_50px_rgba(99,102,241,0.6)] hover:scale-[1.02]"
                     >
                       <Sparkles className="w-4 h-4" /> Analyze Project
@@ -1313,10 +1650,10 @@ export default function ArchitectureView() {
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-bold text-white">Analyzing {project?.name ?? "your project"}…</p>
                       <p className="text-xs text-indigo-300/90 font-medium mt-2 leading-snug">
-                        {ANALYSIS_PHASE_LABELS[analysisPhaseIndex]}
+                        {orchestrationLabels[Math.min(analysisPhaseIndex, orchestrationLabels.length - 1)]}
                       </p>
                       <p className="text-[10px] text-white/35 font-light mt-2">
-                        Two-phase deep analysis: architecture first, then tools and risks — powered by BuildCraft AI
+                        Merged architecture pass (overview, tools, risks) then AI prompts in a second request — you’ll see results as each step completes.
                       </p>
                     </div>
                   </motion.div>
@@ -1325,7 +1662,7 @@ export default function ArchitectureView() {
                 {analysisError && (
                   <div className="p-4 bg-red-500/5 border border-red-500/20 rounded-2xl flex items-center gap-3 text-xs text-red-400">
                     <AlertTriangle className="w-4 h-4 shrink-0" /> {analysisError}
-                    <button onClick={analyzeProject} className="ml-auto text-[10px] font-bold uppercase tracking-widest underline hover:no-underline">Retry</button>
+                    <button onClick={runFullPlanOrchestration} className="ml-auto text-[10px] font-bold uppercase tracking-widest underline hover:no-underline">Retry</button>
                   </div>
                 )}
 
@@ -1346,7 +1683,7 @@ export default function ArchitectureView() {
                       </div>
                       <p className="text-sm text-white/70 font-light leading-relaxed">{aiAnalysis.overview.summary}</p>
                     </div>
-                    <button onClick={analyzeProject} title="Re-analyze" className="shrink-0 p-2 hover:bg-white/8 rounded-xl transition-colors text-white/25 hover:text-white group">
+                    <button onClick={runFullPlanOrchestration} title="Re-analyze" className="shrink-0 p-2 hover:bg-white/8 rounded-xl transition-colors text-white/25 hover:text-white group">
                       <RefreshCw className="w-4 h-4 group-hover:rotate-180 transition-transform duration-500" />
                     </button>
                   </motion.div>
@@ -1512,7 +1849,7 @@ export default function ArchitectureView() {
                       <p className="text-sm font-bold text-white mb-1">Get project-specific risks</p>
                       <p className="text-xs text-white/35 font-light">Placeholder risks shown below. Analyze to get tailored risks for <span className="text-white/60">{project?.name ?? "your project"}</span>.</p>
                     </div>
-                    <button onClick={analyzeProject} className="relative z-10 shrink-0 px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-2 shadow-[0_0_20px_rgba(99,102,241,0.3)]">
+                    <button onClick={runFullPlanOrchestration} className="relative z-10 shrink-0 px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-2 shadow-[0_0_20px_rgba(99,102,241,0.3)]">
                       <Sparkles className="w-3.5 h-3.5" /> Analyze
                     </button>
                   </div>
@@ -1525,7 +1862,7 @@ export default function ArchitectureView() {
                       <span className="text-sm text-white/70">
                         Identifying risks for <span className="text-white font-medium">{project?.name ?? "your project"}</span>…
                       </span>
-                      <p className="text-xs text-indigo-300/90 font-medium mt-2">{ANALYSIS_PHASE_LABELS[analysisPhaseIndex]}</p>
+                      <p className="text-xs text-indigo-300/90 font-medium mt-2">{orchestrationLabels[Math.min(analysisPhaseIndex, orchestrationLabels.length - 1)]}</p>
                     </div>
                   </div>
                 )}
@@ -1533,7 +1870,7 @@ export default function ArchitectureView() {
                 {analysisError && (
                   <div className="p-4 bg-red-500/5 border border-red-500/20 rounded-2xl flex items-center gap-3 text-xs text-red-400">
                     <AlertTriangle className="w-4 h-4 shrink-0" /> {analysisError}
-                    <button onClick={analyzeProject} className="ml-auto text-[10px] font-bold uppercase tracking-widest underline hover:no-underline">Retry</button>
+                    <button onClick={runFullPlanOrchestration} className="ml-auto text-[10px] font-bold uppercase tracking-widest underline hover:no-underline">Retry</button>
                   </div>
                 )}
 
@@ -1605,7 +1942,7 @@ export default function ArchitectureView() {
                       <p className="text-sm font-bold text-white mb-1">Get AI-recommended tools for <span className="text-indigo-300">{project?.name ?? "your project"}</span></p>
                       <p className="text-xs text-white/35 font-light">Generic tools shown below. Run AI analysis to get tools selected for your exact project type, scale, and requirements.</p>
                     </div>
-                    <button onClick={analyzeProject} className="relative z-10 shrink-0 px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-2 shadow-[0_0_20px_rgba(99,102,241,0.3)]">
+                    <button onClick={runFullPlanOrchestration} className="relative z-10 shrink-0 px-4 py-2 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all flex items-center gap-2 shadow-[0_0_20px_rgba(99,102,241,0.3)]">
                       <Sparkles className="w-3.5 h-3.5" /> Analyze
                     </button>
                   </div>
@@ -1618,7 +1955,7 @@ export default function ArchitectureView() {
                       <span className="text-sm text-white/70">
                         Selecting the best tools for <span className="text-white font-medium">{project?.name ?? "your project"}</span>…
                       </span>
-                      <p className="text-xs text-indigo-300/90 font-medium mt-2">{ANALYSIS_PHASE_LABELS[analysisPhaseIndex]}</p>
+                      <p className="text-xs text-indigo-300/90 font-medium mt-2">{orchestrationLabels[Math.min(analysisPhaseIndex, orchestrationLabels.length - 1)]}</p>
                     </div>
                   </div>
                 )}
@@ -1626,7 +1963,7 @@ export default function ArchitectureView() {
                 {analysisError && (
                   <div className="p-4 bg-red-500/5 border border-red-500/20 rounded-2xl flex items-center gap-3 text-xs text-red-400">
                     <AlertTriangle className="w-4 h-4 shrink-0" /> {analysisError}
-                    <button onClick={analyzeProject} className="ml-auto text-[10px] font-bold uppercase tracking-widest underline hover:no-underline">Retry</button>
+                    <button onClick={runFullPlanOrchestration} className="ml-auto text-[10px] font-bold uppercase tracking-widest underline hover:no-underline">Retry</button>
                   </div>
                 )}
 
@@ -1775,60 +2112,7 @@ export default function ArchitectureView() {
             )}
 
             {/* PROMPTS TAB */}
-            {activeTab === "prompts" && (() => {
-              const toolNames = TOOLS.filter(t => approvedTools[t.id] !== false).map(t => t.name);
-
-              const phaseColors: Record<string, string> = {
-                indigo: "border-indigo-500/30 bg-indigo-500/5",
-                blue:   "border-blue-500/30 bg-blue-500/5",
-                emerald:"border-emerald-500/30 bg-emerald-500/5",
-                yellow: "border-yellow-500/30 bg-yellow-500/5",
-                pink:   "border-pink-500/30 bg-pink-500/5",
-                orange: "border-orange-500/30 bg-orange-500/5",
-              };
-              const phaseBadge: Record<string, string> = {
-                indigo: "text-indigo-400 bg-indigo-500/10 border-indigo-500/20",
-                blue:   "text-blue-400 bg-blue-500/10 border-blue-500/20",
-                emerald:"text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
-                yellow: "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
-                pink:   "text-pink-400 bg-pink-500/10 border-pink-500/20",
-                orange: "text-orange-400 bg-orange-500/10 border-orange-500/20",
-              };
-
-              const handleGeneratePrompts = async () => {
-                setPromptsLoading(true);
-                setPromptsError(null);
-                try {
-                  const res  = await fetch("/api/generate-prompts", {
-                    method:  "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body:    JSON.stringify({
-                      projectName: project?.name ?? "My App",
-                      projectIdea: project?.idea ?? "",
-                      tools: toolNames,
-                    }),
-                  });
-                  const data = await parseApiJson(res);
-                  const prompts = data.prompts;
-                  if (!Array.isArray(prompts) || prompts.length === 0) {
-                    throw new Error(
-                      typeof data.error === "string" ? data.error : "No prompts returned. Please try again.",
-                    );
-                  }
-                  setAiPrompts(prompts as AiPrompt[]);
-                  if (data.blueprint && typeof data.blueprint === "object") {
-                    setAiBlueprint(data.blueprint as ProjectBlueprint);
-                  }
-                } catch (err) {
-                  setPromptsError(getUserFacingError(err));
-                } finally {
-                  setPromptsLoading(false);
-                }
-              };
-
-              const displayPrompts = aiPrompts;
-
-              return (
+            {activeTab === "prompts" && (
                 <motion.section key="prompts" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.4 }} className="space-y-6">
 
                   {/* Header */}
@@ -1881,7 +2165,7 @@ export default function ArchitectureView() {
                         )}
                       </div>
                       <button
-                        onClick={handleGeneratePrompts}
+                        onClick={generateBuildPrompts}
                         disabled={promptsLoading}
                         className={`flex items-center gap-2 px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shrink-0 ${
                           promptsLoading
@@ -1947,7 +2231,7 @@ export default function ArchitectureView() {
                   )}
 
                   {/* Empty state */}
-                  {!displayPrompts && !promptsLoading && (
+                  {!aiPrompts && !promptsLoading && (
                     <motion.div 
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -1959,7 +2243,7 @@ export default function ArchitectureView() {
                       <div className="text-center space-y-2 max-w-sm">
                         <p className="text-white/60 font-bold text-sm tracking-tight">Your AI prompts will appear here</p>
                         <p className="text-white/25 text-xs font-light leading-relaxed">
-                          Click &ldquo;Generate Prompts&rdquo; above. The AI will read your project description and write complete, specific prompts for every phase of development.
+                          Prompts are generated automatically with your architecture plan after requirements are complete. You can also run &ldquo;Generate Prompts&rdquo; above to refresh them.
                         </p>
                       </div>
                     </motion.div>
@@ -1988,7 +2272,7 @@ export default function ArchitectureView() {
                   )}
 
                   {/* AI-generated prompt cards */}
-                  {displayPrompts && !promptsLoading && (
+                  {aiPrompts && !promptsLoading && (
                     <div className="space-y-4">
                       {/* Section label */}
                       <div className="flex items-center gap-3">
@@ -1999,23 +2283,23 @@ export default function ArchitectureView() {
                         <div className="flex-1 h-px bg-white/8" />
                       </div>
 
-                      {displayPrompts.map((p, idx) => (
+                      {aiPrompts.map((p, idx) => (
                         <motion.div
                           key={p.phase}
                           initial={{ opacity: 0, y: 14 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ delay: idx * 0.06 }}
-                          className={`rounded-2xl border overflow-hidden ${phaseColors[p.color] ?? phaseColors.indigo}`}
+                          className={`rounded-2xl border overflow-hidden ${PROMPT_PHASE_COLORS[p.color] ?? PROMPT_PHASE_COLORS.indigo}`}
                         >
                           {/* Header */}
                           <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-white/5 bg-black/10">
                             <div className="flex items-start gap-3">
-                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 mt-0.5 border ${phaseColors[p.color]?.includes("indigo") ? "bg-indigo-500/15 border-indigo-500/25" : phaseColors[p.color]?.includes("blue") ? "bg-blue-500/15 border-blue-500/25" : "bg-white/5 border-white/10"}`}>
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl shrink-0 mt-0.5 border ${PROMPT_PHASE_COLORS[p.color]?.includes("indigo") ? "bg-indigo-500/15 border-indigo-500/25" : PROMPT_PHASE_COLORS[p.color]?.includes("blue") ? "bg-blue-500/15 border-blue-500/25" : "bg-white/5 border-white/10"}`}>
                                 {p.icon}
                               </div>
                               <div className="min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border shrink-0 ${phaseBadge[p.color] ?? phaseBadge.indigo}`}>
+                                  <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded border shrink-0 ${PROMPT_PHASE_BADGE[p.color] ?? PROMPT_PHASE_BADGE.indigo}`}>
                                     {p.phase}
                                   </span>
                                   <h3 className="text-white font-black text-sm leading-tight">{p.title}</h3>
@@ -2061,8 +2345,7 @@ export default function ArchitectureView() {
                     </div>
                   )}
                 </motion.section>
-              );
-            })()}
+            )}
 
             {/* CONFIGURATIONS TAB */}
             {activeTab === "config" && (() => {

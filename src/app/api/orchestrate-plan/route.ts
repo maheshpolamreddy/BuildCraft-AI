@@ -1,21 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readJsonBody } from "@/lib/read-json-body";
-import {
-  runAnalyzeProjectCore,
-  type ArchLayer,
-  type AiTool,
-  type AiRisk,
-  type ProjectAnalysis,
-} from "@/lib/plan-orchestration";
+import { runFullPlanOrchestration } from "@/lib/plan-orchestration";
 import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
 
 /**
- * Two phases: smaller outputs per request finish faster and fail less often than one huge JSON.
- * Retries each phase once on timeout-style errors.
+ * Single server invocation: architecture analysis (2 LLM phases) + build prompts (1 LLM call).
+ * Avoids chained client requests and cold starts between /analyze-project and /generate-prompts.
  */
 export const maxDuration = 300;
-
-export type { ArchLayer, AiTool, AiRisk, ProjectAnalysis };
 
 export async function POST(req: NextRequest) {
   const parsed = await readJsonBody(req);
@@ -26,10 +18,14 @@ export async function POST(req: NextRequest) {
   const idea = (typeof b.projectIdea === "string" ? b.projectIdea : "").trim();
 
   try {
-    const analysis = await runAnalyzeProjectCore(name, idea);
-    return NextResponse.json(analysis);
+    const { analysis, prompts, blueprint } = await runFullPlanOrchestration(name, idea);
+    return NextResponse.json({
+      analysis,
+      prompts,
+      blueprint,
+    });
   } catch (err) {
-    console.error("[analyze-project] error:", err);
+    console.error("[orchestrate-plan]", err);
     return NextResponse.json(
       { error: messageForAiRouteFailure(err) },
       { status: httpStatusForAiFailure(err) },

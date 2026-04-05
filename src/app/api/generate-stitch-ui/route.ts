@@ -3,6 +3,7 @@ import { readJsonBody } from "@/lib/read-json-body";
 import { MAX_STITCH_IDEA_CHARS, MAX_TOKENS_GENERATE_STITCH_UI } from "@/lib/ai-limits";
 import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
 import {
+  buildFallbackStitchBodyContent,
   buildStitchSystemPrompt,
   buildStitchUserPrompt,
   deriveStitchVariant,
@@ -97,6 +98,19 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     console.error("[generate-stitch-ui]", err);
+    if (err instanceof Error && err.message === "NO_AI_CLIENT") {
+      const raw = buildFallbackStitchBodyContent(name, ideaRaw);
+      const html = finalizeStitchHtml(name, raw, palette, visualVariant);
+      if (html) {
+        return NextResponse.json({
+          html,
+          source: "fallback-template",
+          palette: palette.name,
+          visualVariant,
+          orchestration: { provider: "fallback" as const },
+        });
+      }
+    }
     return NextResponse.json(
       { error: messageForAiRouteFailure(err) },
       { status: httpStatusForAiFailure(err) },

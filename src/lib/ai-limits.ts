@@ -1,9 +1,11 @@
 /**
- * Output token ceilings — tune in one place. Analysis uses two phases so each
- * request stays shorter (fewer timeouts) while combined quality stays high.
+ * Output token ceilings — tune in one place.
+ * Default path: one merged analysis call (faster, fewer round-trips); two-phase kept as fallback.
  */
 export const MAX_TOKENS_ANALYZE_PHASE1 = 3_000;
 export const MAX_TOKENS_ANALYZE_PHASE2 = 3_800;
+/** Single-call architecture: overview + tools + risks (replaces phase1+phase2 when merged path runs). */
+export const MAX_TOKENS_ANALYZE_MERGED = 7_200;
 
 export const MAX_TOKENS_GENERATE_PROMPTS = 5_500;
 export const MAX_TOKENS_GENERATE_CODE = 2_800;

@@ -51,6 +51,8 @@ export interface ProjectState {
   locked: boolean;
   /** Last generated premium landing HTML for this project (restored on return to Architecture). */
   landingPage?: LandingPageSnapshot | null;
+  /** True after the combined architecture + AI prompts pipeline succeeded (auto or manual). */
+  autoPlanPipelineDone?: boolean;
 }
 
 interface BuildCraftStore {
@@ -94,8 +96,9 @@ interface BuildCraftStore {
   patchProject:      (partial: Partial<ProjectState>) => void;
   toggleAssumption:  (id: string) => void;
   setToolApproval:   (toolId: string, approved: boolean) => void;
-  lockProject:       () => void;
   setPromptsViewed:  (v: boolean) => void;
+  clearProject:      () => void;
+  incrementVersion:  () => void;
   reset:             () => void;
 }
 
@@ -170,6 +173,22 @@ export const useStore = create<BuildCraftStore>()(
           project: state.project ? { ...state.project, locked: true } : null,
         })),
       setPromptsViewed: (v) => set({ promptsViewed: v }),
+      clearProject: () =>
+        set(() => ({
+          project: null,
+          savedProjectId: null,
+          approvedTools: {},
+          promptsViewed: false,
+        })),
+      incrementVersion: () =>
+        set((state) => {
+          if (!state.project) return state;
+          const currentVersion = parseFloat(state.project.version.replace("v", "")) || 1.0;
+          const newVersion = `v${(currentVersion + 0.1).toFixed(1)}`;
+          return {
+            project: { ...state.project, version: newVersion },
+          };
+        }),
       reset: () => set(defaultState),
     }),
     {

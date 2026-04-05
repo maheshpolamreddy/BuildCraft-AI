@@ -149,6 +149,23 @@ Palette ${palette.name}. Mood ${variant}. Include nav, hero, features(3), steps(
 }
 
 /**
+ * Deterministic body HTML when all LLM providers fail — matches Stitch CSS class conventions
+ * so `finalizeStitchHtml` can wrap a usable preview.
+ */
+export function buildFallbackStitchBodyContent(name: string, idea: string): string {
+  const safe = idea.trim().slice(0, 400) || "A modern product experience built with BuildCraft AI.";
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const title = esc(name);
+  const sub = esc(safe);
+  return `<nav><div class="nav-inner"><div class="nav-logo"><span>${title}</span></div><div class="nav-links"><a href="#">Features</a><a href="#">How it works</a><a href="#">Pricing</a><a href="#">About</a></div><div class="nav-cta"><a class="btn btn-primary" href="#">Get started</a></div></div></nav>
+<section class="hero"><div class="hero-orb" style="width:420px;height:420px;top:-120px;left:10%;background:var(--p);opacity:0.35"></div><div class="hero-orb" style="width:360px;height:360px;top:40px;right:8%;background:var(--p2);opacity:0.28"></div><div class="container"><div class="hero-badge">Built with BuildCraft AI</div><h1>Ship <span class="gradient">${title}</span> faster</h1><p>${sub}</p><div class="hero-btns"><a class="btn btn-lg btn-primary" href="#">Start now</a><a class="btn btn-lg btn-outline" href="#">View demo</a></div><div class="hero-trust">Trusted by teams shipping real products</div></div></section>
+<section class="section"><div class="container"><span class="section-label">Why it matters</span><h2 class="section-title">Designed for clarity</h2><p class="section-sub">We could not reach an AI model in time, so this is a styled placeholder you can replace after checking API keys in Vercel.</p><div class="section-divider"></div><div class="features-grid"><div class="feature-card"><div class="feature-icon"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div><h3>Fast setup</h3><p>Connect your stack and iterate in minutes.</p></div><div class="feature-card"><div class="feature-icon"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><h3>Secure by default</h3><p>Environment-based configuration for production.</p></div><div class="feature-card"><div class="feature-icon"><svg class="icon-svg" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div><h3>Ship quality</h3><p>Premium layout tokens match your brand palette.</p></div></div></div></section>
+<section class="section section-alt"><div class="container"><span class="section-label">How it works</span><h2 class="section-title">Three simple steps</h2><div class="steps-row"><div class="step-card"><div class="step-num">1</div><h3>Describe</h3><p>Capture goals and constraints for your product.</p></div><div class="step-card"><div class="step-num">2</div><h3>Build</h3><p>Generate architecture, prompts, and UI with AI.</p></div><div class="step-card"><div class="step-num">3</div><h3>Launch</h3><p>Deploy with confidence on your chosen platform.</p></div></div></div></section>
+<footer><div class="footer-inner"><div class="footer-top"><div class="footer-brand"><div class="nav-logo"><span>${title}</span></div><p>Placeholder landing — regenerate when AI keys are configured.</p></div></div><div class="footer-bottom"><span>© ${new Date().getFullYear()} ${title}</span><span>Built with BuildCraft AI</span></div></div></footer>`;
+}
+
+/**
  * Wrap model output in a full document with injected fonts + premium CSS.
  */
 export function finalizeStitchHtml(
