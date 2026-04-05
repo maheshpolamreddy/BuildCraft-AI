@@ -844,7 +844,7 @@ function aiToolId(name: string) {
 
 export default function ArchitectureView() {
   const router = useRouter();
-  const { project, setProject, approvedTools, setToolApproval, lockProject, setPromptsViewed, promptsViewed, currentUser, savedProjectId, setSavedProjectId, patchProject, clearProject, incrementVersion } =
+  const { project, setProject, approvedTools, setToolApproval, setPromptsViewed, promptsViewed, currentUser, savedProjectId, setSavedProjectId, patchProject, clearProject, incrementVersion } =
     useStore();
   const [activeTab, setActiveTab] = useState<Tab>("architecture");
   const version = project?.version ?? "v1.0";
@@ -1146,7 +1146,7 @@ export default function ArchitectureView() {
   }, [project?.landingPage?.savedAt]);
 
   const handleLockAndProceed = async () => {
-    lockProject();
+    patchProject({ locked: true });
 
     // Persist the locked plan to Firestore
     if (currentUser && project && savedProjectId) {
