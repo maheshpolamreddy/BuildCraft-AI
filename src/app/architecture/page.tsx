@@ -935,6 +935,13 @@ export default function ArchitectureView() {
   const [analysisError, setAnalysisError]       = useState<string | null>(null);
   const [analysisPhaseIndex, setAnalysisPhaseIndex] = useState(0);
 
+  // Restore persisted analysis from project for deterministic retrieval
+  useEffect(() => {
+    if (project?.aiAnalysis) setAiAnalysis(project.aiAnalysis);
+    if (project?.aiPrompts) setAiPrompts(project.aiPrompts as any);
+    if (project?.aiBlueprint) setAiBlueprint(project.aiBlueprint);
+  }, [project?.aiAnalysis, project?.aiPrompts, project?.aiBlueprint]);
+
   // Stitch full-project UI state
   const [stitchStep, setStitchStep] = useState<0 | 1 | 2 | 3 | 4>(0);
   // 0=idle 1=creating project 2=generating screens 3=polling for HTML 4=done
@@ -1062,8 +1069,21 @@ export default function ArchitectureView() {
       if (project.autoPlanPipelineDone) {
         incrementVersion();
       }
-      patchProject({ autoPlanPipelineDone: true });
+      const partialUpdate = { 
+        aiAnalysis: analysis, 
+        aiPrompts: prompts as any, 
+        aiBlueprint: blueprint, 
+        autoPlanPipelineDone: true 
+      };
+      patchProject(partialUpdate);
       setPromptsViewed(true);
+
+      const st = useStore.getState();
+      if (st.currentUser && st.savedProjectId && st.project) {
+        updateProject(st.savedProjectId, { ...st.project, ...partialUpdate }, st.approvedTools).catch((err) =>
+          console.warn("[Firestore] auto orchestration save failed:", err)
+        );
+      }
     } catch (err) {
       setPromptsError(getUserFacingError(err));
       autoOrchestrateAttempted.current = false;
@@ -1096,6 +1116,18 @@ export default function ArchitectureView() {
       if (data.blueprint && typeof data.blueprint === "object") {
         setAiBlueprint(data.blueprint as ProjectBlueprint);
       }
+      
+      const partialUpdate = {
+        aiPrompts: prompts as any,
+        aiBlueprint: data.blueprint as any,
+      };
+      patchProject(partialUpdate);
+      const st = useStore.getState();
+      if (st.currentUser && st.savedProjectId && st.project) {
+        updateProject(st.savedProjectId, { ...st.project, ...partialUpdate }, st.approvedTools).catch((err) =>
+          console.warn("[Firestore] generateBuildPrompts save failed:", err)
+        );
+      }
     } catch (err) {
       setPromptsError(getUserFacingError(err));
     } finally {
@@ -1110,6 +1142,12 @@ export default function ArchitectureView() {
 
   useEffect(() => {
     if (!requirementsReadyForOrchestration) return;
+
+    if (project?.aiAnalysis && project?.aiPrompts) {
+      // Deterministic retrieval: Data is already in the project, bypass orchestration
+      return;
+    }
+
     if (project?.autoPlanPipelineDone) return;
     if (analysisLoading || promptsLoading) return;
     if (autoOrchestrateAttempted.current) return;

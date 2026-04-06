@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { AuthUser } from "@/lib/auth";
 import type { DeveloperProfile } from "@/lib/developerProfile";
+import type { ProjectAnalysis, GeneratedPromptRow, ProjectBlueprint } from "@/lib/plan-orchestration";
 
 export type Role = "employer" | "employee" | null;
 export type Purpose = "startup" | "enterprise" | "learning" | "freelance" | null;
@@ -53,6 +54,12 @@ export interface ProjectState {
   landingPage?: LandingPageSnapshot | null;
   /** True after the combined architecture + AI prompts pipeline succeeded (auto or manual). */
   autoPlanPipelineDone?: boolean;
+  /** Persisted architecture analysis results scoped to this project */
+  aiAnalysis?: ProjectAnalysis | null;
+  /** Persisted generated prompt details scoped to this project */
+  aiPrompts?: GeneratedPromptRow[] | null;
+  /** Persisted generated blueprint scoped to this project */
+  aiBlueprint?: ProjectBlueprint | null;
 }
 
 interface BuildCraftStore {

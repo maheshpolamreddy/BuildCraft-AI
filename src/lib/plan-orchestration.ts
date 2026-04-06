@@ -12,6 +12,7 @@ import {
   MAX_PROJECT_DESCRIPTION_CHARS,
   MAX_TOKENS_GENERATE_PROMPTS,
 } from "@/lib/ai-limits";
+import { getCachedOrchestration, setCachedOrchestration, generateCacheKey } from "@/lib/cache";
 
 // ── Analysis types (aligned with /api/analyze-project) ───────────────────────
 
@@ -289,16 +290,27 @@ export async function runAnalyzeProjectCore(projectName: string, projectIdea: st
     throw new Error(NIM_KEY_ERROR);
   }
 
-  if (process.env.AI_ANALYZE_TWO_PHASE?.trim() === "1") {
-    return runAnalyzeProjectTwoPhase(projectName, projectIdea);
+  const cacheKey = await generateCacheKey("analysis", projectName, projectIdea);
+  const cached = await getCachedOrchestration<ProjectAnalysis>(cacheKey);
+  if (cached) {
+    console.log("[cache] Hit for analyze project:", cacheKey);
+    return cached;
   }
 
-  try {
-    return await runAnalyzeProjectMerged(projectName, projectIdea);
-  } catch (e) {
-    console.warn("[plan-orchestration] merged analyze failed, using two-phase fallback:", e);
-    return runAnalyzeProjectTwoPhase(projectName, projectIdea);
+  let result: ProjectAnalysis;
+  if (process.env.AI_ANALYZE_TWO_PHASE?.trim() === "1") {
+    result = await runAnalyzeProjectTwoPhase(projectName, projectIdea);
+  } else {
+    try {
+      result = await runAnalyzeProjectMerged(projectName, projectIdea);
+    } catch (e) {
+      console.warn("[plan-orchestration] merged analyze failed, using two-phase fallback:", e);
+      result = await runAnalyzeProjectTwoPhase(projectName, projectIdea);
+    }
   }
+
+  await setCachedOrchestration(cacheKey, result);
+  return result;
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────
@@ -396,9 +408,17 @@ export async function runGeneratePromptsCore(
     throw new Error(NIM_KEY_ERROR);
   }
 
+  const toolStack = Array.isArray(tools) ? tools.join(", ") : tools || "Next.js, Supabase, Tailwind CSS, TypeScript";
+
+  const cacheKey = await generateCacheKey("prompts", projectName, projectIdea, toolStack);
+  const cached = await getCachedOrchestration<{ prompts: GeneratedPromptRow[]; blueprint: ProjectBlueprint }>(cacheKey);
+  if (cached) {
+    console.log("[cache] Hit for generate prompts:", cacheKey);
+    return cached;
+  }
+
   const name = projectName.trim() || "My App";
   const idea = projectIdea.trim();
-  const toolStack = Array.isArray(tools) ? tools.join(", ") : tools || "Next.js, Supabase, Tailwind CSS, TypeScript";
 
   const userMsg = `Project name: "${name}"
 Description: ${idea || `A web application called ${name}`}
@@ -445,7 +465,9 @@ Return ONE JSON object with "blueprint" and "prompts" (6 items) as specified.`;
     prompt: String(p.prompt ?? ""),
   }));
 
-  return { prompts: validated, blueprint };
+  const finalData = { prompts: validated, blueprint };
+  await setCachedOrchestration(cacheKey, finalData);
+  return finalData;
 }
 
 export async function runFullPlanOrchestration(
