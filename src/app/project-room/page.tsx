@@ -327,7 +327,7 @@ function ProjectRoomContent() {
              }),
         }));
         setMilestones(withState);
-        await setWorkspaceMilestones(savedProjectId, withState as any);
+        await setWorkspaceMilestones(savedProjectId, withState as any, currentUser?.uid);
         if (currentUser) {
           logAction(currentUser.uid, "project.updated", { action: "milestones_regenerated" }).catch(() => {});
         }
@@ -498,6 +498,9 @@ function ProjectRoomContent() {
       const devs = data.developers;
       if (ok && Array.isArray(devs) && devs.length) {
         setMatchedDevs(devs);
+        if (savedProjectId && currentUser) {
+          await setWorkspaceMatchedDevelopers(savedProjectId, devs, currentUser.uid);
+        }
         if (currentUser) logAction(currentUser.uid, "analysis.generated", { type: "developer-matching", count: devs.length });
       } else {
         setMatchError(true);
@@ -662,7 +665,7 @@ function ProjectRoomContent() {
       tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "approved" as TaskStatus } : t)
     }));
     setMilestones(nextMilestones);
-    await setWorkspaceMilestones(savedProjectId, nextMilestones as any);
+    await setWorkspaceMilestones(savedProjectId, nextMilestones as any, currentUser?.uid);
     setReviewTask(null);
     logAction(currentUser.uid, "milestone.approved", {
       taskId: task.id,
@@ -678,7 +681,7 @@ function ProjectRoomContent() {
       tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "rejected" as TaskStatus } : t)
     }));
     setMilestones(nextMilestones);
-    await setWorkspaceMilestones(savedProjectId, nextMilestones as any);
+    await setWorkspaceMilestones(savedProjectId, nextMilestones as any, currentUser?.uid);
     setReviewTask(null);
     logAction(currentUser.uid, "milestone.rejected", {
       taskId: task.id,

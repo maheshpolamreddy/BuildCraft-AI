@@ -48,6 +48,7 @@ export interface Milestone {
 
 export interface WorkspaceState {
   projectId: string;
+  uid?: string; // Creator's Firebase UID
   milestones: Milestone[];
   matchedDevelopers?: any[] | null;
   updatedAt: number;
@@ -56,13 +57,14 @@ export interface WorkspaceState {
 /**
  * Ensures a workspace document exists for the project.
  */
-export async function initializeWorkspace(projectId: string, initialMilestones: Milestone[]): Promise<void> {
+export async function initializeWorkspace(projectId: string, initialMilestones: Milestone[], uid?: string): Promise<void> {
   if (!projectId) return;
   const ref = doc(db, "projectWorkspaces", projectId);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
     await setDoc(ref, {
       projectId,
+      uid,
       milestones: initialMilestones,
       updatedAt: Date.now(),
     });
@@ -83,11 +85,12 @@ export async function getWorkspaceState(projectId: string): Promise<WorkspaceSta
 /**
  * Replaces all milestones in the project workspace.
  */
-export async function setWorkspaceMilestones(projectId: string, milestones: Milestone[]): Promise<void> {
+export async function setWorkspaceMilestones(projectId: string, milestones: Milestone[], uid?: string): Promise<void> {
   if (!projectId) return;
   const ref = doc(db, "projectWorkspaces", projectId);
   await setDoc(ref, {
     projectId,
+    uid,
     milestones,
     updatedAt: Date.now(),
   }, { merge: true });
@@ -162,10 +165,11 @@ export function subscribeToWorkspace(
 /**
  * Replaces the matched developers in the project workspace.
  */
-export async function setWorkspaceMatchedDevelopers(projectId: string, developers: any[]): Promise<void> {
+export async function setWorkspaceMatchedDevelopers(projectId: string, developers: any[], uid?: string): Promise<void> {
   if (!projectId) return;
   const ref = doc(db, "projectWorkspaces", projectId);
   await setDoc(ref, {
+    uid,
     matchedDevelopers: developers,
     updatedAt: Date.now(),
   }, { merge: true });

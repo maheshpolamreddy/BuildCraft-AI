@@ -80,6 +80,19 @@ service cloud.firestore {
       allow update, delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
 
+    // ── Project Workspaces (milestones + talent sync) ─────────────────────
+    match /projectWorkspaces/{projectId} {
+      // Allow read if user owns the document (UID on doc) OR owns the parent project
+      allow read: if signedIn() && (
+        (exists(resource) && resource.data.uid == request.auth.uid) ||
+        get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid
+      );
+      // Allow write if user owns the parent project
+      allow create, update, delete: if signedIn() && (
+        get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid
+      );
+    }
+
     // ── Audit log ───────────────────────────────────────────────────────────
     match /auditLog/{entryId} {
       allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
