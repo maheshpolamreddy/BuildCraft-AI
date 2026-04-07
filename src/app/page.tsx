@@ -76,18 +76,17 @@ export default function LandingPage() {
         <Threads amplitude={2} distance={0} enableMouseInteraction={true} color={[0.2, 0.4, 0.9]} />
       </div>
 
-      {/* ── Ultimate Sleek Floating Header ────────────────────────────────────────── */}
+      {/* ── Refined Sleek Floating Header ────────────────────────────────────────── */}
       <div className="fixed top-0 left-0 right-0 z-50 flex justify-center p-6 pointer-events-none">
         <motion.header 
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="glass-panel pointer-events-auto max-w-7xl w-full border border-white/10 bg-[#0A0A0A]/60 backdrop-blur-3xl px-8 py-3.5 rounded-[2.5rem] grid grid-cols-3 items-center shadow-2xl shadow-indigo-500/10 relative group transition-all duration-700 hover:border-white/20 hover:shadow-indigo-500/20"
+          className="glass-panel pointer-events-auto max-w-6xl w-full border border-white/10 bg-[#0A0A0A]/60 backdrop-blur-3xl px-8 py-3.5 rounded-[2.5rem] flex justify-between items-center shadow-2xl shadow-indigo-500/10 relative group transition-all duration-700 hover:border-white/20 hover:shadow-indigo-500/20"
         >
           {/* Visual Highlight Beam & Grain */}
           <div className="absolute inset-x-20 -top-px h-px bg-gradient-to-r from-transparent via-blue-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
           <div className="absolute inset-0 opacity-[0.02] pointer-events-none bg-[url('/noise.svg')] rounded-[2.5rem]" />
           
-          {/* Column 1: Branding & Version */}
           <div className="flex items-center gap-5">
             <button 
               onClick={() => setShowLogoEasterEgg(true)}
@@ -98,22 +97,18 @@ export default function LandingPage() {
                 <div className="absolute inset-0 bg-blue-500/30 blur-2xl rounded-full opacity-0 group-hover/logo:opacity-100 transition-opacity duration-1000" />
               </div>
               <div className="flex flex-col">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg font-black tracking-tighter text-white uppercase leading-none">BuildCraft</span>
-                  <span className="px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 text-[7px] font-black text-white/40 tracking-widest uppercase">v1.1.0</span>
-                </div>
+                <span className="text-lg font-black tracking-tighter text-white uppercase leading-none">BuildCraft</span>
                 <span className="text-[7px] font-black tracking-[0.5em] text-blue-500 uppercase mt-1 ml-0.5 opacity-80">Intelligence Engine</span>
               </div>
             </button>
           </div>
 
-          {/* Column 2: Symmetric Premium Nav */}
-          <nav className="hidden lg:flex items-center justify-center gap-10">
+          {/* Premium Nav Links (Simplified) */}
+          <nav className="hidden lg:flex items-center justify-center gap-12">
             {[
               { label: "Features", href: "#features" },
               { label: "How it Works", href: "#" },
-              { label: "Pricing", href: "#" },
-              { label: "Trust", href: "#compliance" },
+              { label: "Trust Center", href: "#compliance" },
             ].map((link) => (
               <Link 
                 key={link.label} 
@@ -128,27 +123,20 @@ export default function LandingPage() {
             ))}
           </nav>
 
-          {/* Column 3: Global Search & Auth Actions */}
-          <div className="flex items-center justify-end gap-5">
-            {/* Minimalist Search Bar */}
-            <div className="hidden xl:flex items-center gap-3 px-4 py-2 rounded-2xl bg-white/5 border border-white/5 hover:border-white/10 transition-all cursor-pointer group/search">
-              <Search className="w-3.5 h-3.5 text-white/20 group-hover/search:text-white/60 transition-colors" />
-              <span className="text-[9px] font-black tracking-widest text-white/20 uppercase">Search Projects</span>
-              <div className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 text-[8px] font-black text-white/20">
-                <Command className="w-2 h-2 mr-0.5" /> K
-              </div>
-            </div>
-
-            <div className="flex items-center gap-5 border-l border-white/10 pl-5">
+          <div className="flex items-center justify-end gap-6">
+            <div className="flex items-center gap-4 border-l border-white/10 pl-6">
               {currentUser ? (
                 <button
                   onClick={handleLogout}
-                  className="p-2.5 rounded-xl hover:bg-white/5 text-white/20 hover:text-white transition-all"
+                  className="p-2.5 rounded-xl border border-white/5 bg-white/5 text-white/20 hover:text-white hover:border-white/20 hover:bg-white/10 transition-all"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
               ) : (
-                <Link href="/auth" className="text-[10px] font-black uppercase tracking-[0.25em] text-white/30 hover:text-white transition-colors">
+                <Link 
+                  href="/auth" 
+                  className="px-5 py-2.5 rounded-xl border border-white/10 bg-white/5 text-[9px] font-black uppercase tracking-[0.2em] text-white/60 hover:text-white hover:border-white/30 hover:bg-white/10 transition-all shadow-lg shadow-black/20"
+                >
                   Sign In
                 </Link>
               )}
@@ -156,7 +144,7 @@ export default function LandingPage() {
               {/* Dynamic Sleek CTA */}
               <button
                 onClick={() => router.push(getStartBuildingHref())}
-                className="px-6 py-3 bg-white text-black font-black uppercase tracking-[0.2em] text-[10px] rounded-2xl shadow-xl shadow-white/10 hover:bg-white/90 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center gap-2 group/cta"
+                className="px-7 py-3 bg-white text-black font-black uppercase tracking-[0.2em] text-[10px] rounded-[1.2rem] shadow-xl shadow-white/10 hover:bg-blue-50 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center gap-2 group/cta"
               >
                 {getStartBuildingLabel()}
                 <ArrowRight className="w-3.5 h-3.5 group-hover/cta:translate-x-1 transition-transform" />
