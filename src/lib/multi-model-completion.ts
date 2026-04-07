@@ -123,7 +123,7 @@ async function completeChatMultiModelCompact(
   const slot = () => Math.max(2_000, Math.min(compactOpenAiTimeoutMs(), msLeft() - 250));
 
   const groq = getGroqClient({ timeoutMs: slot(), maxRetries: 0 });
-  if (groq && msLeft() > 1_200) {
+  if (groq && msLeft() > 1_500) {
     try {
       const text = await tryOpenAiOnce(groq, getGroqModelId(), openAiParams);
       if (text) return { text, provider: "groq" };
@@ -134,7 +134,7 @@ async function completeChatMultiModelCompact(
 
   const primaryCompact = getNimClientForServerlessCompact(slot(), 0);
   const primaryModel = opts.stitchPrimaryModel ? getStitchModelId() : getAiChatModelId();
-  if (primaryCompact && msLeft() > 1_200) {
+  if (primaryCompact && msLeft() > 1_500) {
     try {
       const text = await tryOpenAiOnce(primaryCompact, primaryModel, openAiParams);
       if (text) return { text, provider: "primary" };
@@ -143,8 +143,8 @@ async function completeChatMultiModelCompact(
     }
   }
 
-  const gemCap = Math.min(compactGeminiMaxMs(), Math.max(1_800, msLeft() - 400));
-  if (msLeft() > 900) {
+  const gemCap = Math.min(compactGeminiMaxMs(), Math.max(2_500, msLeft() - 400));
+  if (msLeft() > 1_200) {
     const geminiText = await tryGemini(messages, gemCap, true);
     if (geminiText) return { text: geminiText, provider: "gemini" };
   }

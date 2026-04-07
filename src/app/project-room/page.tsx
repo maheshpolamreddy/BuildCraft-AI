@@ -1,5 +1,6 @@
 "use client";
 
+import { subscribeToWorkspace, updateWorkspaceTask } from "@/lib/workspace";
 import { useState, useEffect, useMemo, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -42,7 +43,7 @@ import { auth, db } from "@/lib/firebase";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Tab = "milestones" | "talent" | "prd" | "chat" | "audit" | "deploy" | "history";
-type TaskStatus = "todo" | "in-progress" | "review" | "approved" | "rejected";
+type TaskStatus = "todo" | "in-progress" | "validating" | "review" | "approved" | "rejected";
 
 interface Task {
   id: string;
@@ -238,6 +239,17 @@ function ProjectRoomContent() {
   const doneTasks  = allTasks.filter(t => t.status === "approved").length;
   const inReview   = allTasks.filter(t => t.status === "review").length;
   const progress   = allTasks.length ? Math.round((doneTasks / allTasks.length) * 100) : 0;
+
+
+  // ── Sync Milestones from Real-Time Workspace ─────────────────────────────
+  useEffect(() => {
+    if (!savedProjectId) return;
+    return subscribeToWorkspace(savedProjectId, (state) => {
+       if (state && state.milestones) {
+           setMilestones(state.milestones);
+       }
+    });
+  }, [savedProjectId]);
 
   // ── Generate milestones from AI ────────────────────────────────────────────
   useEffect(() => {
@@ -586,20 +598,18 @@ function ProjectRoomContent() {
   }, [activeTab, currentUser]);
 
   // ── Task actions ────────────────────────────────────────────────────────────
-  function approveTask(task: Task) {
-    setMilestones(prev => prev.map(m => ({
-      ...m,
-      tasks: m.tasks.map(t => t.id !== task.id ? t : { ...t, status: "approved" }),
-    })));
+  async function approveTask(task: Task) {
+    if (savedProjectId && expandedMilestone) {
+        await updateWorkspaceTask(savedProjectId, expandedMilestone, task.id, { status: "approved" });
+    }
     setReviewTask(null);
     if (currentUser) logAction(currentUser.uid, "tool.approved", { task: task.title, projectId: savedProjectId });
   }
 
-  function rejectTask(task: Task) {
-    setMilestones(prev => prev.map(m => ({
-      ...m,
-      tasks: m.tasks.map(t => t.id !== task.id ? t : { ...t, status: "rejected" }),
-    })));
+  async function rejectTask(task: Task) {
+    if (savedProjectId && expandedMilestone) {
+        await updateWorkspaceTask(savedProjectId, expandedMilestone, task.id, { status: "rejected" });
+    }
     setReviewTask(null);
   }
 
@@ -801,6 +811,7 @@ function ProjectRoomContent() {
                         const sc: Record<TaskStatus, { label: string; color: string; bg: string }> = {
                           "todo":        { label: "To Do",       color: "text-white/40",    bg: "bg-white/5 border-white/10" },
                           "in-progress": { label: "In Progress", color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/30" },
+                          "validating":  { label: "Validating",  color: "text-yellow-400",  bg: "bg-yellow-500/10 border-yellow-500/30" },
                           "review":      { label: "In Review",   color: "text-purple-400",  bg: "bg-purple-500/10 border-purple-500/30" },
                           "approved":    { label: "Approved",    color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30" },
                           "rejected":    { label: "Rejected",    color: "text-red-400",     bg: "bg-red-500/10 border-red-500/30" },
@@ -997,7 +1008,8 @@ function ProjectRoomContent() {
                         <motion.div key={dev.userId}
                           initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
                           transition={{ delay: idx * 0.07 }}
-                          className={`glass-panel rounded-2xl border transition-all overflow-hidden ${isHired ? "border-emerald-500/40 bg-emerald-500/5" : "border-white/10 hover:border-white/20"}`}>
+                          className={`relative group rounded-3xl border transition-all overflow-hidden ${isHired ? "border-emerald-500/40 bg-emerald-500/5 shadow-[0_0_30px_rgba(16,185,129,0.1)]" : "bg-gradient-to-br from-[#111] to-[#080808] border-white/5 hover:border-indigo-500/40 hover:shadow-[0_8px_40px_rgba(79,70,229,0.2)]"}`}>
+                          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
 
                           {/* Rank ribbon */}
                           <div className={`flex items-center gap-2 px-6 py-2 border-b border-white/5 text-[9px] font-black uppercase tracking-widest ${idx === 0 ? "bg-indigo-500/10 text-indigo-400" : "bg-white/5 text-white/30"}`}>

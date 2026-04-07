@@ -19,6 +19,7 @@ import {
 } from "@/lib/nim-client";
 import { isRetryableWithFallback, runChatWithRetry } from "@/lib/ai-retry";
 import { cloudflareWorkersAiChat } from "@/lib/cloudflare-workers-ai";
+import { useCompactServerlessAiChain } from "@/lib/vercel-ai";
 
 export type OrchestrationTask =
   | "architecture_deep"
@@ -120,11 +121,13 @@ export async function orchestrateChatCompletion(
   const secondary = getSecondaryNimClient();
   const secondaryModel = getSecondaryChatModelId();
   const minLen = opts?.minContentLength;
+  const compact = useCompactServerlessAiChain();
+  const effectivePrimaryOnly = opts?.primaryOnly || compact;
 
   const runWith = (client: OpenAI, model: string) =>
     runChatWithRetry(client, { ...params, stream: false, model });
 
-  if (opts?.primaryOnly) {
+  if (effectivePrimaryOnly) {
     const c = await primary.chat.completions.create({
       ...params,
       stream: false,

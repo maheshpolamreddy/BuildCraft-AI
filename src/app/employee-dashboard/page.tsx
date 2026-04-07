@@ -961,7 +961,7 @@ export default function EmployeeDashboard() {
               <div>
                 <h1 className="text-5xl font-black tracking-tighter text-white">
                   {activeTab === "projects" ? "Project Opportunities"
-                   : activeTab === "workspace" ? "Developer Workspace"
+                   : activeTab === "workspace" ? ""
                    : activeTab === "assessments" ? "Skill Assessments"
                    : "My Profile"}
                 </h1>

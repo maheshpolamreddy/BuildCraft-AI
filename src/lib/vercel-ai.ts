@@ -20,20 +20,20 @@ export function useCompactServerlessAiChain(): boolean {
 /** OpenAI-compatible SDK timeout for compact chain (stay under serverless wall clock). */
 export function compactOpenAiTimeoutMs(): number {
   const raw = Number(process.env.VERCEL_AI_UPSTREAM_TIMEOUT_MS);
-  if (Number.isFinite(raw) && raw >= 4_000 && raw <= 25_000) return Math.floor(raw);
-  return 18_000;
+  if (Number.isFinite(raw) && raw >= 4_000 && raw <= 8_000) return Math.floor(raw);
+  return 7_000;
 }
 
 /** Cap Gemini wait so fallbacks can still run within the same invocation. */
 export function compactGeminiMaxMs(): number {
   const raw = Number(process.env.VERCEL_GEMINI_MAX_MS);
-  if (Number.isFinite(raw) && raw >= 3_000 && raw <= 20_000) return Math.floor(raw);
-  return 14_000;
+  if (Number.isFinite(raw) && raw >= 3_000 && raw <= 7_500) return Math.floor(raw);
+  return 6_500;
 }
 
 /** Wall-clock budget for compact multi-provider chain (Groq → primary → Gemini → optional HF/CF). */
 export function compactChainBudgetMs(): number {
   const raw = Number(process.env.VERCEL_AI_COMPACT_BUDGET_MS);
-  if (Number.isFinite(raw) && raw >= 12_000 && raw <= 290_000) return Math.floor(raw);
-  return 58_000;
+  if (Number.isFinite(raw) && raw >= 6_000 && raw <= 290_000) return Math.floor(raw);
+  return 7_000;
 }

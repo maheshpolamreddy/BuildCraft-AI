@@ -52,12 +52,12 @@ Per-type fields (components):
 - list: items (required) — strings OR { "title", "desc"? }
 - form: title?, children?
 
-QUALITY BAR:
-- Prefer "layout": "grid" or "landing" with "sections" for marketing pages.
-- Use multiple cards for dashboards, pricing, feature grids.
-- Keep 6–14 top-level components (or matching sections) for rich screens.
-
-Make the screen specific to the project name/context when provided.`;
+QUALITY BAR (CRITICAL):
+- Strong Visual Hierarchy: Use clear headings, varied font weights, and ample whitespace (the renderer handles the glass effect).
+- Premium Microcopy: Avoid generic text. Use compelling, benefit-driven headlines and clear CTAs.
+- Component Density: Aim for 6–14 high-quality components/sections for a professional feel.
+- Nested Layouts: Use cards, grids, and split layouts to organize information logically.
+- Contextual Relevance: Tailor every piece of text to the project name and idea provided.`;
 
 export function buildUserMessageUiJson(prompt: string, projectName: string, projectIdea: string): string {
   return `User request (UI to generate):\n${prompt.trim()}\n\nProject name: ${projectName}\nContext: ${projectIdea.slice(0, 2_000)}`;
@@ -77,12 +77,12 @@ export async function runUiJsonPipeline(input: {
 }): Promise<{ ui: UIScreenJson; meta: UiJsonPipelineMeta }> {
   const userMsg = buildUserMessageUiJson(input.prompt, input.projectName, input.projectIdea);
   const compact = useCompactServerlessAiChain();
-  const maxTokUi = compact ? Math.min(MAX_TOKENS_GENERATE_UI_JSON, 2_800) : MAX_TOKENS_GENERATE_UI_JSON;
+  const maxTokUi = compact ? 1_200 : MAX_TOKENS_GENERATE_UI_JSON;
 
   const genOnce = async (): Promise<{ text: string; provider: string }> => {
     return completeChatMultiModel(
       [
-        { role: "system", content: SYSTEM_UI_JSON },
+        { role: "system", content: compact ? `${SYSTEM_UI_JSON}\n\nCONCISE MODE: Return a high-impact but minimal JSON. Limit to 4-7 primary sections/components to ensure fast response.` : SYSTEM_UI_JSON },
         { role: "user", content: userMsg },
       ],
       { max_tokens: maxTokUi, temperature: 0.25 },

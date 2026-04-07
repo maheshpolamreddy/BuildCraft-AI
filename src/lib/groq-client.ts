@@ -28,5 +28,5 @@ export function getGroqClient(opts?: GroqClientOpts): OpenAI | null {
 }
 
 export function getGroqModelId(): string {
-  return process.env.GROQ_MODEL_ID?.trim() || "llama-3.3-70b-versatile";
+  return process.env.GROQ_MODEL_ID?.trim() || "llama-3.1-8b-instant";
 }

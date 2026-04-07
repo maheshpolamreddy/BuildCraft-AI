@@ -4,6 +4,7 @@ import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
 import { readJsonBody } from "@/lib/read-json-body";
 import { MAX_TOKENS_GENERATE_PREVIEW } from "@/lib/ai-limits";
 import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
+import { useCompactServerlessAiChain } from "@/lib/vercel-ai";
 
 export const maxDuration = 180;
 
@@ -167,15 +168,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: NIM_KEY_ERROR }, { status: 503 });
     }
 
+    const compact = useCompactServerlessAiChain();
     let html = await orchestrateChatCompletion(
       "code_generation",
       {
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { 
+            role: "system", 
+            content: compact 
+              ? `${SYSTEM_PROMPT}\n\nSTRICT: You are in an ultra-fast generation mode. Be EXTREMELY concise. Generate only the core UI layout. No extra sub-pages or elaborate mock copy.` 
+              : SYSTEM_PROMPT 
+          },
           { role: "user", content: userPrompt },
         ],
         temperature: 0.48,
-        max_tokens: MAX_TOKENS_GENERATE_PREVIEW,
+        max_tokens: compact ? 800 : MAX_TOKENS_GENERATE_PREVIEW,
       },
       { minContentLength: 200 },
     );

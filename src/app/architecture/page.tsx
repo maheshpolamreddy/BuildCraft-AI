@@ -2939,7 +2939,7 @@ export default function ArchitectureView() {
                 </AnimatePresence>
 
                 {/* Component Template Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 items-start">
                   {COMPONENT_TEMPLATES.map((tmpl, cardIdx) => {
                     const isGenerating  = generatingId  === tmpl.id;
                     const isPreviewing  = previewingId  === tmpl.id;
@@ -2979,31 +2979,10 @@ export default function ArchitectureView() {
 
                           {/* Action buttons row */}
                           <div className="flex gap-2 mt-4 flex-wrap">
-                            {/* Preview button */}
-                            <button
-                              onClick={() => generatePreview(tmpl)}
-                              disabled={isPreviewing || isGenerating}
-                              className={`flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all border ${
-                                isPreviewing
-                                  ? "bg-pink-500/10 border-pink-500/30 text-pink-400 cursor-wait"
-                                  : preview
-                                  ? "bg-pink-500/10 border-pink-500/30 text-pink-400 hover:bg-pink-500/20"
-                                  : "glass-panel border-white/10 text-white/70 hover:text-white hover:border-white/30"
-                              }`}
-                            >
-                              {isPreviewing ? (
-                                <><Loader2 className="w-3 h-3 animate-spin" /> Rendering...</>
-                              ) : preview ? (
-                                <><RefreshCw className="w-3 h-3" /> Re-render</>
-                              ) : (
-                                <><ImageIcon className="w-3 h-3" /> Preview UI</>
-                              )}
-                            </button>
-
                             {/* Code button */}
                             <button
                               onClick={() => generateCode(tmpl)}
-                              disabled={isGenerating || isPreviewing}
+                              disabled={isGenerating}
                               className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
                                 isGenerating
                                   ? "bg-purple-500/10 border border-purple-500/20 text-purple-400 cursor-wait"
@@ -3235,18 +3214,21 @@ export default function ArchitectureView() {
             <p className="text-[#888] text-xs font-light leading-relaxed">
               Once you lock your technical plan, the <strong className="text-white">Project Workspace</strong> unlocks with:
             </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {[
                 { icon: "🤖", label: "AI Developer Matching", desc: "Ranked list of developers matched to your project requirements." },
                 { icon: "📩", label: "Hire Request Emails",   desc: "Send invitation emails with accept/decline links in one click." },
                 { icon: "📄", label: "Auto-Generated PRD",    desc: "AI writes your Project Requirement Document after acceptance." },
                 { icon: "💬", label: "Real-Time Chat",        desc: "Chat with Developer and Chat with Client sections activated." },
               ].map(f => (
-                <div key={f.label} className="flex items-start gap-3 p-3 bg-white/5 rounded-xl border border-white/5">
-                  <span className="text-lg shrink-0">{f.icon}</span>
-                  <div>
-                    <p className="text-white text-xs font-bold">{f.label}</p>
-                    <p className="text-[#888] text-[10px] font-light mt-0.5">{f.desc}</p>
+                <div key={f.label} className="group relative flex items-start gap-4 p-4 rounded-2xl bg-gradient-to-br from-[#111] to-[#080808] border border-white/5 hover:border-indigo-500/30 transition-all duration-300 hover:shadow-[0_8px_30px_rgba(79,70,229,0.15)] overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                  <div className="relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-lg shadow-inner transition-transform duration-300 group-hover:scale-110 group-hover:border-indigo-500/30 group-hover:bg-indigo-500/10 group-hover:shadow-[0_0_15px_rgba(79,70,229,0.3)]">
+                    {f.icon}
+                  </div>
+                  <div className="relative z-10 pt-0.5">
+                    <p className="text-white text-xs font-black tracking-wide group-hover:text-indigo-300 transition-colors">{f.label}</p>
+                    <p className="text-[#888] text-[10px] font-medium mt-1 leading-relaxed group-hover:text-white/60 transition-colors">{f.desc}</p>
                   </div>
                 </div>
               ))}
