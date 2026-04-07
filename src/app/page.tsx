@@ -76,72 +76,93 @@ export default function LandingPage() {
         <Threads amplitude={2} distance={0} enableMouseInteraction={true} color={[0.2, 0.4, 0.9]} />
       </div>
 
-      {/* ── Header ────────────────────────────────────────────────────────────── */}
-      <header className="glass-panel text-white font-['Inter'] tracking-tight top-0 border-b border-white/5 flex justify-between items-center w-full px-8 py-5 z-50 sticky">
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={() => setShowLogoEasterEgg(true)}
-            className="text-xl font-black tracking-tighter text-white uppercase flex items-center hover:scale-105 transition-transform group"
-          >
-            <Logo className="w-9 h-9 mr-2 group-hover:drop-shadow-[0_0_15px_rgba(59,130,246,0.8)] transition-all" />
-            BuildCraft AI
-          </button>
-        </div>
-
-        {/* Nav links — Developer link only shown when logged in as developer */}
-        <nav className="hidden md:flex items-center gap-8">
-          <Link href="#features"    className="text-neutral-500 font-semibold text-sm uppercase tracking-widest hover:text-white transition-all">Features</Link>
-          <Link href="#compliance"  className="text-neutral-500 font-semibold text-sm uppercase tracking-widest hover:text-white transition-all">Trust & Safety</Link>
-          {isDeveloper && (
-            <Link href="/employee-dashboard" className="flex items-center gap-1.5 text-sm font-bold uppercase tracking-widest text-blue-400 hover:text-blue-300 transition-all">
-              <UserCheck className="w-4 h-4" /> My Dashboard
-            </Link>
-          )}
-        </nav>
-
-        <div className="flex items-center gap-3">
-          {/* Developer badge — shown only after registration */}
-          {isDeveloper && (
-            <Link
-              href="/employee-dashboard"
-              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-blue-500/30 bg-blue-500/10 text-blue-400 font-bold text-[10px] uppercase tracking-widest hover:bg-blue-500/20 transition-all"
+      {/* ── Modernized Floating Header ────────────────────────────────────────────── */}
+      <div className="fixed top-0 left-0 right-0 z-50 flex justify-center p-6 pointer-events-none">
+        <motion.header 
+          initial={{ y: -20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          className="glass-panel pointer-events-auto max-w-6xl w-full border border-white/10 bg-black/40 backdrop-blur-2xl px-8 py-4 rounded-[2rem] flex justify-between items-center shadow-2xl shadow-indigo-500/5 relative group transition-all duration-500 hover:border-white/20 hover:shadow-indigo-500/10"
+        >
+          {/* Visual Highlight Beam */}
+          <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-blue-500/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+          
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setShowLogoEasterEgg(true)}
+              className="flex items-center gap-2.5 group/logo"
             >
-              <Code2Icon className="w-3 h-3" />
-              Developer
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            </Link>
-          )}
-
-          {/* Auth / Logout */}
-          {currentUser ? (
-            <button
-              onClick={handleLogout}
-              className="hidden md:flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-[#888] hover:text-white transition-colors"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              Logout
+              <div className="relative">
+                <Logo className="w-10 h-10 group-hover/logo:scale-110 transition-transform duration-500 ease-out" />
+                <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full opacity-0 group-hover/logo:opacity-100 transition-opacity duration-700" />
+              </div>
+              <div className="flex flex-col">
+                <span className="text-lg font-black tracking-tighter text-white uppercase leading-none">BuildCraft</span>
+                <span className="text-[8px] font-black tracking-[0.4em] text-blue-500 uppercase mt-0.5 ml-0.5">Intelligence</span>
+              </div>
             </button>
-          ) : (
-            <Link href="/auth" className="hidden md:flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-[#888] hover:text-white transition-colors">
-              Sign In
-            </Link>
-          )}
+          </div>
 
-          {/* CTA button */}
-          {currentUser ? (
-            <button
-              onClick={() => router.push(getStartBuildingHref())}
-              className="px-5 py-2.5 silver-gradient text-black font-black uppercase tracking-widest text-[10px] rounded-full shadow-[0_0_15px_rgba(255,255,255,0.1)] hover:shadow-[0_0_25px_rgba(255,255,255,0.2)] transition-all"
-            >
-              {getStartBuildingLabel()}
-            </button>
-          ) : (
-            <Link href="/auth" className="px-5 py-2.5 silver-gradient text-black font-black uppercase tracking-widest text-[10px] rounded-full shadow-[0_0_15px_rgba(255,255,255,0.1)] hover:shadow-[0_0_25px_rgba(255,255,255,0.2)] transition-all">
-              Get Started
-            </Link>
-          )}
-        </div>
-      </header>
+          {/* Premium Nav Links */}
+          <nav className="hidden lg:flex items-center gap-10">
+            {[
+              { label: "Features", href: "#features" },
+              { label: "Trust & Safety", href: "#compliance" },
+            ].map((link) => (
+              <Link 
+                key={link.label} 
+                href={link.href} 
+                className="relative text-[10px] font-black uppercase tracking-[0.25em] text-white/40 hover:text-white transition-all duration-300 group/link"
+              >
+                {link.label}
+                <span className="absolute -bottom-1 left-0 w-0 h-px bg-blue-500/50 group-hover/link:w-full transition-all duration-500" />
+              </Link>
+            ))}
+            
+            {isDeveloper && (
+              <Link href="/employee-dashboard" className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.25em] text-blue-400/70 hover:text-blue-400 transition-all group/dash">
+                <UserCheck className="w-3.5 h-3.5 group-hover/dash:scale-110 transition-transform" />
+                Hub
+              </Link>
+            )}
+          </nav>
+
+          <div className="flex items-center gap-4">
+            {/* Developer Indicator */}
+            {isDeveloper && (
+              <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-full border border-blue-500/20 bg-blue-500/5 text-blue-400/80 font-black text-[9px] uppercase tracking-widest">
+                <Code2Icon className="w-3 h-3" />
+                Validated
+                <span className="w-1 h-1 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+              </div>
+            )}
+
+            {/* Auth Actions */}
+            <div className="flex items-center gap-4 border-l border-white/10 pl-4 ml-2">
+              {currentUser ? (
+                <button
+                  onClick={handleLogout}
+                  className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20 hover:text-white/60 transition-colors"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              ) : (
+                <Link href="/auth" className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30 hover:text-white transition-colors">
+                  Sign In
+                </Link>
+              )}
+
+              {/* Dynamic CTA */}
+              <button
+                onClick={() => router.push(getStartBuildingHref())}
+                className="px-6 py-3 silver-gradient text-black font-black uppercase tracking-[0.15em] text-[10px] rounded-2xl shadow-xl shadow-white/5 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center gap-2"
+              >
+                {getStartBuildingLabel()}
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        </motion.header>
+      </div>
 
       {/* ── Hero Section ──────────────────────────────────────────────────────── */}
       <section className="pt-32 pb-20 px-6 relative flex flex-col items-center justify-center text-center min-h-[80vh]">
