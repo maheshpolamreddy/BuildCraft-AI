@@ -159,3 +159,15 @@ export async function restoreProject(docId: string) {
     });
   } catch (err) { console.warn("[firestore] restoreProject failed:", err); }
 }
+
+/** Set the developerUid on a project (client-side, uses Firestore rules for auth). */
+export async function claimProjectAsDeveloper(docId: string, developerUid: string): Promise<boolean> {
+  if (!docId || !developerUid) return false;
+  try {
+    await updateDoc(doc(db, "projects", docId), { developerUid });
+    return true;
+  } catch (err) {
+    console.warn("[firestore] claimProjectAsDeveloper failed:", err);
+    return false;
+  }
+}

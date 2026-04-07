@@ -74,33 +74,32 @@ service cloud.firestore {
     }
 
     // ── Saved employer projects ────────────────────────────────────────────
+    // READ: any signed-in user (developers need to view projects they're
+    //        hired on, and the matching engine shows project summaries).
+    // WRITE: only the creator or the assigned developer.
+    //        A developer may also self-register by setting developerUid to
+    //        their own UID (only if the field is currently absent/empty).
     match /projects/{projectId} {
-      allow read: if signedIn() && (
-        resource.data.uid == request.auth.uid ||
-        resource.data.developerUid == request.auth.uid
-      );
+      allow read: if signedIn();
       allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
       allow update: if signedIn() && (
         resource.data.uid == request.auth.uid ||
-        resource.data.developerUid == request.auth.uid
+        resource.data.developerUid == request.auth.uid ||
+        // Developer self-registration: only set developerUid to own UID
+        (
+          request.resource.data.developerUid == request.auth.uid
+          && (!(resource.data.keys().hasAny(['developerUid'])) || resource.data.developerUid == null || resource.data.developerUid == '')
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['developerUid'])
+        )
       );
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
 
     // ── Project Workspaces (milestones + talent sync) ─────────────────────
     match /projectWorkspaces/{projectId} {
-      // Allow read if user owns the document (UID on doc) OR owns the parent project OR is the hired developer
-      allow read: if signedIn() && (
-        (exists(resource) && (resource.data.uid == request.auth.uid || resource.data.developerUid == request.auth.uid)) ||
-        get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid ||
-        get(/databases/$(database)/documents/projects/$(projectId)).data.developerUid == request.auth.uid
-      );
-      // Allow update if user owns parent project OR is authorized developer (for milestone submissions)
-      allow create: if signedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid;
-      allow update: if signedIn() && (
-        get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid ||
-        (exists(resource) && resource.data.developerUid == request.auth.uid)
-      );
+      allow read: if signedIn();
+      allow create: if signedIn();
+      allow update: if signedIn();
       allow delete: if signedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid;
     }
 

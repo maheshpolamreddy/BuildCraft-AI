@@ -25,6 +25,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { signOutUser } from "@/lib/auth";
 import { auth } from "@/lib/firebase";
 import { getHireRequestsByDeveloper, type HireRequest } from "@/lib/hireRequests";
+import { getProject, claimProjectAsDeveloper } from "@/lib/firestore";
 import { getPRDsByUser, type PRDDocument } from "@/lib/prd";
 import {
   createOrGetChat,
@@ -333,7 +334,7 @@ const SKILL_ASSESSMENT_CATALOG: SkillAssessmentCatalogEntry[] = [
 export default function EmployeeDashboard() {
   const router = useRouter();
   const pathname = usePathname();
-  const { project, currentUser, developerProfile, setDeveloperProfile, patchDeveloperProfile, reset, addUserRole, userRoles, setRole } = useStore();
+  const { project, currentUser, developerProfile, setDeveloperProfile, patchDeveloperProfile, reset, addUserRole, userRoles, setRole, setProject, setSavedProjectId } = useStore();
 
   // ── PRD + Chat state ────────────────────────────────────────────────────────
   const [prds,         setPrds]        = useState<PRDDocument[]>([]);
@@ -855,8 +856,24 @@ export default function EmployeeDashboard() {
         const updated = await getHireRequestsByDeveloper(currentUser.uid);
         setHireReqs(updated);
         const targetReq = updated.find(r => r.token === token);
-        const pid = data.projectId || targetReq?.projectId || "";
-        router.push(`/project-room?projectId=${pid}&tab=milestones`);
+        const pid = String(data?.projectId || targetReq?.projectId || "");
+
+        if (pid) {
+          await claimProjectAsDeveloper(pid, currentUser.uid).catch(() => {});
+
+          const saved = await getProject(pid).catch(() => null);
+          if (saved) {
+            setProject({
+              ...saved.project,
+              creatorUid: saved.project.creatorUid || saved.uid,
+              creatorEmail: saved.project.creatorEmail || saved.email,
+              developerUid: currentUser.uid,
+            });
+            setSavedProjectId(pid);
+          }
+        }
+
+        router.push(pid ? `/project-room?projectId=${pid}&tab=milestones` : `/project-room?tab=milestones`);
       } else {
         // Refetch to clear the rejected one
         const updated = await getHireRequestsByDeveloper(currentUser.uid);
@@ -1132,6 +1149,22 @@ export default function EmployeeDashboard() {
                         const wsUrl = assignment.projectId
                           ? `/project-room?projectId=${assignment.projectId}&tab=milestones`
                           : `/project-room?tab=milestones`;
+                        const enterWorkspace = async () => {
+                          if (assignment.projectId && currentUser?.uid) {
+                            await claimProjectAsDeveloper(assignment.projectId, currentUser.uid).catch(() => {});
+                            const saved = await getProject(assignment.projectId).catch(() => null);
+                            if (saved) {
+                              setProject({
+                                ...saved.project,
+                                creatorUid: saved.project.creatorUid || saved.uid,
+                                creatorEmail: saved.project.creatorEmail || saved.email,
+                                developerUid: currentUser.uid,
+                              });
+                              setSavedProjectId(assignment.projectId);
+                            }
+                          }
+                          router.push(wsUrl);
+                        };
                         return (
                         <div key={assignment?.token} className="glass-panel p-6 rounded-2xl border border-blue-500/20 bg-blue-500/5 hover:border-blue-500/40 transition-all">
                           <div className="flex justify-between items-start mb-4">
@@ -1143,15 +1176,15 @@ export default function EmployeeDashboard() {
                               <h3 className="text-white font-black">{assignment.projectName}</h3>
                               <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest mt-1">Client: {assignment.creatorName}</p>
                             </div>
-                            <Link 
-                              href={wsUrl}
+                            <button
+                              onClick={enterWorkspace}
                               className="p-2.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 rounded-xl transition-all"
                             >
                               <ArrowRight className="w-4 h-4" />
-                            </Link>
+                            </button>
                           </div>
                           <button 
-                            onClick={() => router.push(wsUrl)}
+                            onClick={enterWorkspace}
                             className="w-full py-2.5 flex items-center justify-center gap-2 bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
                           >
                             <Play className="w-3.5 h-3.5" /> Enter Workspace
@@ -1336,14 +1369,24 @@ export default function EmployeeDashboard() {
                     {activeAssignments?.length > 0 && (
                       <div className="pt-6 border-t border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto">
                         {activeAssignments.map(a => (
-                          <Link key={a?.token || Math.random()} href={a.projectId ? `/project-room?projectId=${a.projectId}&tab=milestones` : `/project-room?tab=milestones`}
-                            className="p-4 glass-panel border border-white/5 hover:border-blue-500/30 bg-white/5 rounded-2xl flex items-center justify-between group transition-all">
-                            <div className="text-left">
+                          <button key={a?.token || Math.random()} onClick={async () => {
+                            if (a.projectId && currentUser?.uid) {
+                              await claimProjectAsDeveloper(a.projectId, currentUser.uid).catch(() => {});
+                              const saved = await getProject(a.projectId).catch(() => null);
+                              if (saved) {
+                                setProject({ ...saved.project, creatorUid: saved.project.creatorUid || saved.uid, creatorEmail: saved.project.creatorEmail || saved.email, developerUid: currentUser.uid });
+                                setSavedProjectId(a.projectId);
+                              }
+                            }
+                            router.push(a.projectId ? `/project-room?projectId=${a.projectId}&tab=milestones` : `/project-room?tab=milestones`);
+                          }}
+                            className="p-4 glass-panel border border-white/5 hover:border-blue-500/30 bg-white/5 rounded-2xl flex items-center justify-between group transition-all text-left w-full">
+                            <div>
                               <div className="text-white font-bold text-sm group-hover:text-blue-400 transition-colors">{a.projectName}</div>
                               <div className="text-[9px] text-[#888] uppercase tracking-widest font-bold font-mono">ID: {a.projectId?.slice(-6) || "—"}</div>
                             </div>
                             <ArrowRight className="w-4 h-4 text-white/20 group-hover:text-blue-400 -translate-x-1 group-hover:translate-x-0 transition-all" />
-                          </Link>
+                          </button>
                         ))}
                       </div>
                     )}
