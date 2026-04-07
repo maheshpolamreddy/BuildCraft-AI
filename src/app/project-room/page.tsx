@@ -184,6 +184,18 @@ function ProjectRoomContent() {
   const [chatText,       setChatText]       = useState("");
   const [chatSending,    setChatSending]    = useState(false);
   const [chatSubError,   setChatSubError]   = useState<string | null>(null);
+  const chatViewerUid = useFirebaseUid(currentUser?.uid);
+
+  // ── Role Detection ──────────────────────────────────────────────────────────
+  const isCreator   = !!currentUser && !!project && currentUser.uid === project.creatorUid;
+  const isDeveloper = !!currentUser && !!project && !isCreator; 
+  const userRole    = isCreator ? "creator" : "developer";
+
+  // Filter tabs for developers
+  const visibleTabs = useMemo(() => {
+    if (isCreator) return VALID_TABS;
+    return VALID_TABS.filter(t => !["talent", "deploy", "audit", "history"].includes(t));
+  }, [isCreator]);
 
   // ── Remote Project Loading (Deep Linking) ──────────────────────────────────
   useEffect(() => {
@@ -241,18 +253,6 @@ function ProjectRoomContent() {
   const approvedCount = Object.values(approvedTools).filter(Boolean).length;
   const projectName  = project?.name ?? "My Project";
   const version      = project?.version ?? "v1.0";
-  const chatViewerUid = useFirebaseUid(currentUser?.uid);
-
-  // ── Role Detection ──────────────────────────────────────────────────────────
-  const isCreator   = !!currentUser && !!project && currentUser.uid === project.creatorUid;
-  const isDeveloper = !!currentUser && !!project && !isCreator; // For now, if you are in the room and not creator, you are 'developer'
-  const userRole    = isCreator ? "creator" : "developer";
-
-  // Filter tabs for developers
-  const visibleTabs = useMemo(() => {
-    if (isCreator) return VALID_TABS;
-    return VALID_TABS.filter(t => !["talent", "deploy", "audit", "history"].includes(t));
-  }, [isCreator]);
 
   // ── Derived stats ──────────────────────────────────────────────────────────
   const allTasks   = milestones.flatMap(m => m.tasks);
