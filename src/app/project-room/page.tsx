@@ -22,7 +22,7 @@ import { logAction, getProjectAuditLog, type AuditEntry } from "@/lib/auditLog";
 import { parseJsonResponse } from "@/lib/parse-api-json";
 import { getAllDeveloperProfiles, type DeveloperProfile } from "@/lib/developerProfile";
 import { type MatchedDeveloper } from "@/app/api/match-developers/route";
-import { getHireRequestsByCreator, createHireRequest, type HireRequest } from "@/lib/hireRequests";
+import { getHireRequestsByCreator, getHireRequestsByDeveloper, createHireRequest, type HireRequest } from "@/lib/hireRequests";
 import { getPRDsByUser, type PRDDocument } from "@/lib/prd";
 import {
   createOrGetChat,
@@ -432,7 +432,11 @@ function ProjectRoomContent() {
   useEffect(() => {
     if (activeTab !== "chat" || !currentUser) return;
     let cancelled = false;
-    getHireRequestsByCreator(currentUser.uid)
+
+    // Use role-appropriate fetcher
+    const fetcher = isCreator ? getHireRequestsByCreator : getHireRequestsByDeveloper;
+
+    fetcher(currentUser.uid)
       .then(reqs => {
         if (cancelled) return;
         setHireRequests(reqs);
@@ -443,7 +447,7 @@ function ProjectRoomContent() {
         }
         let stored: string | null = null;
         try {
-          stored = sessionStorage.getItem(chatStorageKey("creator", currentUser.uid));
+          stored = sessionStorage.getItem(chatStorageKey(userRole, currentUser.uid));
         } catch {
           /* private mode */
         }
@@ -460,7 +464,7 @@ function ProjectRoomContent() {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, currentUser?.uid, chatQueryParam]);
+  }, [activeTab, currentUser?.uid, chatQueryParam, isCreator, userRole]);
 
   // ── Ensure Firestore chat room exists (signed-in creator can create per rules) ─
   useEffect(() => {
@@ -483,7 +487,7 @@ function ProjectRoomContent() {
   useEffect(() => {
     if (!currentUser?.uid || !activeChatId || activeTab !== "chat") return;
     try {
-      sessionStorage.setItem(chatStorageKey("creator", currentUser.uid), activeChatId);
+      sessionStorage.setItem(chatStorageKey(userRole, currentUser.uid), activeChatId);
     } catch {
       /* */
     }
