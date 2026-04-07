@@ -96,14 +96,16 @@ export default function LandingPage() {
                 <Logo className="w-10 h-10 group-hover/logo:scale-110 transition-transform duration-700 ease-[0.23,1,0.32,1]" />
                 <div className="absolute inset-0 bg-blue-500/30 blur-2xl rounded-full opacity-0 group-hover/logo:opacity-100 transition-opacity duration-1000" />
               </div>
-              <div className="flex flex-col">
-                <span className="text-lg font-black tracking-tighter text-white uppercase leading-none">BuildCraft</span>
-                <span className="text-[7px] font-black tracking-[0.5em] text-blue-500 uppercase mt-1 ml-0.5 opacity-80">Intelligence Engine</span>
+              <div className="flex flex-col text-left">
+                <span className="text-lg font-black tracking-tighter text-white uppercase leading-none">
+                  BuildCraft <span className="text-blue-500">AI</span>
+                </span>
+                <span className="text-[7px] font-black tracking-[0.5em] text-white/40 uppercase mt-1 ml-0.5">Intelligence Engine</span>
               </div>
             </button>
           </div>
 
-          {/* Premium Nav Links (Simplified) */}
+          {/* Premium Nav Links */}
           <nav className="hidden lg:flex items-center justify-center gap-12">
             {[
               { label: "Features", href: "#features" },
@@ -135,9 +137,14 @@ export default function LandingPage() {
               ) : (
                 <Link 
                   href="/auth" 
-                  className="px-5 py-2.5 rounded-xl border border-white/10 bg-white/5 text-[9px] font-black uppercase tracking-[0.2em] text-white/60 hover:text-white hover:border-white/30 hover:bg-white/10 transition-all shadow-lg shadow-black/20"
+                  className="relative group/signin px-5 py-2.5 rounded-xl border border-white/20 bg-white/5 overflow-hidden transition-all hover:scale-105 active:scale-95"
                 >
-                  Sign In
+                  {/* Modern Silver Shimmer Effect */}
+                  <div className="absolute inset-0 silver-gradient opacity-20 group-hover/signin:opacity-40 transition-opacity" />
+                  <div className="absolute -inset-x-full top-0 bottom-0 bg-gradient-to-r from-transparent via-white/30 to-transparent skew-x-30 group-hover/signin:animate-[shimmer_2s_infinite]" />
+                  <span className="relative z-10 text-[9px] font-black uppercase tracking-[0.2em] text-white group-hover/signin:text-black transition-colors duration-300">
+                    Sign In
+                  </span>
                 </Link>
               )}
 
