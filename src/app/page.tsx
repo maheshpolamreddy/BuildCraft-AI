@@ -528,35 +528,82 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Footer ────────────────────────────────────────────────────────────── */}
-      <footer className="bg-[#050505] border-t border-white/5 pt-16 pb-8 px-8 relative z-10 text-center md:text-left">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-8 border-b border-white/10 pb-8 mb-8">
-          <div className="flex items-center gap-2">
-            <Logo className="w-7 h-7" glow={false} />
-            <span className="text-white font-black tracking-tighter uppercase text-lg">BuildCraft AI</span>
+      {/* ── Modernized Premium Footer ────────────────────────────────────────────── */}
+      <footer className="bg-[#050505] border-t border-white/5 pt-20 pb-10 px-8 relative z-10">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 mb-20">
+          
+          {/* Branding & Mission */}
+          <div className="space-y-6">
+            <div className="flex items-center gap-3 group/logo-footer">
+              <Logo className="w-9 h-9 group-hover/logo-footer:drop-shadow-[0_0_15px_rgba(59,130,246,0.6)] transition-all" />
+              <div className="flex flex-col">
+                <span className="text-xl font-black tracking-tighter text-white uppercase leading-none">BuildCraft</span>
+                <span className="text-[8px] font-black tracking-[0.4em] text-blue-500 uppercase mt-0.5 ml-0.5">Intelligence</span>
+              </div>
+            </div>
+            <p className="text-[#888] text-xs font-light leading-relaxed max-w-xs">
+              Empowering the next generation of builders with autonomous project orchestration and top-tier verified talent matching.
+            </p>
+            <div className="flex items-center gap-3">
+              <div className="px-3 py-1.5 rounded-full border border-white/5 bg-white/5 text-white/40 font-bold text-[9px] uppercase tracking-widest hover:text-white hover:bg-white/10 transition-all cursor-default flex items-center gap-1.5">
+                <Shield className="w-3 h-3" /> SOC2 COMPLIANT
+              </div>
+            </div>
           </div>
-          <div className="flex gap-8 text-[10px] font-bold uppercase tracking-widest text-[#888]">
-            <Link href="#" className="hover:text-white transition-colors">Privacy Policy</Link>
-            <Link href="#" className="hover:text-white transition-colors">SOC2 Hub</Link>
-            <Link href="#" className="hover:text-white transition-colors">Dispute Resolution</Link>
+
+          {/* Platform Navigation */}
+          <div className="space-y-6">
+            <h4 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Platform</h4>
+            <nav className="flex flex-col gap-4">
+              <Link href="/discovery" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Discovery Hub</Link>
+              <Link href="/architecture" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Architecture</Link>
+              <Link href="/project-room" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Project Room</Link>
+              <Link href="/employee-dashboard" className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500/50 hover:text-blue-400 transition-colors">Developer Portal</Link>
+            </nav>
           </div>
-        </div>
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center text-[#555] text-[10px] uppercase tracking-widest">
-          <p>© 2025 BuildCraft AI. All rights reserved.</p>
-          <p className="flex items-center gap-2 mt-4 md:mt-0">
-            System Status: <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" /> Operational
-          </p>
+
+          {/* Resources & Support */}
+          <div className="space-y-6">
+            <h4 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Resources</h4>
+            <nav className="flex flex-col gap-4">
+              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">API Docs</Link>
+              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Trust Center</Link>
+              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Dispute Resolution</Link>
+              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Brand Assets</Link>
+            </nav>
+          </div>
+
+          {/* Company & Legal */}
+          <div className="space-y-6">
+            <h4 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Company</h4>
+            <nav className="flex flex-col gap-4">
+              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">About Us</Link>
+              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Privacy Policy</Link>
+              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Terms of Service</Link>
+              <button 
+                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/30 hover:text-white transition-all group/bt"
+              >
+                Back To Top <ChevronUp className="w-3.5 h-3.5 group-hover/bt:-translate-y-0.5 transition-transform" />
+              </button>
+            </nav>
+          </div>
         </div>
 
-        {/* Footer back-to-top */}
-        <div className="max-w-7xl mx-auto mt-6 flex justify-center">
-          <button
-            onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-            className="flex items-center gap-2 px-5 py-2.5 glass-panel border border-white/10 hover:border-white/20 text-white/30 hover:text-white text-[10px] font-bold uppercase tracking-widest rounded-full transition-all group"
-          >
-            <ChevronUp className="w-3.5 h-3.5 group-hover:-translate-y-0.5 transition-transform" />
-            Back to Top
-          </button>
+        {/* Global Status & Legal Row */}
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6 pt-10 border-t border-white/5">
+          <p className="text-[9px] font-black text-white/20 uppercase tracking-[0.3em]">
+            © 2025 – BuildCraft AI. ALL SYSTEM RIGHTS RESERVED.
+          </p>
+          <div className="flex items-center gap-8">
+            <div className="flex items-center gap-2 group/status">
+              <span className="text-[9px] font-black text-white/30 uppercase tracking-widest group-hover:text-white/60 transition-colors">Status</span>
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded border border-emerald-500/10 bg-emerald-500/5">
+                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse blur-[1px]" />
+                <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">Operational</span>
+              </div>
+            </div>
+          </div>
         </div>
       </footer>
     </div>
