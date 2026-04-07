@@ -22,7 +22,7 @@ import {
   compactChainBudgetMs,
   compactGeminiMaxMs,
   compactOpenAiTimeoutMs,
-  useCompactServerlessAiChain,
+  isCompactServerlessAiChain,
 } from "@/lib/vercel-ai";
 
 export type ChatMessage = { role: "system" | "user"; content: string };
@@ -176,7 +176,7 @@ export async function completeChatMultiModel(
   messages: ChatMessage[],
   opts: CompleteChatMultiModelOpts,
 ): Promise<MultiModelCompletionResult> {
-  if (useCompactServerlessAiChain()) {
+  if (isCompactServerlessAiChain()) {
     return completeChatMultiModelCompact(messages, opts);
   }
 

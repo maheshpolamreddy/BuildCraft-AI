@@ -14,7 +14,7 @@ import { pickTemplateByKeywords, getTemplateByKind } from "@/lib/ui-templates";
 import { enhanceUIScreenJson } from "@/lib/ui-quality-enhancer";
 import { MAX_TOKENS_GENERATE_UI_JSON } from "@/lib/ai-limits";
 import { LANDING_SECTION_TYPES } from "@/lib/ui-json-normalize";
-import { useCompactServerlessAiChain } from "@/lib/vercel-ai";
+import { isCompactServerlessAiChain } from "@/lib/vercel-ai";
 
 export const SYSTEM_UI_JSON = `You are a senior product designer for BuildCraft. Convert the user's request into structured UI JSON only. The UI will render as a premium dark glassmorphism interface with gradients — think Stripe / Vercel / Linear quality.
 
@@ -76,7 +76,7 @@ export async function runUiJsonPipeline(input: {
   projectIdea: string;
 }): Promise<{ ui: UIScreenJson; meta: UiJsonPipelineMeta }> {
   const userMsg = buildUserMessageUiJson(input.prompt, input.projectName, input.projectIdea);
-  const compact = useCompactServerlessAiChain();
+  const compact = isCompactServerlessAiChain();
   const maxTokUi = compact ? 1_200 : MAX_TOKENS_GENERATE_UI_JSON;
 
   const genOnce = async (): Promise<{ text: string; provider: string }> => {

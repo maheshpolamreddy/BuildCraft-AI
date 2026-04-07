@@ -20,7 +20,7 @@ import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useStore } from "@/store/useStore";
 import { logAction, getProjectAuditLog, type AuditEntry } from "@/lib/auditLog";
 import { parseJsonResponse } from "@/lib/parse-api-json";
-import { getAllDeveloperProfiles, type DeveloperProfile } from "@/lib/developerProfile";
+import { getAllDeveloperProfiles, isDeveloperRegistrationComplete, shouldDefaultToDeveloperDashboard } from "@/lib/developerProfile";
 import { type MatchedDeveloper } from "@/app/api/match-developers/route";
 import { getHireRequestsByCreator, getHireRequestsByDeveloper, createHireRequest, type HireRequest } from "@/lib/hireRequests";
 import { getPRDsByUser, type PRDDocument } from "@/lib/prd";
@@ -41,9 +41,21 @@ import { useFirebaseUid } from "@/hooks/useFirebaseUid";
 import { deleteDoc, doc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { getProject, type SavedProject } from "@/lib/firestore";
+import { CreatorFlowBreadcrumb } from "@/components/FlowNavigation";
+import { ProjectCompletionPanel } from "@/components/ProjectCompletionPanel";
+import {
+  initProjectExecution,
+  getProjectExecution,
+  subscribeToProjectExecution,
+  updateProjectStatus,
+  getStatusLabel,
+  getStatusColor,
+  type ProjectExecution,
+  type ProjectStatus,
+} from "@/lib/project-execution";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "milestones" | "talent" | "prd" | "chat" | "audit" | "deploy" | "history";
+type Tab = "milestones" | "talent" | "prd" | "chat" | "audit" | "deploy" | "history" | "completion";
 
 interface ChatMessage {
   id: number;
@@ -128,19 +140,45 @@ const INITIAL_MESSAGES: ChatMessage[] = [
 ];
 
 // ── Component ──────────────────────────────────────────────────────────────────
-const VALID_TABS: Tab[] = ["milestones", "talent", "prd", "chat", "history", "audit", "deploy"];
+const VALID_TABS: Tab[] = ["milestones", "talent", "prd", "chat", "completion", "history", "audit", "deploy"];
 
 function ProjectRoomContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
   const chatQueryParam = searchParams.get("chat");
-  const { project, setProject, approvedTools, currentUser, savedProjectId, setSavedProjectId } = useStore();
+  const { authReady, project, setProject, approvedTools, currentUser, savedProjectId, setSavedProjectId, developerProfile, userRoles, role } = useStore();
 
-  // ── Role Detection (Moved to top to prevent initialization errors) ──────────
-  const isCreator   = !!currentUser && !!project && currentUser.uid === project.creatorUid;
-  const isDeveloper = !!currentUser && !!project && currentUser.uid === project.developerUid;
+  // ── Role Detection (Robust email-based recovery fallback) ──────────────────
+  const legacyProjectUid =
+    project && "uid" in project && typeof (project as { uid?: unknown }).uid === "string"
+      ? (project as { uid: string }).uid
+      : undefined;
+  const isDeveloper = !!currentUser && !!project && !!project.developerUid && (currentUser.uid === project.developerUid);
+  const isCreator = !!currentUser && !!project && !isDeveloper && (
+    currentUser.uid === project.creatorUid ||
+    (!!legacyProjectUid && legacyProjectUid === currentUser.uid) ||
+    (!!currentUser.email && !!project.creatorEmail && currentUser.email === project.creatorEmail) ||
+    (!project.creatorUid && !project.developerUid)
+  );
   const userRole    = isCreator ? "creator" : "developer";
+
+  // Auto-heal logic: If email matches but UID is different, update the project UID
+  useEffect(() => {
+    if (currentUser?.uid && project?.creatorEmail && currentUser.email === project.creatorEmail && currentUser.uid !== project.creatorUid) {
+      console.info("[ProjectRoom] Auto-healing project creator UID from email match...");
+      setProject({ ...project, creatorUid: currentUser.uid });
+    }
+  }, [currentUser, project?.creatorEmail, project?.creatorUid, setProject]);
+
+  // Diagnostic for dev/troubleshooting:
+  console.debug("[ProjectRoom] Role Debug:", { 
+    isCreator, 
+    isDeveloper, 
+    curUid: currentUser?.uid, 
+    projCreator: project?.creatorUid, 
+    projDev: project?.developerUid 
+  });
 
   const [loadingProject, setLoadingProject] = useState(!!searchParams.get("projectId"));
   const [activeTab, setActiveTab] = useState<Tab>("milestones");
@@ -192,11 +230,13 @@ function ProjectRoomContent() {
   const [chatSubError,   setChatSubError]   = useState<string | null>(null);
   const chatViewerUid = useFirebaseUid(currentUser?.uid);
 
-  // Filter tabs for developers: They only see what they need
+  // ── Project Execution state ──────────────────────────────────────────────
+  const [projExec, setProjExec] = useState<ProjectExecution | null>(null);
+
+  // Filter tabs by role: developers don't see talent/deploy/audit/history
   const visibleTabs = useMemo(() => {
     if (isCreator) return VALID_TABS;
-    // Developers only see milestones, chat, PRD, and history (if we allow it)
-    return VALID_TABS.filter(t => ["milestones", "chat", "prd"].includes(t));
+    return VALID_TABS.filter(t => ["milestones", "chat", "prd", "completion"].includes(t));
   }, [isCreator]);
 
   // ── Remote Project Loading (Deep Linking) ──────────────────────────────────
@@ -235,10 +275,11 @@ function ProjectRoomContent() {
     if (t && VALID_TABS.includes(t as Tab)) setActiveTab(t as Tab);
   }, [searchParams]);
 
-  // ── All hire requests (history + chat threads) — load only for Creators ────
+  // ── All hire requests (history + chat threads) — load for BOTH creators and developers ──
   useEffect(() => {
-    if (!currentUser?.uid || !isCreator) return;
-    getHireRequestsByCreator(currentUser.uid)
+    if (!authReady || !currentUser?.uid) return;
+    const fetcher = isCreator ? getHireRequestsByCreator : getHireRequestsByDeveloper;
+    fetcher(currentUser.uid)
       .then(reqs => {
         setHireRequests(reqs);
         const tokens: Record<string, string> = {};
@@ -250,11 +291,26 @@ function ProjectRoomContent() {
         if (hired.size) setHiredDevIds(hired);
       })
       .catch(() => {});
-  }, [currentUser?.uid, isCreator]);
+  }, [authReady, currentUser?.uid, isCreator]);
 
   const approvedCount = Object.values(approvedTools).filter(Boolean).length;
   const projectName  = project?.name ?? "My Project";
   const version      = project?.version ?? "v1.0";
+
+  // ── Hiring state derivation (state machine for talent tab UI) ─────────────
+  const projectHireReqs = useMemo(() => {
+    if (!savedProjectId && !projectName) return hireRequests;
+    return hireRequests.filter(r => {
+      if (savedProjectId && r.projectId === savedProjectId) return true;
+      if (projectName && r.projectName === projectName) return true;
+      if (!r.projectId && !savedProjectId) return true;
+      return false;
+    });
+  }, [hireRequests, savedProjectId, projectName]);
+  const acceptedHire  = useMemo(() => projectHireReqs.find(r => r.status === "accepted") ?? null, [projectHireReqs]);
+  const pendingHires  = useMemo(() => projectHireReqs.filter(r => r.status === "pending"), [projectHireReqs]);
+  type HiringState = "no-hire" | "pending" | "accepted";
+  const hiringState: HiringState = acceptedHire ? "accepted" : pendingHires.length > 0 ? "pending" : "no-hire";
 
   // ── Derived stats ──────────────────────────────────────────────────────────
   const allTasks   = milestones.flatMap(m => m.tasks);
@@ -270,17 +326,24 @@ function ProjectRoomContent() {
   }, [isDeveloper, activeTab, visibleTabs]);
 
 
-  // ── Route Guard ────────────────────────────────────────────────────────────
+  // ── Route Guard (waits for Firebase auth before redirecting) ────────────────
   useEffect(() => {
-    // If loading a remote project from URL, don't guard yet
+    if (!authReady) return;
     if (loadingProject) return;
 
-    if (!currentUser && auth.currentUser === null) {
+    if (!currentUser) {
        router.push(`/auth?return=${encodeURIComponent(pathname + (searchParams.toString() ? "?" + searchParams.toString() : ""))}`);
-    } else if (currentUser && !project && !savedProjectId) {
-       router.push("/discovery");
+    } else if (!project && !savedProjectId) {
+       if (
+         isDeveloperRegistrationComplete(developerProfile) &&
+         shouldDefaultToDeveloperDashboard(userRoles, developerProfile, role)
+       ) {
+         router.push("/employee-dashboard");
+       } else {
+         router.push("/discovery");
+       }
     }
-  }, [currentUser, project, savedProjectId, router, loadingProject, pathname, searchParams]);
+  }, [authReady, currentUser, project, savedProjectId, router, loadingProject, pathname, searchParams, developerProfile, userRoles, role]);
 
   // ── Sync Milestones from Real-Time Workspace ─────────────────────────────
   useEffect(() => {
@@ -296,6 +359,37 @@ function ProjectRoomContent() {
        }
     });
   }, [savedProjectId]);
+
+  // ── Subscribe to Project Execution state ──────────────────────────────────
+  useEffect(() => {
+    if (!savedProjectId || !currentUser?.uid) return;
+    return subscribeToProjectExecution(
+      savedProjectId,
+      setProjExec,
+      (err) => console.warn("[ProjectRoom] projExec subscription:", err),
+    );
+  }, [savedProjectId, currentUser?.uid]);
+
+  // ── Initialize Project Execution record when workspace opens ────────────
+  useEffect(() => {
+    if (!savedProjectId || !currentUser?.uid || !project) return;
+    if (!isCreator) return;
+    initProjectExecution({
+      projectId: savedProjectId,
+      savedProjectId,
+      projectName: project.name,
+      creatorUid: project.creatorUid || currentUser.uid,
+      developerUid: project.developerUid || null,
+    }).catch((e) => console.warn("[ProjectRoom] initProjectExecution:", e));
+  }, [savedProjectId, currentUser?.uid, project?.name, project?.creatorUid, project?.developerUid, isCreator]);
+
+  // ── Auto-update execution status when hire completes ────────────────────
+  useEffect(() => {
+    if (!savedProjectId || !projExec) return;
+    if (hiredDevIds.size > 0 && projExec.status === "draft") {
+      updateProjectStatus(savedProjectId, "hiring").catch(() => {});
+    }
+  }, [savedProjectId, projExec?.status, hiredDevIds.size]);
 
   // ── Generate milestones from AI ────────────────────────────────────────────
   const generatedRef = useRef(false);
@@ -324,7 +418,7 @@ function ProjectRoomContent() {
            if (!ok || !Array.isArray(raw) || !raw.length) return;
            const withState = raw.map((m: Milestone, mi: number) => ({
              ...m,
-             tasks: m.tasks.map((t: any, ti: number) => {
+             tasks: m.tasks.map((t: Task, ti: number) => {
                const fb = FALLBACK_MILESTONES[mi]?.tasks[ti];
                return { 
                  ...t, 
@@ -340,7 +434,7 @@ function ProjectRoomContent() {
            }));
            setMilestones(withState);
            if (savedProjectId) {
-             await setWorkspaceMilestones(savedProjectId, withState as any);
+             await setWorkspaceMilestones(savedProjectId, withState);
            }
          })
          .catch(() => {})
@@ -367,7 +461,7 @@ function ProjectRoomContent() {
         if (!ok || !Array.isArray(raw) || !raw.length) return;
         const withState = raw.map((m: Milestone, mi: number) => ({
              ...m,
-             tasks: m.tasks.map((t: any, ti: number) => {
+             tasks: m.tasks.map((t: Task, ti: number) => {
                const fb = FALLBACK_MILESTONES[mi]?.tasks[ti];
                return { 
                  ...t, 
@@ -382,7 +476,7 @@ function ProjectRoomContent() {
              }),
         }));
         setMilestones(withState);
-        await setWorkspaceMilestones(savedProjectId, withState as any, currentUser?.uid);
+        await setWorkspaceMilestones(savedProjectId, withState, currentUser?.uid);
         if (currentUser) {
           logAction(currentUser.uid, "project.updated", { 
             action: "milestones_regenerated",
@@ -396,11 +490,24 @@ function ProjectRoomContent() {
       .finally(() => setLoadingMilestones(false));
   }, [project, savedProjectId, hiredDevIds.size]);
 
+  // ── Automatic Matching Trigger ─────────────────────────────────────────────
+  const matchTriggeredRef = useRef(false);
   useEffect(() => {
+    if (!authReady || !currentUser?.uid) return;
     if (activeTab !== "talent" || !isCreator) return;
-    if (matchedDevs.length > 0) return;
-    runMatchingEngine();
-  }, [activeTab, isCreator]);
+    if (matchedDevs.length > 0 || matchLoading) return;
+    if (matchTriggeredRef.current) return;
+
+    matchTriggeredRef.current = true;
+    const timer = setTimeout(() => {
+      if (!auth.currentUser) {
+        matchTriggeredRef.current = false;
+        return;
+      }
+      runMatchingEngine();
+    }, 600);
+    return () => { clearTimeout(timer); matchTriggeredRef.current = false; };
+  }, [activeTab, isCreator, matchedDevs.length, matchLoading, authReady, currentUser?.uid]);
 
   // ── Load PRDs when prd tab opens ──────────────────────────────────────────
   useEffect(() => {
@@ -533,8 +640,12 @@ function ProjectRoomContent() {
     setMatchError(false);
     setMatchDetail(null);
     try {
-      // 1. Fetch real developer profiles from Firestore
-      const { profiles, queryError } = await getAllDeveloperProfiles(30);
+      // 1. Fetch real developer profiles from Firestore (retry once if empty due to auth-token timing)
+      let { profiles, queryError } = await getAllDeveloperProfiles(30);
+      if (!profiles.length && !queryError && auth.currentUser) {
+        await new Promise(r => setTimeout(r, 800));
+        ({ profiles, queryError } = await getAllDeveloperProfiles(30));
+      }
       if (!profiles.length) {
         setMatchError(true);
         setMatchDetail(queryError ? firestoreAccessHint(queryError) : null);
@@ -582,7 +693,7 @@ function ProjectRoomContent() {
             apiErr ??
               (!ok
                 ? `Matching request failed (${res.status}). Check /api/match-developers.`
-                : "Could not rank developers. Check /api/match-developers and your AI API key."),
+                : "Could not rank developers. Check /api/match-developers or try again."),
           );
         }
       }
@@ -734,7 +845,7 @@ function ProjectRoomContent() {
       tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "approved" as TaskStatus } : t)
     }));
     setMilestones(nextMilestones);
-    await setWorkspaceMilestones(savedProjectId, nextMilestones as any, currentUser?.uid);
+    await setWorkspaceMilestones(savedProjectId, nextMilestones, currentUser?.uid);
     setReviewTask(null);
     logAction(currentUser.uid, "milestone.approved", {
       taskId: task.id,
@@ -750,7 +861,7 @@ function ProjectRoomContent() {
       tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "rejected" as TaskStatus } : t)
     }));
     setMilestones(nextMilestones);
-    await setWorkspaceMilestones(savedProjectId, nextMilestones as any, currentUser?.uid);
+    await setWorkspaceMilestones(savedProjectId, nextMilestones, currentUser?.uid);
     setReviewTask(null);
     logAction(currentUser.uid, "milestone.rejected", {
       taskId: task.id,
@@ -766,7 +877,7 @@ function ProjectRoomContent() {
       tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "review" as TaskStatus, submission } : t)
     }));
     setMilestones(nextMilestones);
-    await setWorkspaceMilestones(savedProjectId, nextMilestones as any, currentUser?.uid);
+    await setWorkspaceMilestones(savedProjectId, nextMilestones, currentUser?.uid);
     logAction(currentUser.uid, "milestone.submitted", {
       taskId: task.id,
       taskTitle: task.title,
@@ -916,10 +1027,11 @@ function ProjectRoomContent() {
           {/* Project Workspace tabs */}
           {([
             { id: "milestones", label: "Project Steps",   icon: <ListOrdered className="w-5 h-5" />,  badge: inReview > 0 ? `${inReview} review` : null },
-            { id: "talent",     label: "Find Developers", icon: <UserCheck className="w-5 h-5" />,    badge: gate3Hired ? null : "!" },
+            { id: "talent",     label: hiringState === "accepted" ? "Hired Developer" : hiringState === "pending" ? "Hiring Status" : "Find Developers", icon: <UserCheck className="w-5 h-5" />,    badge: hiringState === "accepted" ? "Active" : hiringState === "pending" ? "Pending" : (gate3Hired ? null : "!") },
             { id: "prd",        label: "PRD Document",    icon: <FileText className="w-5 h-5" />,     badge: prds.length > 0 ? "New" : null },
             { id: "chat",       label: "Chat with Dev",   icon: <MessageSquare className="w-5 h-5" />, badge: activeChatId ? "Live" : null },
             { id: "history",    label: "Hiring History",  icon: <FolderOpen className="w-5 h-5" />,   badge: hireRequests.length > 0 ? String(hireRequests.length) : null },
+            { id: "completion",  label: "Completion",      icon: <Flag className="w-5 h-5" />,         badge: projExec?.status === "review" ? "Review" : projExec?.status === "completed" ? "Done" : null },
             { id: "deploy",     label: "CI/CD Deploy",    icon: <Rocket className="w-5 h-5" />,       badge: progress === 100 ? "Ready" : null },
             { id: "audit",      label: "Audit Log",       icon: <History className="w-5 h-5" /> },
           ] as const).filter(t => visibleTabs.includes(t.id)).map(tab => (
@@ -960,6 +1072,7 @@ function ProjectRoomContent() {
       {/* ── Main Content ────────────────────────────────────────────────────── */}
       <main className="flex-grow p-10 overflow-y-auto">
         <div className="max-w-4xl space-y-10">
+          <CreatorFlowBreadcrumb />
 
           <header className="border-b border-white/10 pb-8 flex justify-between items-end flex-wrap gap-4">
             <div className="space-y-2">
@@ -969,6 +1082,11 @@ function ProjectRoomContent() {
             <div className="flex gap-2 text-xs font-bold uppercase tracking-widest flex-wrap">
               <span className="px-3 py-1.5 rounded-md border border-white/10 bg-black text-[#888]">{userRole === "creator" ? "Employer" : "Developer"}</span>
               <span className="px-3 py-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 text-emerald-500">Plan Locked</span>
+              {projExec && (
+                <span className={`px-3 py-1.5 rounded-md border ${getStatusColor(projExec.status)}`}>
+                  {getStatusLabel(projExec.status)}
+                </span>
+              )}
               {activeTab === "milestones" && hiredDevIds.size === 0 && (
                 <button 
                   onClick={regenerateMilestones}
@@ -1137,9 +1255,160 @@ function ProjectRoomContent() {
               </motion.section>
             )}
 
-            {/* ── TALENT matching tab ────────────────────────────────────── */}
-            {activeTab === "talent" && isCreator && (
+            {/* ── TALENT / HIRING tab — single container for AnimatePresence ── */}
+            {activeTab === "talent" && (
               <motion.section key="talent" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
+
+                {/* Loading guard */}
+                {(!authReady || !currentUser) && (
+                  <div className="flex flex-col items-center justify-center py-20 gap-4">
+                    <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
+                    <p className="text-sm text-white/40 font-light">Initializing developer matching engine...</p>
+                  </div>
+                )}
+
+                {/* Accepted state */}
+                {authReady && !!currentUser && isCreator && hiringState === "accepted" && acceptedHire && (
+                  <>
+                    <div>
+                      <h2 className="text-white font-black text-xl tracking-tight flex items-center gap-2">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-400" /> Developer Assigned
+                      </h2>
+                      <p className="text-white/40 text-xs font-light mt-1">
+                        Your developer has accepted the invitation. Project is now in progress.
+                      </p>
+                    </div>
+
+                    <div className="glass-panel p-6 rounded-3xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/5 to-transparent space-y-5">
+                      <div className="flex items-center gap-5">
+                        <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-emerald-500/20 to-emerald-500/5 border border-emerald-500/20 flex items-center justify-center shrink-0">
+                          <UserCheck className="w-7 h-7 text-emerald-400" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="text-lg font-black text-white tracking-tight">{acceptedHire.developerName}</h3>
+                          <p className="text-xs text-white/40 truncate">{acceptedHire.developerEmail}</p>
+                          <div className="flex items-center gap-2 mt-2">
+                            <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg border text-emerald-400 border-emerald-500/30 bg-emerald-500/10">Accepted</span>
+                            {acceptedHire.respondedAt && (
+                              <span className="text-[10px] text-white/25">Joined {new Date(acceptedHire.respondedAt.toMillis?.() ?? 0).toLocaleDateString()}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="shrink-0 flex gap-2">
+                          <button onClick={() => { setActiveChatId(acceptedHire.token); setActiveTab("chat"); }}
+                            className="px-4 py-2.5 rounded-xl border border-indigo-500/30 bg-indigo-500/10 text-indigo-300 text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500/20 transition-all flex items-center gap-2">
+                            <MessageSquare className="w-3.5 h-3.5" /> Chat
+                          </button>
+                          <button onClick={() => setActiveTab("milestones")}
+                            className="px-4 py-2.5 rounded-xl border border-white/10 bg-white/5 text-white/60 text-[10px] font-black uppercase tracking-widest hover:bg-white/10 transition-all flex items-center gap-2">
+                            <ListOrdered className="w-3.5 h-3.5" /> Tasks
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-3 pt-3 border-t border-white/5">
+                        <div className="text-center p-3 bg-white/5 rounded-xl">
+                          <div className="text-2xl font-black text-white">{progress}%</div>
+                          <div className="text-[9px] text-white/30 uppercase tracking-widest font-bold mt-1">Progress</div>
+                        </div>
+                        <div className="text-center p-3 bg-white/5 rounded-xl">
+                          <div className="text-2xl font-black text-emerald-400">{doneTasks}</div>
+                          <div className="text-[9px] text-white/30 uppercase tracking-widest font-bold mt-1">Completed</div>
+                        </div>
+                        <div className="text-center p-3 bg-white/5 rounded-xl">
+                          <div className="text-2xl font-black text-amber-400">{inReview}</div>
+                          <div className="text-[9px] text-white/30 uppercase tracking-widest font-bold mt-1">In Review</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {pendingHires.length > 0 && (
+                      <div className="p-4 bg-amber-500/5 border border-amber-500/15 rounded-xl">
+                        <p className="text-[10px] text-amber-400 font-bold uppercase tracking-widest mb-2">Other Pending Invitations</p>
+                        <div className="space-y-2">
+                          {pendingHires.map(r => (
+                            <div key={r.token} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
+                              <span className="text-xs text-white/60">{r.developerName}</span>
+                              <span className="text-[9px] text-amber-400/60 uppercase tracking-widest">Pending</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Pending state: hiring status + matching engine below */}
+                {authReady && !!currentUser && isCreator && hiringState === "pending" && (
+                  <>
+                    <div>
+                      <h2 className="text-white font-black text-xl tracking-tight flex items-center gap-2">
+                        <Clock className="w-5 h-5 text-amber-400" /> Hiring Status
+                      </h2>
+                      <p className="text-white/40 text-xs font-light mt-1">
+                        Invitation sent — waiting for developer response.
+                      </p>
+                    </div>
+
+                    <div className="space-y-4">
+                      {pendingHires.map(r => (
+                        <div key={r.token} className="glass-panel p-6 rounded-3xl border border-amber-500/20 bg-gradient-to-br from-amber-500/5 to-transparent">
+                          <div className="flex items-center gap-5">
+                            <div className="w-14 h-14 rounded-full bg-gradient-to-tr from-amber-500/20 to-amber-500/5 border border-amber-500/20 flex items-center justify-center shrink-0">
+                              <UserCheck className="w-6 h-6 text-amber-400" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h3 className="text-lg font-black text-white tracking-tight">{r.developerName}</h3>
+                              <p className="text-xs text-white/40 truncate">{r.developerEmail}</p>
+                              <div className="flex items-center gap-3 mt-2">
+                                <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg border text-amber-400 border-amber-500/30 bg-amber-500/10 flex items-center gap-1.5">
+                                  <div className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" /> Pending
+                                </span>
+                                {r.createdAt && (
+                                  <span className="text-[10px] text-white/25">Sent {new Date(r.createdAt.toMillis?.() ?? 0).toLocaleDateString()}</span>
+                                )}
+                                {r.expiresAt && (
+                                  <span className="text-[10px] text-white/20">Expires {new Date(r.expiresAt.toMillis?.() ?? 0).toLocaleDateString()}</span>
+                                )}
+                              </div>
+                            </div>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  await deleteDoc(doc(db, "hireRequests", r.token));
+                                  setHireRequests(prev => prev.filter(h => h.token !== r.token));
+                                  setSentTokens(prev => { const n = { ...prev }; delete n[r.developerUid]; return n; });
+                                  setHiredDevIds(prev => { const n = new Set(prev); n.delete(r.developerUid); return n; });
+                                } catch { /* ignore */ }
+                              }}
+                              className="px-3 py-2 rounded-xl border border-white/10 text-white/30 hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 text-[10px] font-bold uppercase tracking-widest transition-all shrink-0"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="p-4 bg-white/5 border border-white/10 rounded-xl flex items-start gap-3">
+                      <Info className="w-4 h-4 text-white/30 shrink-0 mt-0.5" />
+                      <div className="text-xs text-white/50 font-light leading-relaxed">
+                        <p>You can invite additional developers while waiting. The first to accept will be assigned to the project.</p>
+                        <button onClick={() => runMatchingEngine()} className="mt-2 text-indigo-400 hover:text-indigo-300 font-bold uppercase tracking-widest text-[10px] transition-colors">
+                          Find More Developers →
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-white/5 pt-6">
+                      <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest mb-4">Browse More Developers</p>
+                    </div>
+                  </>
+                )}
+
+                {/* Matching engine: shown for no-hire and pending states */}
+                {authReady && !!currentUser && isCreator && (hiringState === "no-hire" || hiringState === "pending") && (
+                  <>
 
                 {/* Header */}
                 <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -1470,6 +1739,8 @@ function ProjectRoomContent() {
                     <strong className="text-white">Payment Protection:</strong> When you invite a developer, payment is held in escrow and released only when you approve a milestone. Matching scores are computed from skill overlap (40%), experience (20%), verification tier (20%), availability (10%), and portfolio signals (10%).
                   </p>
                 </div>
+                </>
+                )}
 
               </motion.section>
             )}
@@ -1821,6 +2092,29 @@ function ProjectRoomContent() {
               </motion.section>
             )}
 
+            {/* ── COMPLETION TAB ────────────────────────────────────────── */}
+            {activeTab === "completion" && (
+              <motion.section key="completion" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
+                <h2 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50">
+                  Project Completion — Dual Approval System
+                </h2>
+                <ProjectCompletionPanel
+                  projectExecution={projExec}
+                  projectId={savedProjectId ?? ""}
+                  currentUid={currentUser?.uid ?? ""}
+                  isCreator={isCreator}
+                  isDeveloper={isDeveloper}
+                  allTasksDone={allTasks.length > 0 && allTasks.every(t => t.status === "approved")}
+                  projectName={projectName}
+                  onRefresh={() => {
+                    if (savedProjectId) {
+                      getProjectExecution(savedProjectId).then(setProjExec);
+                    }
+                  }}
+                />
+              </motion.section>
+            )}
+
             {/* ── DEPLOY TAB ──────────────────────────────────────────────── */}
             {activeTab === "deploy" && (
               <motion.section key="deploy" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
@@ -1862,7 +2156,7 @@ function ProjectRoomContent() {
                           }`}>
                             {done ? <CheckCircle2 className="w-5 h-5 text-emerald-400" /> : 
                              active ? <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" /> : 
-                             cloneElement(stage.icon as React.ReactElement<any>, { className: "w-5 h-5 text-white/40" })}
+                             cloneElement(stage.icon as React.ReactElement<{ className?: string }>, { className: "w-5 h-5 text-white/40" })}
                           </div>
                           <div className="text-center">
                             <p className={`text-[9px] font-black uppercase tracking-tighter transition-colors ${active ? "text-indigo-400" : done ? "text-emerald-400" : "text-white/20"}`}>

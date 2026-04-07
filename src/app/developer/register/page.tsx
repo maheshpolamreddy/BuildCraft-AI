@@ -13,6 +13,7 @@ import {
 import { useStore } from "@/store/useStore";
 import { saveDeveloperProfile, type PrimaryRole, type Availability } from "@/lib/developerProfile";
 import { logAction } from "@/lib/auditLog";
+import { DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 const STEPS = [
@@ -295,6 +296,8 @@ function RegisterForm() {
           <span className="text-xs text-white/40 font-bold">{step}/6</span>
         </div>
       </header>
+
+      <DeveloperFlowBreadcrumb />
 
       {/* Step nav */}
       <div className="border-b border-white/5 px-6 py-3 overflow-x-auto">

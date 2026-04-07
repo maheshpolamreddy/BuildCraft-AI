@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ArrowRight, Shield, Zap, Search, Layers, UserCheck, ShieldCheck, Code2 as Code2Icon, LogOut, ChevronUp, Command } from "lucide-react";
 import Link from "next/link";
@@ -11,6 +11,7 @@ import AnimatedLogoOverlay from "@/components/AnimatedLogoOverlay";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/store/useStore";
 import { signOutUser } from "@/lib/auth";
+import { isDeveloperRegistrationComplete } from "@/lib/developerProfile";
 
 // Smooth-scroll back to the very top of the page
 function GoHome() {
@@ -29,15 +30,33 @@ function GoHome() {
 
 export default function LandingPage() {
   const router = useRouter();
-  const { currentUser, developerProfile, project, reset } = useStore();
+  const { authReady, currentUser, developerProfile, project, userRoles, role, reset } = useStore();
   const [showLogoEasterEgg, setShowLogoEasterEgg] = useState(false);
 
-  // True when the developer has completed registration
-  const isDeveloper = !!(developerProfile && developerProfile.profileStatus === "active");
+  const isDeveloper = isDeveloperRegistrationComplete(developerProfile);
+  const isLoggedIn = !!currentUser && currentUser.uid !== "demo-guest";
+
+  /**
+   * Auto-redirect developers to their dashboard when they land here.
+   * Waits for authReady so a refresh doesn't flash the landing page then redirect.
+   */
+  useEffect(() => {
+    if (!authReady) return;
+    if (!isLoggedIn) return;
+    if (!isDeveloper) return;
+    const isEmployer = userRoles.includes("employer");
+    const choseDeveloperLast = role === "employee";
+    if (!isEmployer || choseDeveloperLast) {
+      if (!project) {
+        router.replace("/employee-dashboard");
+      }
+    }
+  }, [authReady, isLoggedIn, isDeveloper, userRoles, role, project, router]);
 
   /** Decide where "Start Building" should go based on the user's current progress */
   function getStartBuildingHref(): string {
     if (!currentUser) return "/auth";
+    if (isDeveloper && !project) return "/employee-dashboard";
     if (project?.locked)           return "/project-room";
     if (project?.assumptions?.every(a => a.accepted)) return "/architecture";
     if (project)                   return "/discovery";
@@ -47,6 +66,7 @@ export default function LandingPage() {
   /** Label for the CTA based on progress */
   function getStartBuildingLabel(): string {
     if (!currentUser) return "Start Building";
+    if (isDeveloper && !project) return "My Dashboard";
     if (project?.locked)           return "Continue Workspace";
     if (project)                   return "Continue Project";
     return "Start Building";
@@ -187,7 +207,7 @@ export default function LandingPage() {
             </button>
             {/* Developer CTA only shown to non-developers (logged out or not yet registered) */}
             {!isDeveloper && (
-              <Link href="/auth?as=developer" className="w-full sm:w-auto px-8 py-5 glass-panel font-bold uppercase tracking-[0.15em] text-xs rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:border-blue-500/50 transition-all flex items-center justify-center gap-3">
+              <Link href={isLoggedIn ? "/developer" : "/auth?as=developer"} className="w-full sm:w-auto px-8 py-5 glass-panel font-bold uppercase tracking-[0.15em] text-xs rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:border-blue-500/50 transition-all flex items-center justify-center gap-3">
                 <Code2Icon className="w-4 h-4" /> I&apos;m a Developer
               </Link>
             )}

@@ -4,7 +4,7 @@ import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
 import { readJsonBody } from "@/lib/read-json-body";
 import { MAX_TOKENS_GENERATE_CODE } from "@/lib/ai-limits";
 import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
-import { useCompactServerlessAiChain } from "@/lib/vercel-ai";
+import { isCompactServerlessAiChain } from "@/lib/vercel-ai";
 
 export const maxDuration = 180;
 
@@ -65,7 +65,7 @@ Component requirements: ${componentDesc}
 Use realistic data specific to this project type. Make the UI premium, clean, and production-ready.
 Return ONLY the complete .tsx component code — no explanations, no markdown.`;
 
-    const compact = useCompactServerlessAiChain();
+    const compact = isCompactServerlessAiChain();
     const raw = await orchestrateChatCompletion(
       "code_generation",
       {

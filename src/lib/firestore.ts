@@ -25,12 +25,18 @@ function isFirebaseUid(uid: string): boolean {
 export interface SavedProject {
   id:           string;
   uid:          string; // Creator UID
+  email?:       string; // Creator Email (Recovery)
   developerUid?: string; // Hired Developer UID (if any)
   project:      ProjectState;
   approvedTools: Record<string, boolean | undefined>;
   createdAt:    Timestamp | null;
   updatedAt:    Timestamp | null;
   deletedAt?:   Timestamp | null;
+}
+
+/** Sort key for project lists (newest first). */
+export function firestoreTimestampSeconds(ts: Timestamp | null | undefined): number {
+  return ts?.seconds ?? 0;
 }
 
 // ── User profile ──────────────────────────────────────────────────────────────
@@ -61,6 +67,7 @@ export async function saveProject(
   uid: string,
   project: ProjectState,
   approvedTools: Record<string, boolean | undefined>,
+  email?: string,
 ): Promise<string> {
   if (!isFirebaseUid(uid)) return "";
   const id  = `${uid}_${Date.now()}`;
@@ -69,7 +76,8 @@ export async function saveProject(
     await setDoc(ref, {
       id,
       uid,
-      project,
+      email,
+      project: { ...project, creatorUid: uid, creatorEmail: email },
       approvedTools,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -105,6 +113,20 @@ export async function getUserProjects(uid: string): Promise<SavedProject[]> {
     const snap = await getDocs(q);
     return snap.docs.map((d) => d.data() as SavedProject);
   } catch (err) { console.warn("[firestore] getUserProjects failed:", err); return []; }
+}
+
+/** Load all projects belonging to an email address (Recovery Fallback). */
+export async function getProjectsByEmail(email: string): Promise<SavedProject[]> {
+  if (!email) return [];
+  try {
+    const q = query(
+      collection(db, "projects"),
+      where("email", "==", email),
+      orderBy("updatedAt", "desc")
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => d.data() as SavedProject);
+  } catch (err) { console.warn("[firestore] getProjectsByEmail failed:", err); return []; }
 }
 
 /** Load a single saved project by doc ID. */

@@ -15,15 +15,18 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/store/useStore";
-import { updateProject, getUserProjects, deleteProject, restoreProject, type SavedProject } from "@/lib/firestore";
+import { updateProject, getUserProjects, deleteProject, restoreProject, firestoreTimestampSeconds, type SavedProject } from "@/lib/firestore";
 import { logAction } from "@/lib/auditLog";
 import { parseApiJson } from "@/lib/parse-api-json";
 import { getUserFacingError } from "@/lib/user-facing-error";
 import Logo from "@/components/Logo";
 import { DynamicUIRenderer } from "@/components/ui-json/DynamicUIRenderer";
 import type { UIScreenJson } from "@/lib/ui-json-schema";
-import { auth } from "@/lib/firebase";
+import { isDeveloperRegistrationComplete, shouldDefaultToDeveloperDashboard } from "@/lib/developerProfile";
+import { Timestamp } from "firebase/firestore";
+import type { GeneratedPromptRow, ProjectBlueprint as StoreProjectBlueprint } from "@/lib/plan-orchestration";
 import { useAutoSave } from "@/hooks/useAutoSave";
+import { CreatorFlowBreadcrumb } from "@/components/FlowNavigation";
 
 type Tab = "architecture" | "tools" | "risks" | "prompts" | "code" | "config";
 
@@ -845,19 +848,27 @@ function aiToolId(name: string) {
 
 export default function ArchitectureView() {
   const router = useRouter();
-  const { project, setProject, approvedTools, setToolApproval, setPromptsViewed, promptsViewed, currentUser, savedProjectId, setSavedProjectId, patchProject, clearProject, incrementVersion } =
+  const { authReady, project, setProject, approvedTools, setToolApproval, setPromptsViewed, promptsViewed, currentUser, savedProjectId, setSavedProjectId, patchProject, clearProject, incrementVersion, developerProfile, userRoles, role } =
     useStore();
   const [activeTab, setActiveTab] = useState<Tab>("architecture");
   const version = project?.version ?? "v1.0";
 
-  // ── Route Guard ────────────────────────────────────────────────────────────
+  // ── Route Guard (waits for Firebase auth before redirecting) ────────────────
   useEffect(() => {
-    if (!currentUser && auth.currentUser === null) {
+    if (!authReady) return;
+    if (!currentUser) {
        router.push("/auth?return=/architecture");
-    } else if (currentUser && !project && !savedProjectId) {
-       router.push("/discovery");
+    } else if (!project && !savedProjectId) {
+       if (
+         isDeveloperRegistrationComplete(developerProfile) &&
+         shouldDefaultToDeveloperDashboard(userRoles, developerProfile, role)
+       ) {
+         router.push("/employee-dashboard");
+       } else {
+         router.push("/discovery");
+       }
     }
-  }, [currentUser, project, savedProjectId, router]);
+  }, [authReady, currentUser, project, savedProjectId, router, developerProfile, userRoles, role]);
 
   useAutoSave();
 
@@ -873,11 +884,9 @@ export default function ArchitectureView() {
     if (!currentUser) return;
     setHistoryLoading(true);
     getUserProjects(currentUser.uid)
-      .then(projects => setHistory(projects.sort((a, b) => {
-        const timeA = (a.updatedAt as any)?.seconds || 0;
-        const timeB = (b.updatedAt as any)?.seconds || 0;
-        return timeB - timeA;
-      })))
+      .then(projects => setHistory(projects.sort((a, b) =>
+        firestoreTimestampSeconds(b.updatedAt) - firestoreTimestampSeconds(a.updatedAt),
+      )))
       .catch(console.error)
       .finally(() => setHistoryLoading(false));
   }, [currentUser, savedProjectId]);
@@ -903,7 +912,7 @@ export default function ArchitectureView() {
   async function handleDeleteHistory(id: string) {
     setDeletingId(id);
     await deleteProject(id).catch(() => {});
-    setHistory(prev => prev.map(p => p.id === id ? { ...p, deletedAt: { seconds: Date.now() / 1000 } as any } : p));
+    setHistory(prev => prev.map(p => p.id === id ? { ...p, deletedAt: Timestamp.fromMillis(Date.now()) } : p));
     setDeletingId(null);
   }
 
@@ -948,7 +957,7 @@ export default function ArchitectureView() {
   // Restore persisted analysis from project for deterministic retrieval
   useEffect(() => {
     if (project?.aiAnalysis) setAiAnalysis(project.aiAnalysis);
-    if (project?.aiPrompts) setAiPrompts(project.aiPrompts as any);
+    if (project?.aiPrompts) setAiPrompts(project.aiPrompts as AiPrompt[]);
     if (project?.aiBlueprint) setAiBlueprint(project.aiBlueprint);
   }, [project?.aiAnalysis, project?.aiPrompts, project?.aiBlueprint]);
 
@@ -1081,8 +1090,8 @@ export default function ArchitectureView() {
       }
       const partialUpdate = { 
         aiAnalysis: analysis, 
-        aiPrompts: prompts as any, 
-        aiBlueprint: blueprint, 
+        aiPrompts: prompts as GeneratedPromptRow[], 
+        aiBlueprint: blueprint as StoreProjectBlueprint | undefined, 
         autoPlanPipelineDone: true 
       };
       patchProject(partialUpdate);
@@ -1131,8 +1140,8 @@ export default function ArchitectureView() {
       }
       
       const partialUpdate = {
-        aiPrompts: prompts as any,
-        aiBlueprint: data.blueprint as any,
+        aiPrompts: prompts as GeneratedPromptRow[],
+        aiBlueprint: data.blueprint as StoreProjectBlueprint | undefined,
       };
       patchProject(partialUpdate);
       const st = useStore.getState();
@@ -1601,6 +1610,7 @@ export default function ArchitectureView() {
       {/* Main Content */}
       <main className="flex-grow p-8 lg:p-10 overflow-y-auto bg-[#030303]">
         <div className="max-w-5xl space-y-8">
+          <CreatorFlowBreadcrumb />
 
           <motion.header 
             initial={{ opacity: 0, y: -20 }}

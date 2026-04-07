@@ -17,7 +17,6 @@ import {
   collection, query, where, getDocs,
   serverTimestamp, Timestamp,
 } from "firebase/firestore";
-import { randomBytes } from "crypto";
 
 export interface HireRequest {
   token:          string;
@@ -39,7 +38,12 @@ export interface HireRequest {
 }
 
 function makeToken(): string {
-  return randomBytes(24).toString("hex");
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+  }
+  const arr = new Uint8Array(24);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export async function createHireRequest(data: Omit<HireRequest, "token" | "status" | "prdId" | "createdAt" | "expiresAt" | "respondedAt">): Promise<string> {

@@ -65,12 +65,16 @@ export interface ProjectState {
   milestones?: Milestone[] | null;
   /** Firebase UID of the project owner (creator) */
   creatorUid?: string;
+  /** Firebase email of the project owner (creator) for recovery/multi-device sync */
+  creatorEmail?: string;
   /** Firebase UID of the hired developer (if any) */
   developerUid?: string;
 }
 
 interface BuildCraftStore {
   // Firebase auth — NOT persisted (handled by AuthProvider)
+  /** True once Firebase onAuthStateChanged fires for the first time. Guards must wait for this. */
+  authReady:      boolean;
   currentUser:    AuthUser | null;
   savedProjectId: string | null;
 
@@ -91,6 +95,7 @@ interface BuildCraftStore {
   promptsViewed: boolean;
 
   // Actions — auth
+  setAuthReady:      () => void;
   setCurrentUser:    (user: AuthUser | null) => void;
   setSavedProjectId: (id: string | null) => void;
 
@@ -117,6 +122,7 @@ interface BuildCraftStore {
 }
 
 const defaultState = {
+  authReady:            false,
   currentUser:          null as AuthUser | null,
   savedProjectId:       null as string | null,
   userRoles:            [] as UserRole[],
@@ -142,6 +148,7 @@ export const useStore = create<BuildCraftStore>()(
     (set) => ({
       ...defaultState,
 
+      setAuthReady:      ()               => set({ authReady: true }),
       setCurrentUser:    (currentUser)    => set({ currentUser }),
       setSavedProjectId: (savedProjectId) => set({ savedProjectId }),
 

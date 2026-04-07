@@ -4,7 +4,7 @@ import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
 import { readJsonBody } from "@/lib/read-json-body";
 import { MAX_TOKENS_GENERATE_PREVIEW } from "@/lib/ai-limits";
 import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
-import { useCompactServerlessAiChain } from "@/lib/vercel-ai";
+import { isCompactServerlessAiChain } from "@/lib/vercel-ai";
 
 export const maxDuration = 180;
 
@@ -168,7 +168,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: NIM_KEY_ERROR }, { status: 503 });
     }
 
-    const compact = useCompactServerlessAiChain();
+    const compact = isCompactServerlessAiChain();
     let html = await orchestrateChatCompletion(
       "code_generation",
       {

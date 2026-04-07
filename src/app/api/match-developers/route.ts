@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getNimClient, NIM_KEY_ERROR } from "@/lib/nim-client";
+import { getNimClient } from "@/lib/nim-client";
 import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
 import { readJsonBody } from "@/lib/read-json-body";
 import { messageForAiRouteFailure } from "@/lib/map-ai-route-error";
+import { normalizeSkillsFromFirestore } from "@/lib/developerProfile";
 
 export const maxDuration = 180;
 
@@ -46,6 +47,9 @@ function toDevCandidate(raw: unknown): DevCandidate | null {
   if (!userId) return null;
   const strArr = (v: unknown): string[] =>
     Array.isArray(v) ? v.map(x => String(x)) : [];
+  const skillsNorm = normalizeSkillsFromFirestore(
+    o.skills ?? (o as { skillList?: unknown }).skillList ?? (o as { techStack?: unknown }).techStack,
+  );
   const toStr = (v: unknown) => (v == null ? "" : String(v));
   const toNum = (v: unknown) => {
     const n = Number(v);
@@ -53,12 +57,12 @@ function toDevCandidate(raw: unknown): DevCandidate | null {
   };
   return {
     userId,
-    fullName: toStr(o.fullName),
-    email: toStr(o.email),
+    fullName: toStr(o.fullName || (o as { name?: unknown }).name || (o as { displayName?: unknown }).displayName),
+    email: toStr(o.email).trim().toLowerCase(),
     photoURL: toStr(o.photoURL),
     primaryRole: toStr(o.primaryRole) || "fullstack",
     yearsExp: toNum(o.yearsExp),
-    skills: strArr(o.skills),
+    skills: skillsNorm.length > 0 ? skillsNorm : strArr(o.skills),
     tools: strArr(o.tools),
     githubUrl: toStr(o.githubUrl),
     portfolioUrl: toStr(o.portfolioUrl),
@@ -125,15 +129,41 @@ Format:
 
 CRITICAL: Return reasoning for EVERY candidate in the input, in the same order. userId must exactly match the input.`;
 
+type ScoredForReasoning = {
+  dev: DevCandidate;
+  score: number;
+  overlap: string[];
+  missing: string[];
+};
+
+function buildFallbackReasoning(top: ScoredForReasoning[]): {
+  userId: string;
+  matchReasons: string[];
+  strengthsNote: string;
+  caution: string | null;
+}[] {
+  return top.map((c) => ({
+    userId: c.dev.userId,
+    matchReasons: [
+      `Strong skill overlap with ${c.overlap.slice(0, 2).join(" and ") || "listed skills"}`,
+      `${c.dev.yearsExp} years of experience in ${c.dev.primaryRole} development`,
+      `Available as ${c.dev.availability}`,
+    ],
+    strengthsNote:
+      c.dev.verificationStatus === "project-verified"
+        ? "Project-verified tier confirms real-world delivery capability."
+        : c.dev.verificationStatus === "assessment-passed"
+          ? "Assessment-passed tier with demonstrated technical knowledge."
+          : "Self-declared profile; verify fit in interview.",
+    caution: c.missing.length > 0 ? `May need to pick up ${c.missing[0]} during the project.` : null,
+  }));
+}
+
 // ── Handler ───────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
-
-  if (!getNimClient()) {
-    return NextResponse.json({ error: NIM_KEY_ERROR, developers: [] }, { status: 503 });
-  }
 
   try {
   const body = parsed.body as Record<string, unknown>;
@@ -157,16 +187,15 @@ export async function POST(req: NextRequest) {
     : [];
 
   // Step 1: Score all candidates deterministically
-  type Scored = { dev: DevCandidate; score: number; overlap: string[]; missing: string[] };
-  const scored: Scored[] = normalized.map((dev: DevCandidate) => {
+  const scored: ScoredForReasoning[] = normalized.map((dev: DevCandidate) => {
     const { score, overlap, missing } = scoreCandidate(dev, skillsList);
     return { dev, score, overlap, missing };
   });
 
   // Step 2: Sort by score, deduplicate by role+experience bucket
-  const sorted: Scored[] = scored.sort((a, b) => b.score - a.score);
+  const sorted: ScoredForReasoning[] = scored.sort((a, b) => b.score - a.score);
   const seenRoleBuckets = new Set<string>();
-  const topCandidates: Scored[] = sorted.filter(c => {
+  const topCandidates: ScoredForReasoning[] = sorted.filter(c => {
     const bucket = `${c.dev.primaryRole}-${Math.floor(c.dev.yearsExp / 3)}`;
     if (seenRoleBuckets.size >= 6) return false;
     seenRoleBuckets.add(bucket);
@@ -200,39 +229,33 @@ Write matchReasons, strengthsNote, and caution for each candidate. Return only t
 
   let aiReasoning: { userId: string; matchReasons: string[]; strengthsNote: string; caution: string | null }[] = [];
 
-  try {
-    let raw = await orchestrateChatCompletion(
-      "matching",
-      {
-        messages: [
-          { role: "system", content: SYSTEM },
-          { role: "user", content: userMsg },
-        ],
-        temperature: 0.4,
-        max_tokens: 1800,
-      },
-      { minContentLength: 60 },
-    );
-    raw = raw.replace(/^```[\w]*\n?/gm, "").replace(/\n?```$/gm, "").trim();
+  if (getNimClient()) {
+    try {
+      let raw = await orchestrateChatCompletion(
+        "matching",
+        {
+          messages: [
+            { role: "system", content: SYSTEM },
+            { role: "user", content: userMsg },
+          ],
+          temperature: 0.4,
+          max_tokens: 1800,
+        },
+        { minContentLength: 60 },
+      );
+      raw = raw.replace(/^```[\w]*\n?/gm, "").replace(/\n?```$/gm, "").trim();
 
-    const arrStart = raw.indexOf("[");
-    const arrEnd   = raw.lastIndexOf("]");
-    if (arrStart !== -1 && arrEnd !== -1) {
-      aiReasoning = JSON.parse(raw.slice(arrStart, arrEnd + 1));
+      const arrStart = raw.indexOf("[");
+      const arrEnd   = raw.lastIndexOf("]");
+      if (arrStart !== -1 && arrEnd !== -1) {
+        aiReasoning = JSON.parse(raw.slice(arrStart, arrEnd + 1));
+      }
+    } catch {
+      aiReasoning = buildFallbackReasoning(topCandidates);
     }
-  } catch {
-    // Fallback: generate generic reasoning
-    aiReasoning = topCandidates.map(c => ({
-      userId: c.dev.userId,
-      matchReasons: [`Strong skill overlap with ${c.overlap.slice(0, 2).join(" and ") || "listed skills"}`, `${c.dev.yearsExp} years of experience in ${c.dev.primaryRole} development`, `Available as ${c.dev.availability}`],
-      strengthsNote:
-        c.dev.verificationStatus === "project-verified"
-          ? "Project-verified tier confirms real-world delivery capability."
-          : c.dev.verificationStatus === "assessment-passed"
-            ? "Assessment-passed tier with demonstrated technical knowledge."
-            : "Self-declared profile; verify fit in interview.",
-      caution: c.missing.length > 0 ? `May need to pick up ${c.missing[0]} during the project.` : null,
-    }));
+  } else {
+    // No LLM configured — still return ranked developers with deterministic scores + template copy
+    aiReasoning = buildFallbackReasoning(topCandidates);
   }
 
   // Step 4: Merge deterministic scores with AI reasoning

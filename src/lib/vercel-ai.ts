@@ -12,7 +12,8 @@ export function vercelAiFullChain(): boolean {
  * When true, use one fast path: Groq → short-timeout primary → capped Gemini; no HF/CF/secondary; no retries.
  * Enabled on all Vercel deployments unless VERCEL_AI_FULL_CHAIN=1.
  */
-export function useCompactServerlessAiChain(): boolean {
+/** Not a React hook — named for historical reasons; avoids `use*` hook lint false positives in API routes. */
+export function isCompactServerlessAiChain(): boolean {
   if (vercelAiFullChain()) return false;
   return process.env.VERCEL === "1";
 }

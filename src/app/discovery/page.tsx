@@ -12,14 +12,18 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useStore, analyzeIdea, type ProjectState } from "@/store/useStore";
 import type { Requirement } from "@/store/useStore";
-import { saveProject, getUserProjects, deleteProject, restoreProject, getUserProfile, updateUserProfile, type SavedProject } from "@/lib/firestore";
+import { 
+  saveProject, getUserProjects, getProjectsByEmail, deleteProject, restoreProject, 
+  getUserProfile, updateUserProfile, firestoreTimestampSeconds, type SavedProject 
+} from "@/lib/firestore";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { logAction } from "@/lib/auditLog";
-import { getAllDeveloperProfiles, type DeveloperProfile } from "@/lib/developerProfile";
+import { getAllDeveloperProfiles, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
 import { type MatchedDeveloper } from "@/app/api/match-developers/route";
 import Logo from "@/components/Logo";
+import { CreatorFlowBreadcrumb } from "@/components/FlowNavigation";
 import { parseJsonResponse } from "@/lib/parse-api-json";
-import { auth } from "@/lib/firebase";
+import { Timestamp } from "firebase/firestore";
 
 const typeConfig: Record<Requirement["type"], { label: string; color: string; bg: string }> = {
   feature:     { label: "Feature",     color: "text-blue-400",    bg: "border-blue-500/20 bg-blue-500/5"    },
@@ -47,8 +51,10 @@ function firestoreAccessHint(msg: string): string {
 export default function DiscoveryHub() {
   const router = useRouter();
   const {
+    authReady,
     project, setProject, toggleAssumption, currentUser, savedProjectId, setSavedProjectId, approvedTools, setToolApproval,
     employerProfile, setEmployerProfile, clearProject, incrementVersion,
+    developerProfile, userRoles, role,
   } = useStore();
 
   useAutoSave();
@@ -83,25 +89,50 @@ export default function DiscoveryHub() {
   const [matchDetail,   setMatchDetail]   = useState<string | null>(null);
   const [expandedDevs, setExpandedDevs] = useState<Record<string, boolean>>({});
 
-  // ── Route Guard ────────────────────────────────────────────────────────────
+  // ── Route Guard (waits for Firebase auth to initialise before redirecting) ──
   useEffect(() => {
-    if (!currentUser && auth.currentUser === null) {
+    if (!authReady) return;
+    if (!currentUser) {
       router.push("/auth?return=/discovery");
     }
-  }, [currentUser, router]);
+  }, [authReady, currentUser, router]);
 
-  // Reload history whenever the logged-in user changes
+  useEffect(() => {
+    if (!authReady) return;
+    if (!currentUser || currentUser.uid === "demo-guest") return;
+    if (!isDeveloperRegistrationComplete(developerProfile)) return;
+    const isEmployer = userRoles.includes("employer");
+    const choseDeveloperLast = role === "employee";
+    if (!isEmployer || choseDeveloperLast) {
+      router.replace("/employee-dashboard");
+    }
+  }, [authReady, currentUser, developerProfile, userRoles, role, router]);
+
+  // Reload history whenever the logged-in user changes (UID + Email fallback)
   useEffect(() => {
     if (!currentUser) { setHistory([]); return; }
     setHistoryLoading(true);
-    getUserProjects(currentUser.uid)
-      .then(projects => setHistory(projects.sort((a, b) => {
-        const timeA = (a.updatedAt as any)?.seconds || 0;
-        const timeB = (b.updatedAt as any)?.seconds || 0;
-        return timeB - timeA;
-      })))
-      .catch(() => {})
-      .finally(() => setHistoryLoading(false));
+    
+    const fetchHistory = async () => {
+      try {
+        const [uidProjects, emailProjects] = await Promise.all([
+          getUserProjects(currentUser.uid),
+          currentUser.email ? getProjectsByEmail(currentUser.email) : Promise.resolve([])
+        ]);
+        
+        // Merge and deduplicate by project doc ID
+        const all = [...uidProjects, ...emailProjects];
+        const unique = Array.from(new Map(all.map(p => [p.id, p])).values());
+        
+        setHistory(unique.sort((a, b) => firestoreTimestampSeconds(b.updatedAt) - firestoreTimestampSeconds(a.updatedAt)));
+      } catch (err) {
+        console.error("[Discovery] Failed to load project history:", err);
+      } finally {
+        setHistoryLoading(false);
+      }
+    };
+
+    fetchHistory();
   }, [currentUser, savedProjectId]);
 
   // Load employer profile from Firestore into store + local draft (when user changes)
@@ -183,7 +214,7 @@ export default function DiscoveryHub() {
   async function handleDeleteHistory(id: string) {
     setDeletingId(id);
     await deleteProject(id).catch(() => {});
-    setHistory(prev => prev.map(p => p.id === id ? { ...p, deletedAt: { seconds: Date.now() / 1000 } as any } : p));
+    setHistory(prev => prev.map(p => p.id === id ? { ...p, deletedAt: Timestamp.fromMillis(Date.now()) } : p));
     setDeletingId(null);
   }
 
@@ -255,7 +286,7 @@ export default function DiscoveryHub() {
             apiErr ??
               (!res.ok
                 ? `Matching request failed (${res.status}). Check server logs for /api/match-developers.`
-                : "Could not rank developers. Check server logs for /api/match-developers and that your AI API key is set."),
+                : "Could not rank developers. Check server logs for /api/match-developers or try again."),
           );
         }
       }
@@ -305,7 +336,7 @@ export default function DiscoveryHub() {
       // Persist to Firestore if user is signed in
       if (currentUser) {
         try {
-          const docId = await saveProject(currentUser.uid, analysedProject, {});
+          const docId = await saveProject(currentUser.uid, analysedProject, {}, currentUser.email ?? undefined);
           setSavedProjectId(docId);
           await logAction(currentUser.uid, "project.created", {
             projectName: analysedProject.name,
@@ -321,7 +352,7 @@ export default function DiscoveryHub() {
       setProject(fallback);
       if (currentUser) {
         try {
-          const docId = await saveProject(currentUser.uid, fallback, {});
+          const docId = await saveProject(currentUser.uid, fallback, {}, currentUser.email ?? undefined);
           setSavedProjectId(docId);
           await logAction(currentUser.uid, "project.created", { projectName: fallback.name, docId, source: "fallback" });
         } catch { /* non-blocking */ }
@@ -537,6 +568,7 @@ export default function DiscoveryHub() {
       {/* Main Content */}
       <main className="flex-grow p-8 lg:p-10 lg:flex gap-10 overflow-y-auto bg-[#030303]">
         <div className="flex-grow max-w-4xl space-y-10">
+          <CreatorFlowBreadcrumb />
 
           {/* Project creator profile */}
           <section className="rounded-3xl border border-white/8 bg-white/[0.02] overflow-hidden backdrop-blur-sm shadow-[0_8px_32px_rgba(0,0,0,0.4)]">

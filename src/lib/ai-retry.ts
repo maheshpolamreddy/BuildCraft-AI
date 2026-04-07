@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { useCompactServerlessAiChain } from "@/lib/vercel-ai";
+import { isCompactServerlessAiChain } from "@/lib/vercel-ai";
 
 export function isTimeoutLikeError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -55,7 +55,7 @@ export async function runChatWithRetry(
   try {
     return await exec();
   } catch (err) {
-    if (useCompactServerlessAiChain()) {
+    if (isCompactServerlessAiChain()) {
       throw err;
     }
     if (isTransientChatError(err)) {

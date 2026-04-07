@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { onAuthChange } from "@/lib/auth";
 import { useStore } from "@/store/useStore";
+import { getDeveloperProfile, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
 
 function clearStaleDeveloperStateForUid(uid: string | undefined) {
   const { developerProfile, userRoles } = useStore.getState();
@@ -25,32 +26,45 @@ function clearStaleDeveloperStateForUid(uid: string | undefined) {
  * the Zustand store in sync so every page knows who is signed in.
  */
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
-  const setCurrentUser = useStore((s) => s.setCurrentUser);
-
   useEffect(() => {
-    let lastUid: string | null = null;
+    let previousUid: string | null = null;
     const unsubscribe = onAuthChange((user) => {
-      const { userRoles } = useStore.getState();
       if (!user) {
+        if (previousUid !== null) {
+          useStore.getState().clearProject();
+        }
         useStore.setState({
+          currentUser: null,
+          authReady: true,
           developerProfile: null,
           devRegistrationStep: 1,
-          userRoles: userRoles.filter(r => r !== "developer"),
+          userRoles: [],
+          role: null,
         });
-        lastUid = null;
+        previousUid = null;
       } else {
         clearStaleDeveloperStateForUid(user.uid);
-        
-        // When a new user logs in, ensure Discovery opens in a fresh state
-        if (lastUid !== user.uid) {
-           useStore.getState().clearProject();
-           lastUid = user.uid;
+
+        if (previousUid !== null && previousUid !== user.uid) {
+          useStore.getState().clearProject();
+        }
+        previousUid = user.uid;
+
+        useStore.setState({ currentUser: user, authReady: true });
+
+        if (user.uid !== "demo-guest") {
+          getDeveloperProfile(user.uid).then((p) => {
+            if (p && isDeveloperRegistrationComplete(p)) {
+              const s = useStore.getState();
+              s.setDeveloperProfile(p);
+              s.addUserRole("developer");
+            }
+          }).catch(() => {});
         }
       }
-      setCurrentUser(user);
     });
     return unsubscribe;
-  }, [setCurrentUser]);
+  }, []);
 
   return <>{children}</>;
 }

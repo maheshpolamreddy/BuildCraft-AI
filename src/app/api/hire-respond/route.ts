@@ -86,7 +86,24 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 4. Trigger PRD generation (fire and forget)
+    // 4. Initialize project execution tracking (fire and forget)
+    if (request.projectId) {
+      try {
+        const { initProjectExecution } = await import("@/lib/project-execution");
+        await initProjectExecution({
+          projectId: request.projectId,
+          savedProjectId: request.projectId,
+          projectName: request.projectName,
+          creatorUid: request.creatorUid,
+          developerUid: request.developerUid,
+          hireToken: token,
+        });
+      } catch (e) {
+        console.warn("[hire-respond] project execution init error:", e);
+      }
+    }
+
+    // 5. Trigger PRD generation (fire and forget)
     fetch(`${appBaseUrl()}/api/generate-prd`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },

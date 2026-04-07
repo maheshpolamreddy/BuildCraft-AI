@@ -10,7 +10,7 @@ import {
 import { LANDING_SECTION_TYPES, normalizeValidateAndFix } from "@/lib/ui-json-normalize";
 import { completeChatMultiModel } from "@/lib/multi-model-completion";
 import { MAX_TOKENS_UI_JSON_ENHANCE } from "@/lib/ai-limits";
-import { useCompactServerlessAiChain } from "@/lib/vercel-ai";
+import { isCompactServerlessAiChain } from "@/lib/vercel-ai";
 
 const ENHANCE_SYSTEM = `You are a senior product designer. Improve the given UI JSON for a premium dark glassmorphism React preview.
 
@@ -24,7 +24,7 @@ RULES:
 - Preserve the product intent from the context.`;
 
 export function isUiJsonEnhanceEnabled(): boolean {
-  if (useCompactServerlessAiChain()) return false;
+  if (isCompactServerlessAiChain()) return false;
   return process.env.UI_JSON_ENHANCE?.trim() !== "0";
 }
 

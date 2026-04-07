@@ -62,6 +62,18 @@ function PlatformEntryInner() {
     });
   }, [asDeveloper, setRole]);
 
+  // If user is already logged in and came via ?as=developer, skip auth step
+  const authReady = useStore((s) => s.authReady);
+  const storeUser = useStore((s) => s.currentUser);
+  useEffect(() => {
+    if (!authReady) return;
+    if (!asDeveloper) return;
+    if (!storeUser || storeUser.uid === "demo-guest") return;
+    if (step === 1) {
+      setStep(2);
+    }
+  }, [authReady, asDeveloper, step, storeUser]);
+
   // ── Firebase auth handlers ────────────────────────────────────────────────
 
   async function handleEmailAuth() {
@@ -122,10 +134,12 @@ function PlatformEntryInner() {
     }
   }
 
-  /** After choosing Developer: new users → registration; completed profiles → dashboard. */
+  /** After choosing Developer: new users -> registration; completed profiles -> dashboard. */
   async function completeDeveloperFlow() {
-    const { currentUser } = useStore.getState();
+    const { currentUser, addUserRole: storeAddRole, setDeveloperProfile } = useStore.getState();
     if (!currentUser) return;
+
+    storeAddRole("developer");
 
     if (currentUser.uid === "demo-guest") {
       if (returnTo) router.push(returnTo);
@@ -134,7 +148,7 @@ function PlatformEntryInner() {
     }
 
     await updateUserProfile(currentUser.uid, {
-      role: "employee",
+      roles: ["developer"],
       onboardedAt: new Date().toISOString(),
     });
     await logAction(currentUser.uid, "onboarding.developer_role", { role: "developer" });
@@ -146,6 +160,7 @@ function PlatformEntryInner() {
 
     const profile = await getDeveloperProfile(currentUser.uid);
     if (profile && isDeveloperRegistrationComplete(profile)) {
+      setDeveloperProfile(profile);
       router.push("/employee-dashboard");
     } else {
       router.push("/developer/register");
@@ -360,7 +375,7 @@ function PlatformEntryInner() {
                   <p className="text-[#888] text-sm font-light">Are you looking to build an app, or looking for work?</p>
                   {asDeveloper && (
                     <p className="text-xs text-indigo-300/90 font-light max-w-md mx-auto">
-                      You came in as a developer — confirm below, then you&apos;ll set how you use BuildCraft (same steps project creators see) before your developer profile.
+                      You came in as a developer — confirm below to continue to your developer profile setup.
                     </p>
                   )}
                 </div>

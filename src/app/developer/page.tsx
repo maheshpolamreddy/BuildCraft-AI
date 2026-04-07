@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useStore } from "@/store/useStore";
 import { getDeveloperProfile, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
+import { DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 
 // ── Decision states ────────────────────────────────────────────────────────────
 type Decision =
@@ -21,14 +22,14 @@ type Decision =
 
 export default function DeveloperEntryPage() {
   const router = useRouter();
-  const { currentUser, userRoles, developerProfile, setDeveloperProfile, addUserRole } = useStore();
+  const { authReady, currentUser, userRoles, developerProfile, setDeveloperProfile, addUserRole } = useStore();
   const [decision, setDecision] = useState<Decision>("loading");
   const [startingDemo, setStartingDemo] = useState(false);
 
-  // ── Decision Engine (Firestore is source of truth — not persisted userRoles alone) ─
+  // ── Decision Engine (waits for Firebase auth before evaluating) ─
   useEffect(() => {
+    if (!authReady) return;
     async function evaluate() {
-      // Case 1: Not logged in at all
       if (!currentUser) {
         setDecision("not-logged-in");
         return;
@@ -70,7 +71,7 @@ export default function DeveloperEntryPage() {
 
     evaluate();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUser?.uid]);
+  }, [authReady, currentUser?.uid]);
 
   // Auto-redirect when ready
   useEffect(() => {
@@ -91,7 +92,9 @@ export default function DeveloperEntryPage() {
   }
 
   return (
-    <div className="min-h-screen relative flex flex-col items-center justify-center p-6">
+    <div className="min-h-screen relative flex flex-col">
+      <DeveloperFlowBreadcrumb className="sticky top-0 z-50 shrink-0 bg-[#050505]/85 backdrop-blur-xl" />
+      <div className="relative flex flex-col flex-1 items-center justify-center p-6">
       {/* Background */}
       <div className="fixed inset-0 pointer-events-none -z-10">
         <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] bg-blue-500/[0.04] rounded-full blur-[150px]" />
@@ -310,6 +313,7 @@ export default function DeveloperEntryPage() {
           ))}
         </motion.div>
       )}
+      </div>
     </div>
   );
 }

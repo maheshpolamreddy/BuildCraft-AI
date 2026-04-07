@@ -4,9 +4,9 @@ import {
   setDoc,
   getDoc,
   updateDoc,
-  collection,
   onSnapshot,
 } from "firebase/firestore";
+import type { MatchedDeveloper } from "@/app/api/match-developers/route";
 
 export type TaskStatus = "todo" | "in-progress" | "validating" | "review" | "approved" | "rejected";
 
@@ -50,7 +50,7 @@ export interface WorkspaceState {
   projectId: string;
   uid?: string; // Creator's Firebase UID
   milestones: Milestone[];
-  matchedDevelopers?: any[] | null;
+  matchedDevelopers?: MatchedDeveloper[] | null;
   updatedAt: number;
 }
 
@@ -165,7 +165,7 @@ export function subscribeToWorkspace(
 /**
  * Replaces the matched developers in the project workspace.
  */
-export async function setWorkspaceMatchedDevelopers(projectId: string, developers: any[], uid?: string): Promise<void> {
+export async function setWorkspaceMatchedDevelopers(projectId: string, developers: MatchedDeveloper[], uid?: string): Promise<void> {
   if (!projectId) return;
   const ref = doc(db, "projectWorkspaces", projectId);
   await setDoc(ref, {

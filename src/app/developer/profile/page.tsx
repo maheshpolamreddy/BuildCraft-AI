@@ -19,6 +19,7 @@ import {
   type PrimaryRole,
   type Availability,
 } from "@/lib/developerProfile";
+import { DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 type ProfileTab = "personal" | "professional" | "portfolio" | "availability";
@@ -284,6 +285,8 @@ export default function DeveloperProfilePage() {
           )}
         </AnimatePresence>
       </header>
+
+      <DeveloperFlowBreadcrumb />
 
       <div className="flex flex-col lg:flex-row flex-1">
 

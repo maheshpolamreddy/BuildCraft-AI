@@ -11,7 +11,7 @@ import {
 } from "@/lib/stitch-landing-html";
 import { completeChatMultiModel } from "@/lib/multi-model-completion";
 import { hasAnyUiGenerationProvider, AI_ORCHESTRATION_CONFIG_ERROR } from "@/lib/ai-provider-registry";
-import { useCompactServerlessAiChain } from "@/lib/vercel-ai";
+import { isCompactServerlessAiChain } from "@/lib/vercel-ai";
 
 /** Vercel Hobby caps serverless execution at ~60s; higher values only apply on Pro+. */
 export const maxDuration = 60;
@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: AI_ORCHESTRATION_CONFIG_ERROR }, { status: 503 });
     }
 
-    const compact = useCompactServerlessAiChain();
+    const compact = isCompactServerlessAiChain();
     const { text: raw, provider } = await completeChatMultiModel(
       [
         { role: "system", content: buildStitchSystemPrompt(palette, visualVariant) },

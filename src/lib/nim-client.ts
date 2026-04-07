@@ -103,6 +103,11 @@ function makeNimClientFromEnv(opts?: OpenAIClientOpts): OpenAI | null {
     );
   }
 
+  const groq = process.env.GROQ_API_KEY?.trim();
+  if (groq) {
+    return makeOpenAIClient(groq, "https://api.groq.com/openai/v1", undefined, opts);
+  }
+
   const nvidia = process.env.NVIDIA_API_KEY?.trim();
   if (nvidia) {
     return makeOpenAIClient(nvidia, NVIDIA_BASE_URL, undefined, opts);
@@ -159,6 +164,9 @@ function inferDefaultChatModel(): string {
   }
   if (process.env.OPENROUTER_API_KEY?.trim()) {
     return "openai/gpt-4o-mini";
+  }
+  if (process.env.GROQ_API_KEY?.trim()) {
+    return process.env.GROQ_MODEL_ID?.trim() || "llama-3.1-8b-instant";
   }
   if (process.env.NVIDIA_API_KEY?.trim()) {
     return "meta/llama-3.3-70b-instruct";

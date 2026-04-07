@@ -40,6 +40,7 @@ import {
   type ChatRoom,
 } from "@/lib/chat";
 import { useFirebaseUid } from "@/hooks/useFirebaseUid";
+import { DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Tab = "projects" | "workspace" | "assessments" | "profile" | "prd" | "chat";
@@ -332,7 +333,7 @@ const SKILL_ASSESSMENT_CATALOG: SkillAssessmentCatalogEntry[] = [
 export default function EmployeeDashboard() {
   const router = useRouter();
   const pathname = usePathname();
-  const { project, currentUser, developerProfile, setDeveloperProfile, patchDeveloperProfile, reset } = useStore();
+  const { project, currentUser, developerProfile, setDeveloperProfile, patchDeveloperProfile, reset, addUserRole, userRoles, setRole } = useStore();
 
   // ── PRD + Chat state ────────────────────────────────────────────────────────
   const [prds,         setPrds]        = useState<PRDDocument[]>([]);
@@ -901,6 +902,20 @@ export default function EmployeeDashboard() {
           <Edit3 className="w-3.5 h-3.5 text-white/20 group-hover:text-indigo-400 transition-colors shrink-0" />
         </Link>
 
+        {!userRoles.includes("employer") && (
+          <button
+            type="button"
+            onClick={() => {
+              addUserRole("employer");
+              setRole("employer");
+              router.push("/discovery");
+            }}
+            className="mb-5 w-full py-2.5 px-3 rounded-xl border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 hover:bg-indigo-500/20 hover:border-indigo-400/60 text-[10px] font-bold uppercase tracking-widest transition-all"
+          >
+            Post a project · Discovery
+          </button>
+        )}
+
         {/* Dynamic tier card */}
         {(() => {
           const tier = (developerProfile?.verificationStatus ?? "self-declared") as keyof typeof TIER_CONFIG;
@@ -994,8 +1009,9 @@ export default function EmployeeDashboard() {
       </aside>
 
       {/* ── Main Content ───────────────────────────────────────────────────── */}
-      <main className="flex-grow overflow-y-auto">
-        <div className="p-10 max-w-5xl space-y-8">
+      <main className="flex-grow overflow-y-auto flex flex-col">
+        <DeveloperFlowBreadcrumb className="px-10 pt-4 shrink-0 border-b border-white/5 bg-[#030303]/50" />
+        <div className="p-10 max-w-5xl space-y-8 flex-1">
 
           <header className="border-b border-white/10 pb-8 space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-4">
