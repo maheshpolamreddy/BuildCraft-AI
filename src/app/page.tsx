@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowRight, Shield, Zap, Search, Layers, UserCheck, ShieldCheck, Code2 as Code2Icon, LogOut, ChevronUp } from "lucide-react";
+import { ArrowRight, Shield, Zap, Search, Layers, UserCheck, ShieldCheck, Code2 as Code2Icon, LogOut, ChevronUp, Command } from "lucide-react";
 import Link from "next/link";
 import type { SVGProps } from "react";
 import Threads from "@/components/Threads";
@@ -76,88 +76,90 @@ export default function LandingPage() {
         <Threads amplitude={2} distance={0} enableMouseInteraction={true} color={[0.2, 0.4, 0.9]} />
       </div>
 
-      {/* ── Modernized Floating Header ────────────────────────────────────────────── */}
+      {/* ── Ultimate Sleek Floating Header ────────────────────────────────────────── */}
       <div className="fixed top-0 left-0 right-0 z-50 flex justify-center p-6 pointer-events-none">
         <motion.header 
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
-          className="glass-panel pointer-events-auto max-w-6xl w-full border border-white/10 bg-black/40 backdrop-blur-2xl px-8 py-4 rounded-[2rem] flex justify-between items-center shadow-2xl shadow-indigo-500/5 relative group transition-all duration-500 hover:border-white/20 hover:shadow-indigo-500/10"
+          className="glass-panel pointer-events-auto max-w-7xl w-full border border-white/10 bg-[#0A0A0A]/60 backdrop-blur-3xl px-8 py-3.5 rounded-[2.5rem] grid grid-cols-3 items-center shadow-2xl shadow-indigo-500/10 relative group transition-all duration-700 hover:border-white/20 hover:shadow-indigo-500/20"
         >
-          {/* Visual Highlight Beam */}
-          <div className="absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-blue-500/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700" />
+          {/* Visual Highlight Beam & Grain */}
+          <div className="absolute inset-x-20 -top-px h-px bg-gradient-to-r from-transparent via-blue-500/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-1000" />
+          <div className="absolute inset-0 opacity-[0.02] pointer-events-none bg-[url('/noise.svg')] rounded-[2.5rem]" />
           
-          <div className="flex items-center gap-4">
+          {/* Column 1: Branding & Version */}
+          <div className="flex items-center gap-5">
             <button 
               onClick={() => setShowLogoEasterEgg(true)}
-              className="flex items-center gap-2.5 group/logo"
+              className="flex items-center gap-3 group/logo shrink-0"
             >
               <div className="relative">
-                <Logo className="w-10 h-10 group-hover/logo:scale-110 transition-transform duration-500 ease-out" />
-                <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full opacity-0 group-hover/logo:opacity-100 transition-opacity duration-700" />
+                <Logo className="w-10 h-10 group-hover/logo:scale-110 transition-transform duration-700 ease-[0.23,1,0.32,1]" />
+                <div className="absolute inset-0 bg-blue-500/30 blur-2xl rounded-full opacity-0 group-hover/logo:opacity-100 transition-opacity duration-1000" />
               </div>
               <div className="flex flex-col">
-                <span className="text-lg font-black tracking-tighter text-white uppercase leading-none">BuildCraft</span>
-                <span className="text-[8px] font-black tracking-[0.4em] text-blue-500 uppercase mt-0.5 ml-0.5">Intelligence</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-lg font-black tracking-tighter text-white uppercase leading-none">BuildCraft</span>
+                  <span className="px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 text-[7px] font-black text-white/40 tracking-widest uppercase">v1.1.0</span>
+                </div>
+                <span className="text-[7px] font-black tracking-[0.5em] text-blue-500 uppercase mt-1 ml-0.5 opacity-80">Intelligence Engine</span>
               </div>
             </button>
           </div>
 
-          {/* Premium Nav Links */}
-          <nav className="hidden lg:flex items-center gap-10">
+          {/* Column 2: Symmetric Premium Nav */}
+          <nav className="hidden lg:flex items-center justify-center gap-10">
             {[
               { label: "Features", href: "#features" },
-              { label: "Trust & Safety", href: "#compliance" },
+              { label: "How it Works", href: "#" },
+              { label: "Pricing", href: "#" },
+              { label: "Trust", href: "#compliance" },
             ].map((link) => (
               <Link 
                 key={link.label} 
                 href={link.href} 
-                className="relative text-[10px] font-black uppercase tracking-[0.25em] text-white/40 hover:text-white transition-all duration-300 group/link"
+                className="relative text-[9px] font-black uppercase tracking-[0.3em] text-white/30 hover:text-white transition-all duration-500 group/link whitespace-nowrap"
               >
                 {link.label}
-                <span className="absolute -bottom-1 left-0 w-0 h-px bg-blue-500/50 group-hover/link:w-full transition-all duration-500" />
+                <motion.span 
+                  className="absolute -bottom-1 left-0 right-0 h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent scale-x-0 group-hover/link:scale-x-100 transition-transform duration-500" 
+                />
               </Link>
             ))}
-            
-            {isDeveloper && (
-              <Link href="/employee-dashboard" className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.25em] text-blue-400/70 hover:text-blue-400 transition-all group/dash">
-                <UserCheck className="w-3.5 h-3.5 group-hover/dash:scale-110 transition-transform" />
-                Hub
-              </Link>
-            )}
           </nav>
 
-          <div className="flex items-center gap-4">
-            {/* Developer Indicator */}
-            {isDeveloper && (
-              <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-full border border-blue-500/20 bg-blue-500/5 text-blue-400/80 font-black text-[9px] uppercase tracking-widest">
-                <Code2Icon className="w-3 h-3" />
-                Validated
-                <span className="w-1 h-1 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
+          {/* Column 3: Global Search & Auth Actions */}
+          <div className="flex items-center justify-end gap-5">
+            {/* Minimalist Search Bar */}
+            <div className="hidden xl:flex items-center gap-3 px-4 py-2 rounded-2xl bg-white/5 border border-white/5 hover:border-white/10 transition-all cursor-pointer group/search">
+              <Search className="w-3.5 h-3.5 text-white/20 group-hover/search:text-white/60 transition-colors" />
+              <span className="text-[9px] font-black tracking-widest text-white/20 uppercase">Search Projects</span>
+              <div className="flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 text-[8px] font-black text-white/20">
+                <Command className="w-2 h-2 mr-0.5" /> K
               </div>
-            )}
+            </div>
 
-            {/* Auth Actions */}
-            <div className="flex items-center gap-4 border-l border-white/10 pl-4 ml-2">
+            <div className="flex items-center gap-5 border-l border-white/10 pl-5">
               {currentUser ? (
                 <button
                   onClick={handleLogout}
-                  className="text-[10px] font-black uppercase tracking-[0.2em] text-white/20 hover:text-white/60 transition-colors"
+                  className="p-2.5 rounded-xl hover:bg-white/5 text-white/20 hover:text-white transition-all"
                 >
-                  <LogOut className="w-3.5 h-3.5" />
+                  <LogOut className="w-4 h-4" />
                 </button>
               ) : (
-                <Link href="/auth" className="text-[10px] font-black uppercase tracking-[0.2em] text-white/30 hover:text-white transition-colors">
+                <Link href="/auth" className="text-[10px] font-black uppercase tracking-[0.25em] text-white/30 hover:text-white transition-colors">
                   Sign In
                 </Link>
               )}
 
-              {/* Dynamic CTA */}
+              {/* Dynamic Sleek CTA */}
               <button
                 onClick={() => router.push(getStartBuildingHref())}
-                className="px-6 py-3 silver-gradient text-black font-black uppercase tracking-[0.15em] text-[10px] rounded-2xl shadow-xl shadow-white/5 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center gap-2"
+                className="px-6 py-3 bg-white text-black font-black uppercase tracking-[0.2em] text-[10px] rounded-2xl shadow-xl shadow-white/10 hover:bg-white/90 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center gap-2 group/cta"
               >
                 {getStartBuildingLabel()}
-                <ArrowRight className="w-3.5 h-3.5" />
+                <ArrowRight className="w-3.5 h-3.5 group-hover/cta:translate-x-1 transition-transform" />
               </button>
             </div>
           </div>
