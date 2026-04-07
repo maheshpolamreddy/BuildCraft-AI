@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getHireRequest, respondToHireRequest } from "@/lib/hireRequests";
 import { sendHireAccepted, transactionalEmailConfigured } from "@/lib/email";
 import { createOrGetChat } from "@/lib/chat";
+import { adminDb } from "@/lib/firebase-admin";
 
 /** Prefer deployment host so server-side fetch() works on Vercel (localhost would fail). */
 function appBaseUrl(): string {
@@ -70,7 +71,22 @@ export async function POST(req: NextRequest) {
       developerEmail: request.developerEmail,
     });
 
-    // 3. Trigger PRD generation (fire and forget — no await needed)
+    // 3. Authorize developer on project and workspace via Admin SDK
+    if (request.projectId) {
+      try {
+        const projRef = adminDb.collection("projects").doc(request.projectId);
+        const workRef = adminDb.collection("projectWorkspaces").doc(request.projectId);
+        // We use update and ignore failures (e.g. if the workspace doesn't exist yet)
+        await Promise.allSettled([
+          projRef.update({ developerUid: request.developerUid }),
+          workRef.update({ developerUid: request.developerUid })
+        ]);
+      } catch (e) {
+        console.warn("[hire-respond] admin authorization error:", e);
+      }
+    }
+
+    // 4. Trigger PRD generation (fire and forget)
     fetch(`${appBaseUrl()}/api/generate-prd`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },

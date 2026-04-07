@@ -13,8 +13,7 @@ import {
   sendChatMessage,
   chatStorageKey,
 } from "@/lib/chat";
-import { auth, db } from "@/lib/firebase";
-import { doc, updateDoc } from "firebase/firestore";
+import { auth } from "@/lib/firebase";
 import { onAuthStateChanged, type User as FirebaseUser } from "firebase/auth";
 import Link from "next/link";
 
@@ -100,25 +99,13 @@ function InvitePageInner() {
         } catch {
           /* */
         }
-
-        // Authorize developer on project and workspace
-        if (req.projectId) {
-          const projRef = doc(db, "projects", req.projectId);
-          const workRef = doc(db, "projectWorkspaces", req.projectId);
-          // We use updateDoc to avoid overwriting existing data
-          // If the workspace doesn't exist yet, it's fine, it will be initialized by the creator or on first room load
-          await Promise.allSettled([
-            updateDoc(projRef, { developerUid: u.uid }),
-            updateDoc(workRef, { developerUid: u.uid })
-          ]);
-        }
       } catch (e) {
-        console.warn("[invite] post-accept adjustments:", e);
+        console.warn("[invite] post-accept chat:", e);
       }
       if (req.projectId) {
         router.replace(`/project-room?projectId=${req.projectId}&tab=chat`);
       } else {
-        router.replace(`/employee-dashboard?tab=chat&chat=${encodeURIComponent(req.token)}`);
+        router.push("/discovery");
       }
     },
     [router],
