@@ -181,6 +181,8 @@ function ProjectRoomContent() {
   });
 
   const [loadingProject, setLoadingProject] = useState(!!searchParams.get("projectId"));
+  const [projectLoadFailed, setProjectLoadFailed] = useState(false);
+  const [loadRetry, setLoadRetry] = useState(0);
   const [activeTab, setActiveTab] = useState<Tab>("milestones");
   const [milestones, setMilestones] = useState<Milestone[]>(FALLBACK_MILESTONES);
   const [loadingMilestones, setLoadingMilestones] = useState(false);
@@ -246,16 +248,37 @@ function ProjectRoomContent() {
       setLoadingProject(false);
       return;
     }
-    // If store already has it, no-op
     if (project && savedProjectId === pId) {
       setLoadingProject(false);
       return;
     }
+    if (!authReady) return;
 
+    let cancelled = false;
     async function loadRemote() {
       setLoadingProject(true);
       try {
-        const saved = await getProject(pId as string);
+        // 1. Try client-side Firestore read (works if user has permission)
+        let saved = await getProject(pId as string);
+
+        // 2. Fallback: use server API with Admin SDK (for hired developers whose
+        //    Firestore rules might block client reads)
+        if (!saved && auth.currentUser) {
+          try {
+            const token = await auth.currentUser.getIdToken();
+            const res = await fetch(`/api/load-project?id=${encodeURIComponent(pId as string)}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (res.ok) {
+              const json = await res.json();
+              if (json.project) saved = json.project as SavedProject;
+            }
+          } catch (apiErr) {
+            console.warn("[ProjectRoom] API fallback load error:", apiErr);
+          }
+        }
+
+        if (cancelled) return;
         if (saved) {
           const merged = {
             ...saved.project,
@@ -265,15 +288,21 @@ function ProjectRoomContent() {
           };
           setProject(merged);
           setSavedProjectId(pId);
+          setProjectLoadFailed(false);
+        } else {
+          setProjectLoadFailed(true);
         }
       } catch (e) {
         console.error("[ProjectRoom] remote load error:", e);
+        if (!cancelled) setProjectLoadFailed(true);
       } finally {
-        setLoadingProject(false);
+        if (!cancelled) setLoadingProject(false);
       }
     }
     loadRemote();
-  }, [searchParams, project, savedProjectId, setProject, setSavedProjectId]);
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, project, savedProjectId, setProject, setSavedProjectId, authReady, loadRetry]);
 
   // Deep-link from Discovery / Architecture / hire emails (e.g. ?tab=chat&chat=…)
   useEffect(() => {
@@ -333,13 +362,14 @@ function ProjectRoomContent() {
 
 
   // ── Route Guard (waits for Firebase auth before redirecting) ────────────────
+  const hasProjectIdParam = !!searchParams.get("projectId");
   useEffect(() => {
     if (!authReady) return;
     if (loadingProject) return;
 
     if (!currentUser) {
        router.push(`/auth?return=${encodeURIComponent(pathname + (searchParams.toString() ? "?" + searchParams.toString() : ""))}`);
-    } else if (!project && !savedProjectId) {
+    } else if (!project && !savedProjectId && !hasProjectIdParam) {
        if (
          isDeveloperRegistrationComplete(developerProfile) &&
          shouldDefaultToDeveloperDashboard(userRoles, developerProfile, role)
@@ -349,7 +379,7 @@ function ProjectRoomContent() {
          router.push("/discovery");
        }
     }
-  }, [authReady, currentUser, project, savedProjectId, router, loadingProject, pathname, searchParams, developerProfile, userRoles, role]);
+  }, [authReady, currentUser, project, savedProjectId, router, loadingProject, pathname, searchParams, developerProfile, userRoles, role, hasProjectIdParam]);
 
   // ── Sync Milestones from Real-Time Workspace ─────────────────────────────
   useEffect(() => {
@@ -971,6 +1001,37 @@ function ProjectRoomContent() {
     yellow: "bg-yellow-500/20 border-yellow-500 text-yellow-400",
     white:  "bg-white/10 border-white/30 text-white/60",
   };
+
+  if (loadingProject || (!authReady && hasProjectIdParam)) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#0a0a0a]">
+        <div className="text-center space-y-4">
+          <Loader2 className="w-8 h-8 text-purple-500 animate-spin mx-auto" />
+          <p className="text-white/40 text-sm font-medium">Loading workspace...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (projectLoadFailed && hasProjectIdParam && !project) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#0a0a0a]">
+        <div className="text-center space-y-4 max-w-md">
+          <AlertCircle className="w-10 h-10 text-red-400 mx-auto" />
+          <h2 className="text-white font-bold text-lg">Unable to load project</h2>
+          <p className="text-white/40 text-sm">This project could not be found or you don&apos;t have access yet. If you were recently hired, the project owner may need to re-share access.</p>
+          <div className="flex gap-3 justify-center pt-2">
+            <button onClick={() => router.push("/employee-dashboard")} className="px-5 py-2.5 bg-white/10 border border-white/10 text-white rounded-xl text-sm font-bold hover:bg-white/20 transition-all">
+              Back to Dashboard
+            </button>
+            <button onClick={() => { setProjectLoadFailed(false); setLoadRetry(c => c + 1); }} className="px-5 py-2.5 bg-purple-600 border border-purple-500 text-white rounded-xl text-sm font-bold hover:bg-purple-500 transition-all">
+              Retry
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen relative flex">
