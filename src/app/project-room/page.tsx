@@ -1,6 +1,6 @@
 "use client";
 
-import { subscribeToWorkspace, updateWorkspaceTask, getWorkspaceState, setWorkspaceMilestones, type Task, type Milestone, type TaskStatus } from "@/lib/workspace";
+import { subscribeToWorkspace, updateWorkspaceTask, getWorkspaceState, setWorkspaceMilestones, setWorkspaceMatchedDevelopers, type Task, type Milestone, type TaskStatus } from "@/lib/workspace";
 import React, { useState, useEffect, useMemo, Suspense, useRef, useCallback, cloneElement } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -231,8 +231,13 @@ function ProjectRoomContent() {
   useEffect(() => {
     if (!savedProjectId) return;
     return subscribeToWorkspace(savedProjectId, (state) => {
-       if (state && state.milestones && state.milestones.length > 0) {
+       if (state) {
+         if (state.milestones && state.milestones.length > 0) {
            setMilestones(state.milestones);
+         }
+         if (state.matchedDevelopers && state.matchedDevelopers.length > 0 && matchedDevs.length === 0) {
+           setMatchedDevs(state.matchedDevelopers);
+         }
        }
     });
   }, [savedProjectId]);
@@ -1115,7 +1120,7 @@ function ProjectRoomContent() {
                 {/* Matched developer cards */}
                 {!matchLoading && matchedDevs.length > 0 && (
                   <div className="space-y-4">
-                    {matchedDevs.map((dev, idx) => {
+                    {matchedDevs.map((dev, i) => {
                       const isHired    = hiredDevIds.has(dev.userId);
                       const isExpanded = !!expandedDevs[dev.userId];
                       const bandColor  = dev.confidenceBand === "Excellent" ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
@@ -1130,152 +1135,189 @@ function ProjectRoomContent() {
                         : "text-white/40";
 
                       return (
-                        <motion.div key={dev.userId}
-                          initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: idx * 0.07 }}
-                          className={`relative group rounded-3xl border transition-all overflow-hidden ${isHired ? "border-emerald-500/40 bg-emerald-500/5 shadow-[0_0_30px_rgba(16,185,129,0.1)]" : "bg-gradient-to-br from-[#111] to-[#080808] border-white/5 hover:border-indigo-500/40 hover:shadow-[0_8px_40px_rgba(79,70,229,0.2)]"}`}>
-                          <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+                        <motion.div
+                          key={dev.userId}
+                          initial={{ opacity: 0, y: 15 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: i * 0.05 }}
+                          className="group relative"
+                        >
+                          {/* Premium Glowing Border */}
+                          <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500/20 to-purple-500/20 rounded-3xl blur opacity-0 group-hover:opacity-100 transition duration-500" />
+                          
+                          <div className="relative glass-panel p-6 rounded-3xl border border-white/10 hover:border-white/20 transition-all duration-300 overflow-hidden">
+                            {/* Subtle background glow */}
+                            <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none" />
 
-                          {/* Rank ribbon */}
-                          <div className={`flex items-center gap-2 px-6 py-2 border-b border-white/5 text-[9px] font-black uppercase tracking-widest ${idx === 0 ? "bg-indigo-500/10 text-indigo-400" : "bg-white/5 text-white/30"}`}>
-                            {idx === 0 ? <><Star className="w-3 h-3 fill-indigo-400" /> Top Match</> : `#${dev.rank} Ranked Match`}
-                          </div>
-
-                          <div className="p-6">
                             {/* Developer header */}
-                            <div className="flex items-start gap-5 mb-5">
-                              {/* Avatar */}
-                              <div className="w-16 h-16 rounded-full border-2 border-white/20 overflow-hidden bg-white/5 flex items-center justify-center shrink-0">
-                                {dev.photoURL ? (
-                                  // eslint-disable-next-line @next/next/no-img-element
-                                  <img src={dev.photoURL} alt={dev.fullName} className="w-full h-full object-cover" />
-                                ) : (
-                                  <UserCheck className="w-7 h-7 text-white/30" />
-                                )}
+                            <div className="flex items-start gap-6 mb-6">
+                              {/* Avatar & Score Combination */}
+                              <div className="relative shrink-0">
+                                <div className="w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-white/10 to-white/5 border border-white/10">
+                                  <div className="w-full h-full rounded-full overflow-hidden bg-[#0A0A0A] flex items-center justify-center">
+                                    {dev.photoURL ? (
+                                      <img src={dev.photoURL} alt={dev.fullName} className="w-full h-full object-cover" />
+                                    ) : (
+                                      <UserCheck className="w-8 h-8 text-white/20" />
+                                    )}
+                                  </div>
+                                </div>
+                                {/* Match Score Gauge (SVG) */}
+                                <div className="absolute -bottom-1 -right-1 w-9 h-9 rounded-full bg-[#0F0F0F] border border-white/10 flex items-center justify-center shadow-2xl">
+                                   <svg className="w-7 h-7 -rotate-90">
+                                      <circle cx="14" cy="14" r="12" fill="none" stroke="currentColor" strokeWidth="2" className="text-white/5" />
+                                      <circle cx="14" cy="14" r="12" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray={75} strokeDashoffset={75 - (75 * (dev.matchScore / 100))} className={`${dev.matchScore > 80 ? "text-emerald-400" : "text-indigo-400"} transition-all duration-1000`} />
+                                   </svg>
+                                   <span className="absolute text-[8px] font-black text-white">{dev.matchScore}</span>
+                                </div>
                               </div>
 
                               {/* Info */}
                               <div className="flex-1 min-w-0">
-                                <div className="flex items-start justify-between gap-3 flex-wrap">
-                                  <div>
-                                    <h3 className={`text-lg font-black tracking-tight ${dev.verificationStatus === "project-verified" ? "silver-gradient" : "text-white"}`}>
-                                      {dev.fullName || "Anonymous Developer"}
+                                <div className="flex items-start justify-between gap-4">
+                                  <div className="space-y-1">
+                                    <h3 className={`text-xl font-black tracking-tight leading-tight ${dev.verificationStatus === "project-verified" ? "silver-gradient" : "text-white"}`}>
+                                      {dev.fullName || "Anonymous"}
                                     </h3>
-                                    <p className="text-white/40 text-xs mt-0.5">
-                                      {dev.primaryRole?.replace("fullstack","Full Stack").replace("frontend","Frontend").replace("backend","Backend").replace("ai","AI/ML").replace("devops","DevOps")} Developer
-                                      {" · "}{dev.yearsExp}yr{dev.yearsExp !== 1 ? "s" : ""} exp
-                                      {" · "}<span className="capitalize">{dev.availability}</span>
-                                    </p>
-                                    <p className={`text-[10px] font-bold mt-1 flex items-center gap-1 transition-all ${tierColor} ${dev.verificationStatus !== "self-declared" ? "drop-shadow-[0_0_8px_rgba(52,211,153,0.4)]" : ""}`}>
+                                    <div className="flex flex-wrap items-center gap-x-2 text-[10px] font-medium text-white/40">
+                                      <span className="text-indigo-300/80">{dev.primaryRole?.toUpperCase()}</span>
+                                      <span className="w-1 h-1 rounded-full bg-white/10" />
+                                      <span>{dev.yearsExp} YEARS PASSION</span>
+                                      <span className="w-1 h-1 rounded-full bg-white/10" />
+                                      <span className="text-emerald-400/80 uppercase">{dev.availability}</span>
+                                    </div>
+                                    <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[9px] font-black uppercase tracking-widest mt-2 ${tierColor} ${dev.verificationStatus !== "self-declared" ? "bg-emerald-500/5 shadow-[0_0_15px_rgba(52,211,153,0.1)]" : "bg-white/5 opacity-50"}`}>
                                       <ShieldCheck className="w-3 h-3" /> {tierLabel}
-                                    </p>
+                                    </div>
                                   </div>
-                                  {/* Score badge */}
-                                  <div className={`shrink-0 flex flex-col items-center gap-0.5 px-4 py-2.5 rounded-xl border ${bandColor}`}>
-                                    <span className="text-2xl font-black leading-none">{dev.matchScore}</span>
-                                    <span className="text-[8px] font-bold uppercase tracking-widest opacity-70">{dev.confidenceBand}</span>
+                                  
+                                  {/* Trust Band */}
+                                  <div className={`hidden sm:flex flex-col items-end shrink-0`}>
+                                     <div className={`px-3 py-1 rounded-lg border text-[9px] font-black uppercase tracking-[0.2em] ${bandColor}`}>
+                                        {dev.confidenceBand}
+                                     </div>
                                   </div>
                                 </div>
 
-                                {/* Skill overlap chips */}
-                                <div className="flex flex-wrap gap-1.5 mt-3">
-                                  {dev.skillOverlap.slice(0, 6).map(s => (
-                                    <span key={s} className="px-2 py-0.5 rounded-md text-[9px] font-bold border text-emerald-400 bg-emerald-500/10 border-emerald-500/20">{s}</span>
+                                {/* Skills */}
+                                <div className="flex flex-wrap gap-1.5 mt-4">
+                                  {dev.skillOverlap.slice(0, 5).map(s => (
+                                    <span key={s} className="px-2.5 py-1 rounded-lg text-[9px] font-bold border text-emerald-400 bg-emerald-500/10 border-emerald-500/25 shadow-sm shadow-emerald-500/5">{s}</span>
                                   ))}
-                                  {dev.skills.filter(s => !dev.skillOverlap.includes(s)).slice(0, 3).map(s => (
-                                    <span key={s} className="px-2 py-0.5 rounded-md text-[9px] font-bold border text-white/30 bg-white/5 border-white/10">{s}</span>
+                                  {dev.skills.filter(s => !dev.skillOverlap.includes(s)).slice(0, 2).map(s => (
+                                    <span key={s} className="px-2.5 py-1 rounded-lg text-[9px] font-bold border text-white/30 bg-white/5 border-white/10">{s}</span>
                                   ))}
                                 </div>
                               </div>
                             </div>
 
-                            {/* Match reasoning */}
-                            <div className="p-4 bg-white/5 border border-white/5 rounded-xl mb-4 space-y-1.5">
-                              <p className="text-[9px] text-white/30 uppercase tracking-widest font-bold mb-2 flex items-center gap-1">
-                                <Sparkles className="w-3 h-3 text-indigo-400" /> AI Match Analysis
+                            {/* Reasoning Section (Collapsible Look) */}
+                            <div className="relative p-5 bg-[#080808] border border-white/5 rounded-2xl mb-5 group-hover:border-white/10 transition-colors">
+                              <p className="text-[9px] text-indigo-400/60 uppercase tracking-[0.2em] font-black mb-3 flex items-center gap-2">
+                                <Sparkles className="w-3 h-3" /> Expert Match Intelligence
                               </p>
-                              {dev.matchReasons.map((r, i) => (
-                                <p key={i} className="text-xs text-white/60 font-light flex items-start gap-2">
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" /> {r}
-                                </p>
-                              ))}
+                              <div className="space-y-2">
+                                {dev.matchReasons.slice(0, 2).map((r, ri) => (
+                                  <div key={ri} className="flex gap-3 text-xs text-white/70 font-light leading-snug">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5 opacity-80" />
+                                    <span>{r}</span>
+                                  </div>
+                                ))}
+                              </div>
                               {dev.caution && (
-                                <p className="text-xs text-yellow-400/70 font-light flex items-start gap-2 pt-1.5 mt-1 border-t border-white/5">
-                                  <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" /> {dev.caution}
-                                </p>
+                                <div className="mt-3 pt-3 border-t border-white/5 flex gap-3 text-xs text-amber-300/60 font-light italic bg-amber-400/5 -mx-5 -mb-5 p-4 rounded-b-2xl">
+                                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                                  <span>{dev.caution}</span>
+                                </div>
                               )}
                             </div>
 
-                            {/* Expandable details */}
-                            <button onClick={() => setExpandedDevs(prev => ({ ...prev, [dev.userId]: !prev[dev.userId] }))}
-                              className="w-full flex items-center justify-between text-[10px] text-white/40 hover:text-white font-bold uppercase tracking-widest transition-colors mb-3">
-                              <span>{isExpanded ? "Hide Details" : "View Full Profile"}</span>
-                              <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                            {/* Details Trigger */}
+                            <button 
+                              onClick={() => setExpandedDevs(prev => ({ ...prev, [dev.userId]: !prev[dev.userId] }))}
+                              className="w-full flex items-center justify-center gap-2 py-2 text-[9px] font-black uppercase tracking-[0.15em] text-white/20 hover:text-white/60 transition-all group/btn"
+                            >
+                               {isExpanded ? "Minimize Specs" : "Analyze Full DNA"}
+                               <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-500 ${isExpanded ? "rotate-180" : "group-hover/btn:translate-y-0.5"}`} />
                             </button>
 
                             <AnimatePresence>
                               {isExpanded && (
-                                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-                                  className="overflow-hidden border-t border-white/5 pt-4 space-y-4">
-                                  {/* Strengths */}
-                                  <div>
-                                    <p className="text-[9px] text-white/30 uppercase tracking-widest font-bold mb-2">Strengths</p>
-                                    <p className="text-xs text-white/60 font-light">{dev.strengthsNote}</p>
+                                <motion.div 
+                                  initial={{ height: 0, opacity: 0 }} 
+                                  animate={{ height: "auto", opacity: 1 }} 
+                                  exit={{ height: 0, opacity: 0 }}
+                                  className="overflow-hidden"
+                                >
+                                  <div className="pt-6 pb-2 space-y-6 border-t border-white/5 mt-4">
+                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="space-y-4">
+                                           <div>
+                                              <p className="text-[9px] text-white/25 uppercase tracking-widest font-black mb-2">Technical Strengths</p>
+                                              <p className="text-xs text-white/60 font-light leading-relaxed">{dev.strengthsNote}</p>
+                                           </div>
+                                           <div className="flex items-center gap-6">
+                                              {dev.payMin > 0 && (
+                                                <div>
+                                                   <p className="text-[9px] text-white/25 uppercase tracking-widest font-black mb-1">Fee Tier</p>
+                                                   <p className="text-sm text-emerald-400 font-black">${dev.payMin}–${dev.payMax}/<span className="text-[10px] text-white/40">{dev.payCurrency}</span></p>
+                                                </div>
+                                              )}
+                                              <div>
+                                                 <p className="text-[9px] text-white/25 uppercase tracking-widest font-black mb-1">Status</p>
+                                                 <p className="text-xs text-white/80 font-bold uppercase">{dev.availability}</p>
+                                              </div>
+                                           </div>
+                                        </div>
+                                        <div className="space-y-4">
+                                           <div>
+                                              <p className="text-[9px] text-white/25 uppercase tracking-widest font-black mb-2">Validated Stack</p>
+                                              <div className="flex flex-wrap gap-1.5">
+                                                {dev.skills.map(s => (
+                                                  <span key={s} className={`px-2.5 py-1 rounded-lg text-[9px] font-bold border ${dev.skillOverlap.includes(s) ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/25" : "text-white/20 bg-white/5 border-white/5"}`}>{s}</span>
+                                                ))}
+                                              </div>
+                                           </div>
+                                           {dev.missingSkills.length > 0 && (
+                                              <div>
+                                                 <p className="text-[9px] text-amber-500/30 uppercase tracking-widest font-black mb-1">Gaps Identified</p>
+                                                 <div className="flex flex-wrap gap-1.5">
+                                                   {dev.missingSkills.map(s => (
+                                                     <span key={s} className="px-2.5 py-1 rounded-lg text-[9px] font-bold border text-amber-500/40 bg-amber-500/5 border-amber-500/10">{s}</span>
+                                                   ))}
+                                                 </div>
+                                              </div>
+                                           )}
+                                        </div>
+                                     </div>
+
+                                     {(dev.githubUrl || dev.portfolioUrl) && (
+                                       <div className="flex gap-3 pt-2">
+                                          {dev.githubUrl && (
+                                            <a href={dev.githubUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 border border-white/5 text-[9px] text-white/50 font-black uppercase tracking-widest hover:text-white hover:bg-white/10 transition-all">
+                                              <GitBranch className="w-3.5 h-3.5" /> Source
+                                            </a>
+                                          )}
+                                          {dev.portfolioUrl && (
+                                            <a href={dev.portfolioUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2 rounded-xl bg-indigo-500/10 border border-indigo-500/10 text-[9px] text-indigo-300/70 font-black uppercase tracking-widest hover:text-indigo-200 transition-all">
+                                              <ArrowRight className="w-3.5 h-3.5" /> Portal
+                                            </a>
+                                          )}
+                                       </div>
+                                     )}
                                   </div>
-                                  {/* All skills */}
-                                  <div>
-                                    <p className="text-[9px] text-white/30 uppercase tracking-widest font-bold mb-2">All Skills</p>
-                                    <div className="flex flex-wrap gap-1.5">
-                                      {dev.skills.map(s => (
-                                        <span key={s} className={`px-2 py-0.5 rounded-md text-[9px] font-bold border ${dev.skillOverlap.includes(s) ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" : "text-white/30 bg-white/5 border-white/10"}`}>{s}</span>
-                                      ))}
-                                    </div>
-                                  </div>
-                                  {/* Pay + availability */}
-                                  {dev.payMin > 0 && (
-                                    <div className="flex items-center gap-4 text-xs">
-                                      <span className="text-white/40">Rate:</span>
-                                      <span className="text-emerald-400 font-bold">${dev.payMin}–${dev.payMax}/{dev.payCurrency}</span>
-                                    </div>
-                                  )}
-                                  {/* Links */}
-                                  {(dev.githubUrl || dev.portfolioUrl) && (
-                                    <div className="flex gap-3">
-                                      {dev.githubUrl && (
-                                        <a href={dev.githubUrl} target="_blank" rel="noopener noreferrer"
-                                          className="flex items-center gap-1.5 text-[10px] text-indigo-400 hover:text-indigo-300 font-bold border border-indigo-500/20 px-3 py-1.5 rounded-lg transition-colors">
-                                          <GitBranch className="w-3 h-3" /> GitHub
-                                        </a>
-                                      )}
-                                      {dev.portfolioUrl && (
-                                        <a href={dev.portfolioUrl} target="_blank" rel="noopener noreferrer"
-                                          className="flex items-center gap-1.5 text-[10px] text-indigo-400 hover:text-indigo-300 font-bold border border-indigo-500/20 px-3 py-1.5 rounded-lg transition-colors">
-                                          <ArrowRight className="w-3 h-3" /> Portfolio
-                                        </a>
-                                      )}
-                                    </div>
-                                  )}
-                                  {/* Missing skills */}
-                                  {dev.missingSkills.length > 0 && (
-                                    <div>
-                                      <p className="text-[9px] text-yellow-400/60 uppercase tracking-widest font-bold mb-1">Skills Gap</p>
-                                      <div className="flex flex-wrap gap-1.5">
-                                        {dev.missingSkills.map(s => (
-                                          <span key={s} className="px-2 py-0.5 rounded-md text-[9px] font-bold border text-yellow-400/60 bg-yellow-500/5 border-yellow-500/20">{s}</span>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
                                 </motion.div>
                               )}
                             </AnimatePresence>
 
-                            {/* Actions */}
-                            <div className="flex gap-3 pt-4 border-t border-white/5">
+                            {/* Primary Actions */}
+                            <div className="flex gap-4 mt-6">
                               {isHired && sentTokens[dev.userId] && (
-                                <button onClick={() => { setActiveChatId(sentTokens[dev.userId]); setActiveTab("chat"); }}
-                                  className="flex-1 py-3 border border-indigo-500/30 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 font-bold uppercase tracking-widest text-[10px] rounded-xl transition-all flex items-center justify-center gap-2">
-                                  <MessageSquare className="w-4 h-4" /> Open Chat
+                                <button 
+                                  onClick={() => { setActiveChatId(sentTokens[dev.userId]); setActiveTab("chat"); }}
+                                  className="flex-1 h-14 rounded-2xl border border-indigo-500/30 bg-indigo-500/5 text-indigo-400 hover:bg-indigo-500/10 transition-all font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-3"
+                                >
+                                  <MessageSquare className="w-5 h-5" /> Open Hub
                                 </button>
                               )}
                               <button
@@ -1285,11 +1327,12 @@ function ProjectRoomContent() {
                                   setHireResult(null);
                                   setHireErrorDetail(null);
                                 }}
-                                className={`flex-1 py-3 font-black uppercase tracking-widest text-[10px] rounded-xl transition-all flex items-center justify-center gap-2 ${isHired ? "bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 cursor-default" : "silver-gradient text-black hover:opacity-90"}`}>
-                                <Mail className="w-4 h-4" />
+                                className={`flex-1 h-14 rounded-2xl transition-all duration-300 font-black uppercase tracking-[0.2em] text-[10px] flex items-center justify-center gap-3 ${isHired ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 cursor-default" : "silver-gradient text-black hover:scale-[1.02] active:scale-[0.98] shadow-2xl shadow-white/5"}`}
+                              >
+                                {isHired ? <CheckCircle2 className="w-5 h-5" /> : <Mail className="w-5 h-5" />}
                                 {isHired
-                                  ? (hireRequests.find(r => r.developerUid === dev.userId)?.status === "accepted" ? "Hired ✓" : "Invite Sent ✓")
-                                  : "Hire Developer"}
+                                  ? (hireRequests.find(r => r.developerUid === dev.userId)?.status === "accepted" ? "ACTIVE" : "PENDING")
+                                  : "INITIATE HIRE"}
                               </button>
                             </div>
                           </div>

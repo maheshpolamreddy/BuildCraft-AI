@@ -49,6 +49,7 @@ export interface Milestone {
 export interface WorkspaceState {
   projectId: string;
   milestones: Milestone[];
+  matchedDevelopers?: any[] | null;
   updatedAt: number;
 }
 
@@ -157,4 +158,15 @@ export function subscribeToWorkspace(
       if (onError) onError(err.message);
     }
   );
+}
+/**
+ * Replaces the matched developers in the project workspace.
+ */
+export async function setWorkspaceMatchedDevelopers(projectId: string, developers: any[]): Promise<void> {
+  if (!projectId) return;
+  const ref = doc(db, "projectWorkspaces", projectId);
+  await setDoc(ref, {
+    matchedDevelopers: developers,
+    updatedAt: Date.now(),
+  }, { merge: true });
 }
