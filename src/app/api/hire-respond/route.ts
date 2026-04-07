@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
       }),
     }).catch(err => console.error("[hire-respond] PRD generation failed:", err));
 
-    return NextResponse.json({ success: true, status: "accepted", chatId: token });
+    return NextResponse.json({ success: true, status: "accepted", chatId: token, projectId: request.projectId ?? null });
   } catch (err) {
     console.error("[hire-respond]", err);
     const code =

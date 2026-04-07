@@ -852,10 +852,11 @@ export default function EmployeeDashboard() {
       if (!ok) throw new Error(String(data?.error || "Failed to respond to invitation"));
 
       if (action === "accept") {
-        // Success! Re-fetch hire requests and then redirect
         const updated = await getHireRequestsByDeveloper(currentUser.uid);
         setHireReqs(updated);
-        router.push(`/project-room?projectId=${data.projectId || ""}&tab=milestones`);
+        const targetReq = updated.find(r => r.token === token);
+        const pid = data.projectId || targetReq?.projectId || "";
+        router.push(`/project-room?projectId=${pid}&tab=milestones`);
       } else {
         // Refetch to clear the rejected one
         const updated = await getHireRequestsByDeveloper(currentUser.uid);
@@ -1127,7 +1128,11 @@ export default function EmployeeDashboard() {
                       <Briefcase className="w-5 h-5 text-blue-400" /> My Active Projects
                     </h2>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {activeAssignments?.map((assignment) => (
+                      {activeAssignments?.map((assignment) => {
+                        const wsUrl = assignment.projectId
+                          ? `/project-room?projectId=${assignment.projectId}&tab=milestones`
+                          : `/project-room?tab=milestones`;
+                        return (
                         <div key={assignment?.token} className="glass-panel p-6 rounded-2xl border border-blue-500/20 bg-blue-500/5 hover:border-blue-500/40 transition-all">
                           <div className="flex justify-between items-start mb-4">
                             <div>
@@ -1139,20 +1144,21 @@ export default function EmployeeDashboard() {
                               <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest mt-1">Client: {assignment.creatorName}</p>
                             </div>
                             <Link 
-                              href={`/project-room?projectId=${assignment.projectId}&tab=milestones`}
+                              href={wsUrl}
                               className="p-2.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 rounded-xl transition-all"
                             >
                               <ArrowRight className="w-4 h-4" />
                             </Link>
                           </div>
                           <button 
-                            onClick={() => router.push(`/project-room?projectId=${assignment.projectId}&tab=milestones`)}
+                            onClick={() => router.push(wsUrl)}
                             className="w-full py-2.5 flex items-center justify-center gap-2 bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
                           >
                             <Play className="w-3.5 h-3.5" /> Enter Workspace
                           </button>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -1330,11 +1336,11 @@ export default function EmployeeDashboard() {
                     {activeAssignments?.length > 0 && (
                       <div className="pt-6 border-t border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto">
                         {activeAssignments.map(a => (
-                          <Link key={a?.token || Math.random()} href={`/project-room?projectId=${a?.projectId || ""}&tab=milestones`}
+                          <Link key={a?.token || Math.random()} href={a.projectId ? `/project-room?projectId=${a.projectId}&tab=milestones` : `/project-room?tab=milestones`}
                             className="p-4 glass-panel border border-white/5 hover:border-blue-500/30 bg-white/5 rounded-2xl flex items-center justify-between group transition-all">
                             <div className="text-left">
                               <div className="text-white font-bold text-sm group-hover:text-blue-400 transition-colors">{a.projectName}</div>
-                              <div className="text-[9px] text-[#888] uppercase tracking-widest font-bold font-mono">ID: {a.projectId?.slice(-6)}</div>
+                              <div className="text-[9px] text-[#888] uppercase tracking-widest font-bold font-mono">ID: {a.projectId?.slice(-6) || "—"}</div>
                             </div>
                             <ArrowRight className="w-4 h-4 text-white/20 group-hover:text-blue-400 -translate-x-1 group-hover:translate-x-0 transition-all" />
                           </Link>

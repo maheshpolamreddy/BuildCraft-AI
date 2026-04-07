@@ -257,7 +257,13 @@ function ProjectRoomContent() {
       try {
         const saved = await getProject(pId as string);
         if (saved) {
-          setProject(saved.project);
+          const merged = {
+            ...saved.project,
+            creatorUid: saved.project.creatorUid || saved.uid,
+            creatorEmail: saved.project.creatorEmail || saved.email,
+            developerUid: saved.project.developerUid || saved.developerUid || undefined,
+          };
+          setProject(merged);
           setSavedProjectId(pId);
         }
       } catch (e) {
