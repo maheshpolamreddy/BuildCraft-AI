@@ -533,6 +533,27 @@ export default function EmployeeDashboard() {
     };
   }, [firebaseUid, router, setDeveloperProfile]);
 
+  // ── Load hire requests on mount + refetch on tab switch + poll every 30s ──
+  const fetchHireReqs = useRef<() => void>(() => {});
+  fetchHireReqs.current = () => {
+    if (!currentUser?.uid || currentUser.uid === "demo-guest") return;
+    getHireRequestsByDeveloper(currentUser.uid)
+      .then(setHireReqs)
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    fetchHireReqs.current();
+    const id = setInterval(() => fetchHireReqs.current(), 30_000);
+    return () => clearInterval(id);
+  }, [currentUser?.uid]);
+
+  useEffect(() => {
+    if (activeTab === "projects" || activeTab === "workspace") {
+      fetchHireReqs.current();
+    }
+  }, [activeTab]);
+
   // ── Load PRDs + hire requests when PRD tab opens ────────────────────────────
   useEffect(() => {
     if (activeTab !== "prd" || !currentUser) return;
