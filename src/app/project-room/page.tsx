@@ -263,12 +263,11 @@ function ProjectRoomContent() {
 
         // 2. Fallback: use server API with Admin SDK (for hired developers whose
         //    Firestore rules might block client reads)
-        if (!saved && auth.currentUser) {
+        if (!saved && currentUser?.uid) {
           try {
-            const token = await auth.currentUser.getIdToken();
-            const res = await fetch(`/api/load-project?id=${encodeURIComponent(pId as string)}`, {
-              headers: { Authorization: `Bearer ${token}` },
-            });
+            const res = await fetch(
+              `/api/load-project?id=${encodeURIComponent(pId as string)}&uid=${encodeURIComponent(currentUser.uid)}`,
+            );
             if (res.ok) {
               const json = await res.json();
               if (json.project) saved = json.project as SavedProject;

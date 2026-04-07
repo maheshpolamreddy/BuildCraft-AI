@@ -1,24 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb, adminAuth } from "@/lib/firebase-admin";
+import { adminDb } from "@/lib/firebase-admin";
 
 export async function GET(req: NextRequest) {
   try {
     const projectId = req.nextUrl.searchParams.get("id");
-    if (!projectId) {
-      return NextResponse.json({ error: "Missing project id" }, { status: 400 });
-    }
-
-    const authHeader = req.headers.get("authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    let uid: string;
-    try {
-      const decoded = await adminAuth.verifyIdToken(authHeader.slice(7));
-      uid = decoded.uid;
-    } catch {
-      return NextResponse.json({ error: "Invalid token" }, { status: 401 });
+    const uid = req.nextUrl.searchParams.get("uid");
+    if (!projectId || !uid) {
+      return NextResponse.json({ error: "Missing id or uid" }, { status: 400 });
     }
 
     const projSnap = await adminDb.collection("projects").doc(projectId).get();
@@ -45,7 +33,11 @@ export async function GET(req: NextRequest) {
       }
       isDeveloper = true;
 
-      await adminDb.collection("projects").doc(projectId).update({ developerUid: uid }).catch(() => {});
+      await adminDb
+        .collection("projects")
+        .doc(projectId)
+        .update({ developerUid: uid })
+        .catch(() => {});
     }
 
     return NextResponse.json({ project: data });
