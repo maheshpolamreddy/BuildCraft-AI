@@ -137,14 +137,9 @@ export default function LandingPage() {
               ) : (
                 <Link 
                   href="/auth" 
-                  className="relative group/signin px-5 py-2.5 rounded-xl border border-white/20 bg-white/5 overflow-hidden transition-all hover:scale-105 active:scale-95"
+                  className="px-6 py-3 bg-white/10 border border-white/10 text-white font-black uppercase tracking-[0.2em] text-[9px] rounded-[1.2rem] transition-all hover:bg-white hover:text-black hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-black/20"
                 >
-                  {/* Modern Silver Shimmer Effect */}
-                  <div className="absolute inset-0 silver-gradient opacity-20 group-hover/signin:opacity-40 transition-opacity" />
-                  <div className="absolute -inset-x-full top-0 bottom-0 bg-gradient-to-r from-transparent via-white/30 to-transparent skew-x-30 group-hover/signin:animate-[shimmer_2s_infinite]" />
-                  <span className="relative z-10 text-[9px] font-black uppercase tracking-[0.2em] text-white group-hover/signin:text-black transition-colors duration-300">
-                    Sign In
-                  </span>
+                  Sign In
                 </Link>
               )}
 
