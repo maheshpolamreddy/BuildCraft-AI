@@ -1,0 +1,43 @@
+﻿
+> buildcraft@0.1.0 build
+> next build
+
+Γû▓ Next.js 16.2.1 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+Γ£ô Compiled successfully in 6.8s
+  Running TypeScript ...
+node.exe : Failed to type check.
+At C:\Program Files\nodejs\npm.ps1:29 char:3
++   & $NODE_EXE $NPM_CLI_JS $args
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    
+Failed to type check.:String) [], RemoteE    
+xception
+    + FullyQualifiedErrorId : NativeCommandEr    
+ror
+ 
+
+./src/app/architecture/page.tsx:854:25
+Type error: Cannot find name 'auth'.
+
+  [90m852 |[0m   [90m// ΓöÇΓöÇ Route Guard ΓöÇ
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓ
+öÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö
+ÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ[0m
+  [90m853 |[0m   useEffect(() => {
+[31m[1m>[0m [90m854 |[0m     [36mif[0m 
+(!currentUser && auth.currentUser === 
+[36mnull[0m) {
+  [90m    |[0m                         
+[31m[1m^[0m
+  [90m855 |[0m        router.push([32m"/auth?r
+eturn=/architecture"[0m);
+  [90m856 |[0m     } [36melse[0m [36mif[0m 
+(currentUser && !project && !savedProjectId) {
+  [90m857 |[0m        
+router.push([32m"/discovery"[0m);
+Next.js build worker exited with code: 1 and 
+signal: null

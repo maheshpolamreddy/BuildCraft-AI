@@ -19,6 +19,7 @@ import { getAllDeveloperProfiles, type DeveloperProfile } from "@/lib/developerP
 import { type MatchedDeveloper } from "@/app/api/match-developers/route";
 import Logo from "@/components/Logo";
 import { parseJsonResponse } from "@/lib/parse-api-json";
+import { auth } from "@/lib/firebase";
 
 const typeConfig: Record<Requirement["type"], { label: string; color: string; bg: string }> = {
   feature:     { label: "Feature",     color: "text-blue-400",    bg: "border-blue-500/20 bg-blue-500/5"    },
@@ -84,11 +85,9 @@ export default function DiscoveryHub() {
 
   // ── Route Guard ────────────────────────────────────────────────────────────
   useEffect(() => {
-    import("@/lib/firebase").then(({ auth }) => {
-      if (!currentUser && auth.currentUser === null) {
-        router.push("/auth?return=/discovery");
-      }
-    });
+    if (!currentUser && auth.currentUser === null) {
+      router.push("/auth?return=/discovery");
+    }
   }, [currentUser, router]);
 
   // Reload history whenever the logged-in user changes

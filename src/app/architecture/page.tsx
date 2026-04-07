@@ -9,7 +9,7 @@ import {
   LogIn, Home, User, Bell, Loader2, RefreshCw, ChevronDown, ChevronUp, Users,
   ImageIcon, X, ZoomIn, Wand2, ExternalLink, Monitor, Settings, Link as LinkIcon, KeyRound,
   BookOpen, Zap, Globe, Server, ShieldCheck, Package, CreditCard, Mail, Wifi,
-  BrainCircuit, LayoutGrid
+  BrainCircuit, LayoutGrid, Activity
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -22,6 +22,7 @@ import { getUserFacingError } from "@/lib/user-facing-error";
 import Logo from "@/components/Logo";
 import { DynamicUIRenderer } from "@/components/ui-json/DynamicUIRenderer";
 import type { UIScreenJson } from "@/lib/ui-json-schema";
+import { auth } from "@/lib/firebase";
 import { useAutoSave } from "@/hooks/useAutoSave";
 
 type Tab = "architecture" | "tools" | "risks" | "prompts" | "code" | "config";
