@@ -1,0 +1,64 @@
+src/app/employee-dashboard/page.tsx(956,12): error TS17008: JSX element 'header' has no corresponding closing tag.
+src/app/employee-dashboard/page.tsx(1353,13): error TS17002: Expected corresponding JSX closing tag for 'div'.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(230,26): error TS1127: Invalid character.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(230,244): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(230,245): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(232,15): error TS17002: Expected corresponding JSX closing tag for 'nav'.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(233,13): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(234,11): error TS17002: Expected corresponding JSX closing tag for 'aside'.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(235,9): error TS17002: Expected corresponding JSX closing tag for 'div'.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(237,7): error TS1005: ')' expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(249,30): error TS1127: Invalid character.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(249,263): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(249,264): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(251,19): error TS17002: Expected corresponding JSX closing tag for 'div'.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(252,17): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(253,15): error TS17002: Expected corresponding JSX closing tag for 'motion.div'.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(255,13): error TS1005: ')' expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(261,37): error TS1127: Invalid character.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(261,232): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(261,233): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(263,44): error TS1127: Invalid character.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(263,173): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(263,174): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(270,21): error TS1005: '}' expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(270,22): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(271,20): error TS17002: Expected corresponding JSX closing tag for 'main'.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(302,44): error TS1127: Invalid character.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(302,193): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(302,194): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(303,45): error TS1127: Invalid character.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(303,155): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(303,156): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(305,32): error TS17015: Expected corresponding closing tag for JSX fragment.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(305,34): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(308,25): error TS1128: Declaration or statement expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(309,22): error TS1128: Declaration or statement expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(309,24): error TS1109: Expression expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(310,20): error TS1109: Expression expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(310,22): error TS1128: Declaration or statement expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(315,21): error TS1128: Declaration or statement expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(316,18): error TS1128: Declaration or statement expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(317,15): error TS1109: Expression expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(318,13): error TS1109: Expression expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(318,14): error TS1128: Declaration or statement expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(319,11): error TS1128: Declaration or statement expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(320,9): error TS1109: Expression expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(320,10): error TS1128: Declaration or statement expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(353,12): error TS2657: JSX expressions must have one parent element.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(361,55): error TS1127: Invalid character.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(361,139): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(361,140): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(362,44): error TS1127: Invalid character.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(362,175): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(362,176): error TS1382: Unexpected token. Did you mean `{'>'}` or `&gt;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(368,21): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(368,23): error TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(370,18): error TS17002: Expected corresponding JSX closing tag for 'motion.div'.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(379,14): error TS1005: ')' expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(380,12): error TS1109: Expression expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(381,9): error TS1109: Expression expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(383,7): error TS1128: Declaration or statement expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(384,5): error TS1109: Expression expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(385,3): error TS1109: Expression expected.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(386,1): error TS1128: Declaration or statement expected.

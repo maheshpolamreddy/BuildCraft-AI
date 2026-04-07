@@ -30,7 +30,9 @@ export type AuditAction =
   | "analysis.generated"
   | "ui.generated"
   | "code.generated"
-  | "prompts.generated";
+  | "prompts.generated"
+  | "milestone.approved"
+  | "milestone.rejected";
 
 export interface AuditEntry {
   id?:        string;

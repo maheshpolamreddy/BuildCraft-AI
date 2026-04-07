@@ -80,7 +80,16 @@ export default function DiscoveryHub() {
   const [matchLoading,  setMatchLoading]  = useState(false);
   const [matchError,    setMatchError]    = useState(false);
   const [matchDetail,   setMatchDetail]   = useState<string | null>(null);
-  const [expandedDevId, setExpandedDevId] = useState<string | null>(null);
+  const [expandedDevs, setExpandedDevs] = useState<Record<string, boolean>>({});
+
+  // ── Route Guard ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    import("@/lib/firebase").then(({ auth }) => {
+      if (!currentUser && auth.currentUser === null) {
+        router.push("/auth?return=/discovery");
+      }
+    });
+  }, [currentUser, router]);
 
   // Reload history whenever the logged-in user changes
   useEffect(() => {
@@ -1104,7 +1113,7 @@ export default function DiscoveryHub() {
                       </p>
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         {matchedDevs.map((dev, idx) => {
-                          const expanded = expandedDevId === dev.userId;
+                          const expanded = !!expandedDevs[dev.userId];
                           const bandStyle =
                             dev.confidenceBand === "Excellent" 
                               ? { text: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/30", glow: "shadow-[0_0_20px_rgba(16,185,129,0.3)]" }
@@ -1156,7 +1165,7 @@ export default function DiscoveryHub() {
                               </div>
                               <button
                                 type="button"
-                                onClick={() => setExpandedDevId(expanded ? null : dev.userId)}
+                                onClick={() => setExpandedDevs(prev => ({ ...prev, [dev.userId]: !prev[dev.userId] }))}
                                 className="w-full py-2.5 text-[9px] font-bold uppercase tracking-widest text-white/25 hover:text-white/60 border-t border-white/5 flex items-center justify-center gap-1.5 transition-colors hover:bg-white/[0.02]"
                               >
                                 {expanded ? "Hide reasoning" : "Why this match?"}

@@ -26,11 +26,13 @@ export interface Task {
   type: "frontend" | "backend" | "database" | "auth" | "devops" | "testing";
   estimatedHours: number;
   priority: "high" | "medium" | "low";
-  aiPrompt: string;
+  aiPrompt?: string;
   status: TaskStatus;
-  submission: string;
-  validationResult: ValidationResult | null;
-  version: number;
+  submission?: string;
+  validationResult?: ValidationResult | null;
+  validationScore?: number;
+  assignee?: string;
+  version?: number;
   submittedAt?: string;
 }
 
@@ -64,6 +66,17 @@ export async function initializeWorkspace(projectId: string, initialMilestones: 
       updatedAt: Date.now(),
     });
   }
+}
+
+/**
+ * Gets the current workspace state once.
+ */
+export async function getWorkspaceState(projectId: string): Promise<WorkspaceState | null> {
+  if (!projectId) return null;
+  const ref = doc(db, "projectWorkspaces", projectId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+  return snap.data() as WorkspaceState;
 }
 
 /**

@@ -2,7 +2,8 @@ import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { AuthUser } from "@/lib/auth";
 import type { DeveloperProfile } from "@/lib/developerProfile";
-import type { ProjectAnalysis, GeneratedPromptRow, ProjectBlueprint } from "@/lib/plan-orchestration";
+import { type ProjectAnalysis, type GeneratedPromptRow, type ProjectBlueprint } from "@/lib/plan-orchestration";
+import { type Milestone } from "@/lib/workspace";
 
 export type Role = "employer" | "employee" | null;
 export type Purpose = "startup" | "enterprise" | "learning" | "freelance" | null;
@@ -60,6 +61,8 @@ export interface ProjectState {
   aiPrompts?: GeneratedPromptRow[] | null;
   /** Persisted generated blueprint scoped to this project */
   aiBlueprint?: ProjectBlueprint | null;
+  /** Persisted milestones scoped to this project (Project Room) */
+  milestones?: Milestone[] | null;
 }
 
 interface BuildCraftStore {

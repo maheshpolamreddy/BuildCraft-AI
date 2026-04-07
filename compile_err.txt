@@ -1,0 +1,4 @@
+﻿src/app/employee-dashboard/workspace/[projectId]/page.tsx(14,10): error TS2724: '"@/lib/prd"' has no exported member named 'getPRDDocument'. Did you mean 'PRDDocument'?
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(330,118): error TS2339: Property 'projectSummary' does not exist on type 'PRDDocument'.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(334,28): error TS2339: Property 'requirements' does not exist on type 'PRDDocument'.
+src/app/employee-dashboard/workspace/[projectId]/page.tsx(334,45): error TS7006: Parameter 'r' implicitly has an 'any' type.

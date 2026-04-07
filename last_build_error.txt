@@ -1,0 +1,26 @@
+﻿
+> buildcraft@0.1.0 build
+> next build
+
+node.exe : 
+At C:\Program Files\nodejs\npm.ps1:29 char:3
++   & $NODE_EXE $NPM_CLI_JS $args
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:St 
+   ring) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+> Build error occurred
+Error: EPERM: operation not permitted, unlink 
+'C:\Users\mahesh 
+polamreddy\OneDrive\Desktop\BuildCraft project\bu
+ildcraft\.next\static\lDPBcqwxleCvXYCGd3YNm'
+    at ignore-listed frames {
+  errno: -4048,
+  code: 'EPERM',
+  syscall: 'unlink',
+  path: 'C:\\Users\\mahesh 
+polamreddy\\OneDrive\\Desktop\\BuildCraft project
+\\buildcraft\\.next\\static\\lDPBcqwxleCvXYCGd3YN
+m'
+}

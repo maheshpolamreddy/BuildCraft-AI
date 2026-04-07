@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import AuthProvider from "@/components/AuthProvider";
 import AnimatedFavicon from "@/components/AnimatedFavicon";
+import NextTopLoader from "nextjs-toploader";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -22,6 +23,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} antialiased dark min-h-screen`}>
       <body suppressHydrationWarning className="bg-black text-on-surface font-body selection:bg-primary selection:text-on-primary min-h-screen threads-bg relative overflow-x-hidden">
+        <NextTopLoader color="#4f46e5" showSpinner={false} />
         <AnimatedFavicon />
         <AuthProvider>
           {children}

@@ -849,6 +849,15 @@ export default function ArchitectureView() {
   const [activeTab, setActiveTab] = useState<Tab>("architecture");
   const version = project?.version ?? "v1.0";
 
+  // ── Route Guard ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!currentUser && auth.currentUser === null) {
+       router.push("/auth?return=/architecture");
+    } else if (currentUser && !project && !savedProjectId) {
+       router.push("/discovery");
+    }
+  }, [currentUser, project, savedProjectId, router]);
+
   useAutoSave();
 
   // History state
@@ -922,7 +931,7 @@ export default function ArchitectureView() {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewFullscreenId, setPreviewFullscreenId] = useState<string | null>(null);
   const [previewCollapsed, setPreviewCollapsed] = useState<Record<string, boolean>>({});
-  const [expandedService, setExpandedService] = useState<string | null>(null);
+  const [expandedServices, setExpandedServices] = useState<Record<string, boolean>>({});
 
   // AI-generated prompts state
   const [aiPrompts, setAiPrompts]               = useState<AiPrompt[] | null>(null);
@@ -1077,6 +1086,9 @@ export default function ArchitectureView() {
       };
       patchProject(partialUpdate);
       setPromptsViewed(true);
+      if (currentUser) {
+        logAction(currentUser.uid, "project.updated", { action: "architecture_regenerated" }).catch(() => {});
+      }
 
       const st = useStore.getState();
       if (st.currentUser && st.savedProjectId && st.project) {
@@ -1388,16 +1400,32 @@ export default function ArchitectureView() {
 
           {/* Requirements */}
           <button onClick={() => router.push("/discovery")} className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 transition-all rounded-xl group">
-            <History className="w-4 h-4 group-hover:text-blue-400 transition-colors" />
+            <Layers className="w-4 h-4 group-hover:text-blue-400 transition-colors" />
             <span className="text-xs font-medium">Requirements</span>
+            {project && (
+              <span className="ml-auto text-[9px] text-white/20 bg-white/5 px-1.5 py-0.5 rounded-full uppercase tracking-widest">{project.version || "v1.0"}</span>
+            )}
           </button>
 
           {/* Architecture — active */}
           <button className="flex items-center gap-3 w-full px-3 py-2.5 text-white font-bold bg-gradient-to-r from-indigo-500/15 to-transparent rounded-xl border border-indigo-500/20 text-sm shadow-[0_0_20px_rgba(99,102,241,0.05)] relative overflow-hidden group">
             <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-indigo-500 rounded-full" />
-            <Layers className="w-4 h-4 text-indigo-400" />
+            <Activity className="w-4 h-4 text-indigo-400" />
             <span className="text-xs font-bold text-indigo-300">Architecture ({version})</span>
           </button>
+
+          {/* Regenerate Analysis (if not locked) */}
+          {!project?.locked && (
+            <button
+              type="button"
+              onClick={() => { if(confirm("Regenerate entire technical plan? Current choices may be reset.")) runFullPlanOrchestration(); }}
+              disabled={analysisLoading || promptsLoading}
+              className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 rounded-xl transition-all text-[10px] uppercase font-bold tracking-widest group"
+            >
+              {analysisLoading || promptsLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              <span>Regenerate Analysis</span>
+            </button>
+          )}
 
           {/* Project Workspace / lock — always visible */}
           {project?.locked ? (
@@ -2449,7 +2477,7 @@ export default function ArchitectureView() {
                   {/* Service cards */}
                   <div className="space-y-4">
                     {services.map((svc, idx) => {
-                      const isOpen = expandedService === svc.id;
+                      const isOpen = !!expandedServices[svc.id];
                       return (
                         <motion.div
                           key={svc.id}
@@ -2491,7 +2519,7 @@ export default function ArchitectureView() {
                                 <Globe className="w-3 h-3" /> Dashboard
                               </a>
                               <button
-                                onClick={() => setExpandedService(isOpen ? null : svc.id)}
+                                onClick={() => setExpandedServices(prev => ({ ...prev, [svc.id]: !prev[svc.id] }))}
                                 className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center transition-colors"
                               >
                                 {isOpen ? <ChevronUp className="w-4 h-4 text-white/50" /> : <ChevronDown className="w-4 h-4 text-white/50" />}

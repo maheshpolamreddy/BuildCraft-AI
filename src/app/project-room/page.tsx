@@ -1,7 +1,7 @@
 "use client";
 
-import { subscribeToWorkspace, updateWorkspaceTask } from "@/lib/workspace";
-import { useState, useEffect, useMemo, Suspense } from "react";
+import { subscribeToWorkspace, updateWorkspaceTask, getWorkspaceState, setWorkspaceMilestones, type Task, type Milestone, type TaskStatus } from "@/lib/workspace";
+import React, { useState, useEffect, useMemo, Suspense, useRef, useCallback, cloneElement } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Shield, UserCheck, ShieldCheck, CheckCircle2, Lock,
@@ -11,7 +11,7 @@ import {
   Loader2, Layers, Terminal, GitBranch, CheckCircle,
   XCircle, Rocket, Play, Zap, Activity, GitMerge,
   Package, Eye, BarChart2, Flag, ArrowRight, Sparkles,
-  FileText, Mail, Home, FolderOpen,
+  FileText, Mail, Home, FolderOpen, CheckSquare, Trash2,
 } from "lucide-react";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _unused = { Download, ChevronRight, Play, Star, Scale };
@@ -43,30 +43,6 @@ import { auth, db } from "@/lib/firebase";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Tab = "milestones" | "talent" | "prd" | "chat" | "audit" | "deploy" | "history";
-type TaskStatus = "todo" | "in-progress" | "validating" | "review" | "approved" | "rejected";
-
-interface Task {
-  id: string;
-  title: string;
-  description: string;
-  type: "frontend" | "backend" | "database" | "auth" | "devops" | "testing";
-  estimatedHours: number;
-  priority: "high" | "medium" | "low";
-  status: TaskStatus;
-  submission?: string;
-  validationScore?: number;
-  assignee?: string;
-}
-
-interface Milestone {
-  id: string;
-  phase: string;
-  title: string;
-  description: string;
-  estimatedDays: number;
-  color: string;
-  tasks: Task[];
-}
 
 interface ChatMessage {
   id: number;
@@ -130,9 +106,9 @@ const FALLBACK_MILESTONES: Milestone[] = [
   {
     id: "m4", phase: "Phase 4", title: "Testing & Deployment", description: "Tests, CI/CD, and production launch.", estimatedDays: 7, color: "orange",
     tasks: [
-      { id: "t10", title: "Unit & integration tests",    description: "Vitest + React Testing Library",   type: "testing", estimatedHours: 8, priority: "high",   status: "todo" },
-      { id: "t11", title: "CI/CD pipeline",             description: "GitHub Actions for auto-deploy",   type: "devops",  estimatedHours: 4, priority: "medium", status: "todo" },
-      { id: "t12", title: "Production deployment",      description: "Vercel + Sentry monitoring",       type: "devops",  estimatedHours: 3, priority: "high",   status: "todo" },
+      { id: "t10", title: "Unit & integration tests",    description: "Vitest + React Testing Library",   type: "testing", estimatedHours: 8, priority: "high",   status: "todo", aiPrompt: "", version: 1, validationResult: null, submission: "" },
+      { id: "t11", title: "CI/CD pipeline",             description: "GitHub Actions for auto-deploy",   type: "devops",  estimatedHours: 4, priority: "medium", status: "todo", aiPrompt: "", version: 1, validationResult: null, submission: "" },
+      { id: "t12", title: "Production deployment",      description: "Vercel + Sentry monitoring",       type: "devops",  estimatedHours: 3, priority: "high",   status: "todo", aiPrompt: "", version: 1, validationResult: null, submission: "" },
     ],
   },
 ];
@@ -173,7 +149,8 @@ function ProjectRoomContent() {
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   const [loadingAudit, setLoadingAudit] = useState(false);
   const [deployStage, setDeployStage] = useState(0);
-  const [deploying, setDeploying] = useState(false);
+  const [deployLogs, setDeployLogs]   = useState<string[]>([]);
+  const [deploying, setDeploying]     = useState(false);
 
   // ── Developer Matching Engine state ────────────────────────────────────────
   const [matchedDevs, setMatchedDevs]       = useState<MatchedDeveloper[]>([]);
@@ -181,7 +158,7 @@ function ProjectRoomContent() {
   const [matchError, setMatchError]         = useState(false);
   const [matchDetail, setMatchDetail]       = useState<string | null>(null);
   const [hiredDevIds, setHiredDevIds]       = useState<Set<string>>(new Set());
-  const [expandedDev, setExpandedDev]       = useState<string | null>(null);
+  const [expandedDevs, setExpandedDevs]       = useState<Record<string, boolean>>({});
   const [chatDevId, setChatDevId]           = useState<string | null>(null);
 
   // ── Hire modal state ───────────────────────────────────────────────────────
@@ -241,19 +218,83 @@ function ProjectRoomContent() {
   const progress   = allTasks.length ? Math.round((doneTasks / allTasks.length) * 100) : 0;
 
 
+  // ── Route Guard ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!currentUser && auth.currentUser === null) {
+       router.push("/auth?return=/project-room");
+    } else if (currentUser && !project && !savedProjectId) {
+       router.push("/discovery");
+    }
+  }, [currentUser, project, savedProjectId, router]);
+
   // ── Sync Milestones from Real-Time Workspace ─────────────────────────────
   useEffect(() => {
     if (!savedProjectId) return;
     return subscribeToWorkspace(savedProjectId, (state) => {
-       if (state && state.milestones) {
+       if (state && state.milestones && state.milestones.length > 0) {
            setMilestones(state.milestones);
        }
     });
   }, [savedProjectId]);
 
   // ── Generate milestones from AI ────────────────────────────────────────────
+  const generatedRef = useRef(false);
+
   useEffect(() => {
-    if (!project) return;
+    if (!project || !savedProjectId || generatedRef.current) return;
+    
+    // Deterministic Catch: Verify if workspace already has milestones before triggering AI!
+    getWorkspaceState(savedProjectId).then((state) => {
+       if (state && state.milestones && state.milestones.length > 0) {
+          setMilestones(state.milestones);
+          generatedRef.current = true;
+          return;
+       }
+
+       generatedRef.current = true;
+       setLoadingMilestones(true);
+       fetch("/api/generate-milestones", {
+         method: "POST",
+         headers: { "Content-Type": "application/json" },
+         body: JSON.stringify({ projectName: project.name, projectIdea: project.idea }),
+       })
+         .then((r) => parseJsonResponse(r))
+         .then(async ({ ok, data }) => {
+           const raw = data.milestones;
+           if (!ok || !Array.isArray(raw) || !raw.length) return;
+           const withState = raw.map((m: Milestone, mi: number) => ({
+             ...m,
+             tasks: m.tasks.map((t: any, ti: number) => {
+               const fb = FALLBACK_MILESTONES[mi]?.tasks[ti];
+               return { 
+                 ...t, 
+                 status: fb?.status ?? "todo", 
+                 submission: fb?.submission ?? "", 
+                 validationScore: fb?.validationScore ?? 0, 
+                 assignee: fb?.assignee ?? "",
+                 aiPrompt: t.aiPrompt ?? "",
+                 validationResult: t.validationResult ?? null,
+                 version: t.version ?? 1
+               } as Task;
+             }),
+           }));
+           setMilestones(withState);
+           if (savedProjectId) {
+             await setWorkspaceMilestones(savedProjectId, withState as any);
+           }
+         })
+         .catch(() => {})
+         .finally(() => setLoadingMilestones(false));
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, savedProjectId]);
+
+
+
+  const regenerateMilestones = useCallback(() => {
+    if (!project || hiredDevIds.size > 0 || !savedProjectId) return;
+    if (!confirm("Are you sure you want to regenerate all milestones? Any unsaved manual modifications will be lost.")) return;
+    
     setLoadingMilestones(true);
     fetch("/api/generate-milestones", {
       method: "POST",
@@ -261,23 +302,34 @@ function ProjectRoomContent() {
       body: JSON.stringify({ projectName: project.name, projectIdea: project.idea }),
     })
       .then((r) => parseJsonResponse(r))
-      .then(({ ok, data }) => {
+      .then(async ({ ok, data }) => {
         const raw = data.milestones;
         if (!ok || !Array.isArray(raw) || !raw.length) return;
-        // Preserve some review state from fallback for demo
         const withState = raw.map((m: Milestone, mi: number) => ({
-          ...m,
-          tasks: m.tasks.map((t: Task, ti: number) => {
-            const fb = FALLBACK_MILESTONES[mi]?.tasks[ti];
-            return { ...t, status: fb?.status ?? "todo", submission: fb?.submission, validationScore: fb?.validationScore, assignee: fb?.assignee };
-          }),
+             ...m,
+             tasks: m.tasks.map((t: any, ti: number) => {
+               const fb = FALLBACK_MILESTONES[mi]?.tasks[ti];
+               return { 
+                 ...t, 
+                 status: fb?.status ?? "todo", 
+                 submission: fb?.submission ?? "", 
+                 validationScore: fb?.validationScore ?? 0, 
+                 assignee: fb?.assignee ?? "",
+                 aiPrompt: t.aiPrompt ?? "",
+                 validationResult: t.validationResult ?? null,
+                 version: t.version ?? 1
+               } as Task;
+             }),
         }));
         setMilestones(withState);
+        await setWorkspaceMilestones(savedProjectId, withState as any);
+        if (currentUser) {
+          logAction(currentUser.uid, "project.updated", { action: "milestones_regenerated" }).catch(() => {});
+        }
       })
-      .catch(() => {})
+      .catch((err) => console.error("Regeneration failed", err))
       .finally(() => setLoadingMilestones(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [project, savedProjectId, hiredDevIds.size]);
 
   // ── Load developer matches when talent tab opens ──────────────────────────
   useEffect(() => {
@@ -599,18 +651,35 @@ function ProjectRoomContent() {
 
   // ── Task actions ────────────────────────────────────────────────────────────
   async function approveTask(task: Task) {
-    if (savedProjectId && expandedMilestone) {
-        await updateWorkspaceTask(savedProjectId, expandedMilestone, task.id, { status: "approved" });
-    }
+    if (!project || !savedProjectId || !currentUser) return;
+    const nextMilestones = milestones.map(m => ({
+      ...m,
+      tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "approved" as TaskStatus } : t)
+    }));
+    setMilestones(nextMilestones);
+    await setWorkspaceMilestones(savedProjectId, nextMilestones as any);
     setReviewTask(null);
-    if (currentUser) logAction(currentUser.uid, "tool.approved", { task: task.title, projectId: savedProjectId });
+    logAction(currentUser.uid, "milestone.approved", {
+      taskId: task.id,
+      taskTitle: task.title,
+      projectId: savedProjectId
+    }).catch(() => {});
   }
 
   async function rejectTask(task: Task) {
-    if (savedProjectId && expandedMilestone) {
-        await updateWorkspaceTask(savedProjectId, expandedMilestone, task.id, { status: "rejected" });
-    }
+    if (!project || !savedProjectId || !currentUser) return;
+    const nextMilestones = milestones.map(m => ({
+      ...m,
+      tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "rejected" as TaskStatus } : t)
+    }));
+    setMilestones(nextMilestones);
+    await setWorkspaceMilestones(savedProjectId, nextMilestones as any);
     setReviewTask(null);
+    logAction(currentUser.uid, "milestone.rejected", {
+      taskId: task.id,
+      taskTitle: task.title,
+      projectId: savedProjectId
+    }).catch(() => {});
   }
 
   // ── Messaging ───────────────────────────────────────────────────────────────
@@ -636,11 +705,21 @@ function ProjectRoomContent() {
     if (deploying) return;
     setDeploying(true);
     setDeployStage(0);
-    DEPLOY_STAGES.forEach((_, i) => {
+    setDeployLogs(["[build] Initializing Vercel deployment pipeline...", "[env] Loading production secrets...", "[git] Fetching latest commit: main"]);
+    
+    DEPLOY_STAGES.forEach((stage, i) => {
       setTimeout(() => {
         setDeployStage(i + 1);
+        setDeployLogs(prev => [
+          ...prev, 
+          `[${stage.label.toLowerCase().replace(/ /g, "_")}] ${stage.label} specialized runner started...`,
+          `[${stage.label.toLowerCase().replace(/ /g, "_")}] Execution time estimated: ${stage.time}`,
+          `[${stage.label.toLowerCase().replace(/ /g, "_")}] Completed successfully.`
+        ]);
+
         if (i === DEPLOY_STAGES.length - 1) {
           setDeploying(false);
+          setDeployLogs(prev => [...prev, "[deploy] Live URL generated: buildcraft-eight.vercel.app", "[system] Deployment stable 100%"]);
           if (currentUser) logAction(currentUser.uid, "project.updated", { action: "deployed", version });
         }
       }, (i + 1) * 2000);
@@ -660,6 +739,8 @@ function ProjectRoomContent() {
     "project.updated":          { icon: <CheckCircle2 className="w-4 h-4" />, color: "green"  },
     "tool.approved":            { icon: <CheckCircle2 className="w-4 h-4" />, color: "green"  },
     "tool.rejected":            { icon: <XCircle className="w-4 h-4" />,      color: "red"    },
+    "milestone.approved":       { icon: <CheckSquare className="w-4 h-4" />,  color: "green"  },
+    "milestone.rejected":       { icon: <Trash2 className="w-4 h-4" />,       color: "red"    },
     "auth.sign_in":             { icon: <Shield className="w-4 h-4" />,       color: "white"  },
     "auth.sign_up":             { icon: <Shield className="w-4 h-4" />,       color: "white"  },
     "code.generated":           { icon: <Terminal className="w-4 h-4" />,     color: "purple" },
@@ -713,9 +794,26 @@ function ProjectRoomContent() {
         </div>
 
         <nav className="flex-grow space-y-1.5">
-          <Link href="/" className="flex items-center gap-3 w-full p-3 text-[#666] hover:text-white hover:bg-white/5 rounded-lg transition-all text-sm font-medium">
-            <Home className="w-4 h-4" /> Home
+          <Link href="/" className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 rounded-xl transition-all text-xs group">
+            <Home className="w-4 h-4 group-hover:text-blue-400 transition-colors" /> 
+            <span className="font-medium">Home</span>
           </Link>
+
+          {/* Requirements */}
+          <button onClick={() => router.push("/discovery")} className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 transition-all rounded-xl text-xs group">
+            <Layers className="w-4 h-4 group-hover:text-blue-400 transition-colors" />
+            <span className="font-medium">Requirements</span>
+          </button>
+
+          {/* Architecture */}
+          <button onClick={() => router.push("/architecture")} className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 transition-all rounded-xl text-xs group">
+            <Activity className="w-4 h-4 group-hover:text-indigo-400 transition-colors" />
+            <span className="font-medium">Architecture</span>
+          </button>
+
+          <div className="pt-2 pb-1 border-t border-white/5 my-2"></div>
+          
+          {/* Project Workspace tabs */}
           {([
             { id: "milestones", label: "Project Steps",   icon: <ListOrdered className="w-5 h-5" />,  badge: inReview > 0 ? `${inReview} review` : null },
             { id: "talent",     label: "Find Developers", icon: <UserCheck className="w-5 h-5" />,    badge: gate3Hired ? null : "!" },
@@ -726,11 +824,20 @@ function ProjectRoomContent() {
             { id: "audit",      label: "Audit Log",       icon: <History className="w-5 h-5" /> },
           ] as const).map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id as Tab)}
-              className={`flex items-center gap-3 w-full p-3 font-bold rounded-lg transition-all ${activeTab === tab.id ? "text-white bg-white/10 border border-white/10" : "text-[#888] hover:text-white hover:bg-white/5"}`}>
+              className={`flex items-center gap-3 w-full p-3 font-bold rounded-xl transition-all relative overflow-hidden group ${
+                activeTab === tab.id 
+                  ? "text-white bg-gradient-to-r from-purple-500/15 to-transparent border border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.05)]" 
+                  : "text-[#888] hover:text-white hover:bg-white/5 border border-transparent"
+              }`}>
+              {activeTab === tab.id && <div className="absolute left-0 top-1 bottom-1 w-0.5 bg-purple-500 rounded-full" />}
               {tab.icon}
               <span className="text-sm flex-1 text-left">{tab.label}</span>
               {"badge" in tab && tab.badge && (
-                <span className="text-[9px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full font-bold">{tab.badge}</span>
+                <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold border ${
+                  activeTab === tab.id ? "bg-purple-500/20 text-purple-300 border-purple-500/20" : "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                }`}>
+                  {tab.badge}
+                </span>
               )}
             </button>
           ))}
@@ -759,9 +866,22 @@ function ProjectRoomContent() {
               <h1 className="text-5xl font-black tracking-tighter text-white">Project Workspace</h1>
               <p className="text-[#888] text-lg font-light tracking-wide">Manage milestones, review submissions, and ship to production.</p>
             </div>
-            <div className="flex gap-2 text-xs font-bold uppercase tracking-widest">
+            <div className="flex gap-2 text-xs font-bold uppercase tracking-widest flex-wrap">
               <span className="px-3 py-1.5 rounded-md border border-white/10 bg-black text-[#888]">Employer</span>
               <span className="px-3 py-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 text-emerald-500">Plan Locked</span>
+              {activeTab === "milestones" && hiredDevIds.size === 0 && (
+                <button 
+                  onClick={regenerateMilestones}
+                  disabled={loadingMilestones}
+                  className="px-3 py-1.5 rounded-lg border border-white/20 bg-gradient-to-r from-white/10 to-white/5 text-white/90 hover:text-white hover:border-white/40 hover:shadow-[0_0_15px_rgba(255,255,255,0.15)] transition-all disabled:opacity-50 flex items-center gap-1.5 group overflow-hidden relative"
+                >
+                  <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  <span className="relative z-10 flex items-center gap-1.5">
+                   {loadingMilestones ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                   {loadingMilestones ? "Generating..." : "Regenerate Milestones"}
+                  </span>
+                </button>
+              )}
             </div>
           </header>
 
@@ -997,7 +1117,7 @@ function ProjectRoomContent() {
                   <div className="space-y-4">
                     {matchedDevs.map((dev, idx) => {
                       const isHired    = hiredDevIds.has(dev.userId);
-                      const isExpanded = expandedDev === dev.userId;
+                      const isExpanded = !!expandedDevs[dev.userId];
                       const bandColor  = dev.confidenceBand === "Excellent" ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
                         : dev.confidenceBand === "Strong" ? "text-blue-400 bg-blue-500/10 border-blue-500/30"
                         : dev.confidenceBand === "Good"   ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/30"
@@ -1038,7 +1158,7 @@ function ProjectRoomContent() {
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-start justify-between gap-3 flex-wrap">
                                   <div>
-                                    <h3 className="text-white text-lg font-black tracking-tight">
+                                    <h3 className={`text-lg font-black tracking-tight ${dev.verificationStatus === "project-verified" ? "silver-gradient" : "text-white"}`}>
                                       {dev.fullName || "Anonymous Developer"}
                                     </h3>
                                     <p className="text-white/40 text-xs mt-0.5">
@@ -1046,7 +1166,7 @@ function ProjectRoomContent() {
                                       {" · "}{dev.yearsExp}yr{dev.yearsExp !== 1 ? "s" : ""} exp
                                       {" · "}<span className="capitalize">{dev.availability}</span>
                                     </p>
-                                    <p className={`text-[10px] font-bold mt-1 flex items-center gap-1 ${tierColor}`}>
+                                    <p className={`text-[10px] font-bold mt-1 flex items-center gap-1 transition-all ${tierColor} ${dev.verificationStatus !== "self-declared" ? "drop-shadow-[0_0_8px_rgba(52,211,153,0.4)]" : ""}`}>
                                       <ShieldCheck className="w-3 h-3" /> {tierLabel}
                                     </p>
                                   </div>
@@ -1087,7 +1207,7 @@ function ProjectRoomContent() {
                             </div>
 
                             {/* Expandable details */}
-                            <button onClick={() => setExpandedDev(isExpanded ? null : dev.userId)}
+                            <button onClick={() => setExpandedDevs(prev => ({ ...prev, [dev.userId]: !prev[dev.userId] }))}
                               className="w-full flex items-center justify-between text-[10px] text-white/40 hover:text-white font-bold uppercase tracking-widest transition-colors mb-3">
                               <span>{isExpanded ? "Hide Details" : "View Full Profile"}</span>
                               <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
@@ -1571,6 +1691,68 @@ function ProjectRoomContent() {
                     <GitBranch className="w-4 h-4 text-white/40" />
                     <span className="text-xs text-white/60 font-mono">main ← feature/implementation · 12 commits ahead</span>
                   </div>
+
+                  <div className="grid grid-cols-5 gap-2 mt-8 relative">
+                    {/* Background connector line */}
+                    <div className="absolute top-5 left-8 right-8 h-px bg-white/5 -z-0" />
+                    <div 
+                      className="absolute top-5 left-8 h-px bg-gradient-to-r from-indigo-500 to-emerald-500 transition-all duration-1000 -z-0" 
+                      style={{ width: `${Math.max(0, (deployStage - 1) * 25)}%` }}
+                    />
+
+                    {DEPLOY_STAGES.map((stage, i) => {
+                      const done = i < deployStage;
+                      const active = i === deployStage - 1 && deploying;
+                      return (
+                        <div key={stage.label} className="flex flex-col items-center gap-3 relative z-10">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center border transition-all duration-500 shadow-lg ${
+                            active ? "bg-indigo-500/20 border-indigo-500 shadow-indigo-500/20 scale-110" :
+                            done ? "bg-emerald-500/20 border-emerald-500 shadow-emerald-500/10" :
+                            "bg-white/5 border-white/10 opacity-40"
+                          }`}>
+                            {done ? <CheckCircle2 className="w-5 h-5 text-emerald-400" /> : 
+                             active ? <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" /> : 
+                             cloneElement(stage.icon as React.ReactElement<any>, { className: "w-5 h-5 text-white/40" })}
+                          </div>
+                          <div className="text-center">
+                            <p className={`text-[9px] font-black uppercase tracking-tighter transition-colors ${active ? "text-indigo-400" : done ? "text-emerald-400" : "text-white/20"}`}>
+                              {stage.label}
+                            </p>
+                            {done && <p className="text-[8px] text-white/20 font-mono mt-0.5">{stage.time}</p>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Terminal build logs */}
+                  {deploying || deployStage > 0 ? (
+                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="relative font-mono text-[10px] bg-[#050505] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
+                      <div className="flex items-center gap-1.5 px-4 py-2 border-b border-white/5 bg-white/[0.02]">
+                         <div className="w-1.5 h-1.5 rounded-full bg-red-500/50" />
+                         <div className="w-1.5 h-1.5 rounded-full bg-yellow-500/50" />
+                         <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/50" />
+                         <span className="ml-2 text-white/20 text-[9px] uppercase tracking-widest font-black">Build Terminal</span>
+                      </div>
+                      <div className="p-4 space-y-1 h-56 overflow-y-auto scrollbar-hide flex flex-col-reverse">
+                         {[...deployLogs].reverse().map((log, i) => (
+                           <div key={i} className={`${log.includes("Completed") || log.includes("stable") ? "text-emerald-400" : log.includes("error") ? "text-red-400" : "text-white/40"}`}>
+                             <span className="text-white/10 mr-2">[{new Date().toLocaleTimeString()}]</span>
+                             {log}
+                           </div>
+                         ))}
+                         {deploying && <div className="text-white/60 animate-pulse mt-2">_ Building in progress...</div>}
+                      </div>
+                    </motion.div>
+                  ) : (
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center border-2 border-dashed border-white/5 rounded-3xl py-20 text-center">
+                       <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-4 group hover:scale-110 transition-transform cursor-pointer" onClick={startDeploy}>
+                          <Play className="w-6 h-6 text-indigo-400 fill-indigo-400" />
+                       </div>
+                       <p className="text-white font-bold">Ready to deploy</p>
+                       <p className="text-white/30 text-xs mt-1">Start project builds to Vercel instances.</p>
+                    </motion.div>
+                  )}
 
                   {DEPLOY_STAGES.map((stage, i) => {
                     const done = i < deployStage;
