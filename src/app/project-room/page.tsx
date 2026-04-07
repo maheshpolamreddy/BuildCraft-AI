@@ -18,7 +18,7 @@ const _unused = { Download, ChevronRight, Play, Star, Scale };
 import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useStore } from "@/store/useStore";
-import { logAction, getUserAuditLog, type AuditEntry } from "@/lib/auditLog";
+import { logAction, getProjectAuditLog, type AuditEntry } from "@/lib/auditLog";
 import { parseJsonResponse } from "@/lib/parse-api-json";
 import { getAllDeveloperProfiles, type DeveloperProfile } from "@/lib/developerProfile";
 import { type MatchedDeveloper } from "@/app/api/match-developers/route";
@@ -40,6 +40,7 @@ import {
 import { useFirebaseUid } from "@/hooks/useFirebaseUid";
 import { deleteDoc, doc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
+import { getProject, type SavedProject } from "@/lib/firestore";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Tab = "milestones" | "talent" | "prd" | "chat" | "audit" | "deploy" | "history";
@@ -134,7 +135,8 @@ function ProjectRoomContent() {
   const router = useRouter();
   const pathname = usePathname();
   const chatQueryParam = searchParams.get("chat");
-  const { project, approvedTools, currentUser, savedProjectId } = useStore();
+  const { project, setProject, approvedTools, currentUser, savedProjectId, setSavedProjectId } = useStore();
+  const [loadingProject, setLoadingProject] = useState(!!searchParams.get("projectId"));
   const [activeTab, setActiveTab] = useState<Tab>("milestones");
   const [milestones, setMilestones] = useState<Milestone[]>(FALLBACK_MILESTONES);
   const [loadingMilestones, setLoadingMilestones] = useState(false);
@@ -183,15 +185,45 @@ function ProjectRoomContent() {
   const [chatSending,    setChatSending]    = useState(false);
   const [chatSubError,   setChatSubError]   = useState<string | null>(null);
 
+  // ── Remote Project Loading (Deep Linking) ──────────────────────────────────
+  useEffect(() => {
+    const pId = searchParams.get("projectId");
+    if (!pId) {
+      setLoadingProject(false);
+      return;
+    }
+    // If store already has it, no-op
+    if (project && savedProjectId === pId) {
+      setLoadingProject(false);
+      return;
+    }
+
+    async function loadRemote() {
+      setLoadingProject(true);
+      try {
+        const saved = await getProject(pId as string);
+        if (saved) {
+          setProject(saved.project);
+          setSavedProjectId(pId);
+        }
+      } catch (e) {
+        console.error("[ProjectRoom] remote load error:", e);
+      } finally {
+        setLoadingProject(false);
+      }
+    }
+    loadRemote();
+  }, [searchParams, project, savedProjectId, setProject, setSavedProjectId]);
+
   // Deep-link from Discovery / Architecture / hire emails (e.g. ?tab=chat&chat=…)
   useEffect(() => {
     const t = searchParams.get("tab");
     if (t && VALID_TABS.includes(t as Tab)) setActiveTab(t as Tab);
   }, [searchParams]);
 
-  // ── All hire requests (history + chat threads) — load when signed in ────────
+  // ── All hire requests (history + chat threads) — load only for Creators ────
   useEffect(() => {
-    if (!currentUser?.uid) return;
+    if (!currentUser?.uid || !isCreator) return;
     getHireRequestsByCreator(currentUser.uid)
       .then(reqs => {
         setHireRequests(reqs);
@@ -204,12 +236,23 @@ function ProjectRoomContent() {
         if (hired.size) setHiredDevIds(hired);
       })
       .catch(() => {});
-  }, [currentUser?.uid]);
+  }, [currentUser?.uid, isCreator]);
 
   const approvedCount = Object.values(approvedTools).filter(Boolean).length;
   const projectName  = project?.name ?? "My Project";
   const version      = project?.version ?? "v1.0";
   const chatViewerUid = useFirebaseUid(currentUser?.uid);
+
+  // ── Role Detection ──────────────────────────────────────────────────────────
+  const isCreator   = !!currentUser && !!project && currentUser.uid === project.creatorUid;
+  const isDeveloper = !!currentUser && !!project && !isCreator; // For now, if you are in the room and not creator, you are 'developer'
+  const userRole    = isCreator ? "creator" : "developer";
+
+  // Filter tabs for developers
+  const visibleTabs = useMemo(() => {
+    if (isCreator) return VALID_TABS;
+    return VALID_TABS.filter(t => !["talent", "deploy", "audit", "history"].includes(t));
+  }, [isCreator]);
 
   // ── Derived stats ──────────────────────────────────────────────────────────
   const allTasks   = milestones.flatMap(m => m.tasks);
@@ -220,12 +263,15 @@ function ProjectRoomContent() {
 
   // ── Route Guard ────────────────────────────────────────────────────────────
   useEffect(() => {
+    // If loading a remote project from URL, don't guard yet
+    if (loadingProject) return;
+
     if (!currentUser && auth.currentUser === null) {
-       router.push("/auth?return=/project-room");
+       router.push(`/auth?return=${encodeURIComponent(pathname + (searchParams.toString() ? "?" + searchParams.toString() : ""))}`);
     } else if (currentUser && !project && !savedProjectId) {
        router.push("/discovery");
     }
-  }, [currentUser, project, savedProjectId, router]);
+  }, [currentUser, project, savedProjectId, router, loadingProject, pathname, searchParams]);
 
   // ── Sync Milestones from Real-Time Workspace ─────────────────────────────
   useEffect(() => {
@@ -329,28 +375,29 @@ function ProjectRoomContent() {
         setMilestones(withState);
         await setWorkspaceMilestones(savedProjectId, withState as any, currentUser?.uid);
         if (currentUser) {
-          logAction(currentUser.uid, "project.updated", { action: "milestones_regenerated" }).catch(() => {});
+          logAction(currentUser.uid, "project.updated", { 
+            action: "milestones_regenerated",
+            projectId: savedProjectId
+          }).catch(() => {});
         }
       })
       .catch((err) => console.error("Regeneration failed", err))
       .finally(() => setLoadingMilestones(false));
   }, [project, savedProjectId, hiredDevIds.size]);
 
-  // ── Load developer matches when talent tab opens ──────────────────────────
   useEffect(() => {
-    if (activeTab !== "talent") return;
+    if (activeTab !== "talent" || !isCreator) return;
     if (matchedDevs.length > 0) return;
     runMatchingEngine();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
+  }, [activeTab, isCreator]);
 
   // ── Load PRDs when prd tab opens ──────────────────────────────────────────
   useEffect(() => {
     if (activeTab !== "prd" || !currentUser) return;
     setPrdLoading(true);
+    // If developer, we should eventually filter by projectId as well
     getPRDsByUser(currentUser.uid).then(docs => setPrds(docs)).catch(() => {}).finally(() => setPrdLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
+  }, [activeTab, currentUser]);
 
   // ── Subscribe to real-time chat (signed-in client — Firestore rules apply) ─
   useEffect(() => {
@@ -501,7 +548,11 @@ function ProjectRoomContent() {
         if (savedProjectId && currentUser) {
           await setWorkspaceMatchedDevelopers(savedProjectId, devs, currentUser.uid);
         }
-        if (currentUser) logAction(currentUser.uid, "analysis.generated", { type: "developer-matching", count: devs.length });
+        if (currentUser) logAction(currentUser.uid, "analysis.generated", { 
+          type: "developer-matching", 
+          count: devs.length,
+          projectId: savedProjectId
+        });
       } else {
         setMatchError(true);
         const apiErr = typeof data?.error === "string" ? data.error : null;
@@ -603,6 +654,7 @@ function ProjectRoomContent() {
         logAction(currentUser.uid, "project.updated", {
           action: "hire-invite-sent",
           dev: dev.fullName,
+          projectId: savedProjectId,
         }).catch(() => {});
       } else {
         await deleteDoc(doc(db, "hireRequests", token)).catch(() => {});
@@ -647,15 +699,15 @@ function ProjectRoomContent() {
     }
   }
 
-  // ── Load real Firestore audit log ──────────────────────────────────────────
+  // ── Load shared Project Audit Log ──────────────────────────────────────────
   useEffect(() => {
-    if (activeTab !== "audit" || !currentUser) return;
+    if (activeTab !== "audit" || !currentUser || !savedProjectId) return;
     setLoadingAudit(true);
-    getUserAuditLog(currentUser.uid, 30)
+    getProjectAuditLog(savedProjectId, 30)
       .then(entries => setAuditEntries(entries))
       .catch(() => {})
       .finally(() => setLoadingAudit(false));
-  }, [activeTab, currentUser]);
+  }, [activeTab, currentUser, savedProjectId]);
 
   // ── Task actions ────────────────────────────────────────────────────────────
   async function approveTask(task: Task) {
@@ -684,6 +736,21 @@ function ProjectRoomContent() {
     await setWorkspaceMilestones(savedProjectId, nextMilestones as any, currentUser?.uid);
     setReviewTask(null);
     logAction(currentUser.uid, "milestone.rejected", {
+      taskId: task.id,
+      taskTitle: task.title,
+      projectId: savedProjectId
+    }).catch(() => {});
+  }
+
+  async function submitTaskForReview(task: Task, submission: string) {
+    if (!project || !savedProjectId || !currentUser) return;
+    const nextMilestones = milestones.map(m => ({
+      ...m,
+      tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "review" as TaskStatus, submission } : t)
+    }));
+    setMilestones(nextMilestones);
+    await setWorkspaceMilestones(savedProjectId, nextMilestones as any, currentUser?.uid);
+    logAction(currentUser.uid, "milestone.submitted", {
       taskId: task.id,
       taskTitle: task.title,
       projectId: savedProjectId
@@ -728,7 +795,11 @@ function ProjectRoomContent() {
         if (i === DEPLOY_STAGES.length - 1) {
           setDeploying(false);
           setDeployLogs(prev => [...prev, "[deploy] Live URL generated: buildcraft-eight.vercel.app", "[system] Deployment stable 100%"]);
-          if (currentUser) logAction(currentUser.uid, "project.updated", { action: "deployed", version });
+          if (currentUser) logAction(currentUser.uid, "project.updated", { 
+            action: "deployed", 
+            version,
+            projectId: savedProjectId 
+          });
         }
       }, (i + 1) * 2000);
     });
@@ -830,7 +901,7 @@ function ProjectRoomContent() {
             { id: "history",    label: "Hiring History",  icon: <FolderOpen className="w-5 h-5" />,   badge: hireRequests.length > 0 ? String(hireRequests.length) : null },
             { id: "deploy",     label: "CI/CD Deploy",    icon: <Rocket className="w-5 h-5" />,       badge: progress === 100 ? "Ready" : null },
             { id: "audit",      label: "Audit Log",       icon: <History className="w-5 h-5" /> },
-          ] as const).map(tab => (
+          ] as const).filter(t => visibleTabs.includes(t.id)).map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id as Tab)}
               className={`flex items-center gap-3 w-full p-3 font-bold rounded-xl transition-all relative overflow-hidden group ${
                 activeTab === tab.id 
@@ -875,7 +946,7 @@ function ProjectRoomContent() {
               <p className="text-[#888] text-lg font-light tracking-wide">Manage milestones, review submissions, and ship to production.</p>
             </div>
             <div className="flex gap-2 text-xs font-bold uppercase tracking-widest flex-wrap">
-              <span className="px-3 py-1.5 rounded-md border border-white/10 bg-black text-[#888]">Employer</span>
+              <span className="px-3 py-1.5 rounded-md border border-white/10 bg-black text-[#888]">{userRole === "creator" ? "Employer" : "Developer"}</span>
               <span className="px-3 py-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 text-emerald-500">Plan Locked</span>
               {activeTab === "milestones" && hiredDevIds.size === 0 && (
                 <button 
@@ -981,7 +1052,7 @@ function ProjectRoomContent() {
                                     <div className="text-[9px] text-[#888]">AI Score</div>
                                   </div>
                                 )}
-                                {task.status === "review" && (
+                                {task.status === "review" && isCreator && (
                                   <div className="flex flex-col gap-2">
                                     <button onClick={e => { e.stopPropagation(); approveTask(task); }}
                                       className="px-3 py-1.5 bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-black text-[10px] uppercase tracking-widest rounded-lg hover:bg-emerald-500/30 transition-all flex items-center gap-1">
@@ -992,6 +1063,18 @@ function ProjectRoomContent() {
                                       <XCircle className="w-3 h-3" /> Reject
                                     </button>
                                   </div>
+                                )}
+                                {task.status === "todo" && isDeveloper && (
+                                  <button onClick={e => { e.stopPropagation(); submitTaskForReview(task, "Self-declared completion via unified workspace."); }}
+                                    className="px-4 py-2 border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-emerald-500/20 transition-all flex items-center gap-2">
+                                    <Play className="w-3 h-3" /> Submit for Review
+                                  </button>
+                                )}
+                                {task.status === "rejected" && isDeveloper && (
+                                  <button onClick={e => { e.stopPropagation(); submitTaskForReview(task, "Re-submitted after changes."); }}
+                                    className="px-4 py-2 border border-yellow-500/30 bg-yellow-500/10 text-yellow-400 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-yellow-500/20 transition-all flex items-center gap-2">
+                                    <RotateCcw className="w-3 h-3" /> Re-submit Task
+                                  </button>
                                 )}
                                 {task.status === "approved" && <CheckCircle2 className="w-6 h-6 text-emerald-400" />}
                               </div>

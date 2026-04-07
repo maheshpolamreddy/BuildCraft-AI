@@ -75,28 +75,43 @@ service cloud.firestore {
 
     // ── Saved employer projects ────────────────────────────────────────────
     match /projects/{projectId} {
-      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow read: if signedIn() && (
+        resource.data.uid == request.auth.uid ||
+        resource.data.developerUid == request.auth.uid
+      );
       allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
       allow update, delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
 
     // ── Project Workspaces (milestones + talent sync) ─────────────────────
     match /projectWorkspaces/{projectId} {
-      // Allow read if user owns the document (UID on doc) OR owns the parent project
+      // Allow read if user owns the document (UID on doc) OR owns the parent project OR is the hired developer
       allow read: if signedIn() && (
-        (exists(resource) && resource.data.uid == request.auth.uid) ||
-        get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid
+        (exists(resource) && (resource.data.uid == request.auth.uid || resource.data.developerUid == request.auth.uid)) ||
+        get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid ||
+        get(/databases/$(database)/documents/projects/$(projectId)).data.developerUid == request.auth.uid
       );
-      // Allow write if user owns the parent project
-      allow create, update, delete: if signedIn() && (
-        get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid
+      // Allow update if user owns parent project OR is authorized developer (for milestone submissions)
+      allow create: if signedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid;
+      allow update: if signedIn() && (
+        get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid ||
+        (exists(resource) && resource.data.developerUid == request.auth.uid)
       );
+      allow delete: if signedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid;
     }
 
     // ── Audit log ───────────────────────────────────────────────────────────
     match /auditLog/{entryId} {
-      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
-      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn() && (
+        request.resource.data.uid == request.auth.uid ||
+        get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.uid == request.auth.uid ||
+        get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.developerUid == request.auth.uid
+      );
+      allow read: if signedIn() && (
+        resource.data.uid == request.auth.uid ||
+        get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.uid == request.auth.uid ||
+        get(/databases/$(database)/documents/projects/$(resource.data.projectId)).data.developerUid == request.auth.uid
+      );
     }
 
     // ── Hire requests

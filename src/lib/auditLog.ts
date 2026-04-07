@@ -32,7 +32,8 @@ export type AuditAction =
   | "code.generated"
   | "prompts.generated"
   | "milestone.approved"
-  | "milestone.rejected";
+  | "milestone.rejected"
+  | "milestone.submitted";
 
 export interface AuditEntry {
   id?:        string;
@@ -96,6 +97,26 @@ export async function getUserAuditLog(
     return snap.docs.map((d) => ({ id: d.id, ...d.data() } as AuditEntry));
   } catch (err) {
     console.warn("[auditLog] read failed:", err);
+    return [];
+  }
+}
+/** Load all audit entries for a specific project. Returns [] for demo users. */
+export async function getProjectAuditLog(
+  projectId: string,
+  maxEntries = 50,
+): Promise<AuditEntry[]> {
+  if (!projectId) return [];
+  try {
+    const q = query(
+      collection(db, "auditLog"),
+      where("meta.projectId", "==", projectId),
+      orderBy("timestamp", "desc"),
+      limit(maxEntries),
+    );
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() } as AuditEntry));
+  } catch (err) {
+    console.warn("[auditLog] project read failed:", err);
     return [];
   }
 }
