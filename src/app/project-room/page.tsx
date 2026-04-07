@@ -785,13 +785,17 @@ function ProjectRoomContent() {
                     const mc = MILESTONE_COLORS[m.color] ?? MILESTONE_COLORS.blue;
                     return (
                       <button key={m.id} onClick={() => { setExpandedMilestone(m.id); }}
-                        className={`p-4 rounded-2xl border text-left transition-all hover:border-white/20 ${expandedMilestone === m.id ? `glass-panel ${mc.ring}` : "bg-white/5 border-white/10"}`}>
-                        <div className={`text-[9px] font-black uppercase tracking-widest mb-1 ${mc.badge.split(" ")[0]}`}>{m.phase}</div>
-                        <div className="text-white text-xs font-bold mb-2 line-clamp-2">{m.title}</div>
-                        <div className="h-1 bg-white/10 rounded-full overflow-hidden">
-                          <div className={`h-full rounded-full transition-all ${mc.dot}`} style={{ width: `${mp.pct}%` }} />
+                        className={`group relative p-5 rounded-3xl border text-left transition-all duration-300 transform hover:-translate-y-1 hover:shadow-[0_8px_30px_rgba(0,0,0,0.4)] overflow-hidden ${expandedMilestone === m.id ? `bg-gradient-to-br from-[#161616] to-[#0A0A0A] border-indigo-500/40 shadow-[0_0_25px_rgba(79,70,229,0.15)]` : "bg-[#0A0A0A]/80 border-white/5 hover:border-white/15"}`}>
+                        <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+                        <div className={`text-[9px] font-black uppercase tracking-[0.2em] mb-2 ${mc.badge.split(" ")[0]}`}>{m.phase}</div>
+                        <div className="relative z-10 text-white text-sm font-bold mb-4 line-clamp-2 leading-snug group-hover:text-indigo-200 transition-colors">{m.title}</div>
+                        <div className="relative z-10 h-1.5 bg-black/40 rounded-full overflow-hidden shadow-inner">
+                          <div className={`h-full rounded-full transition-all duration-700 ease-out ${mc.dot}`} style={{ width: `${mp.pct}%` }} />
                         </div>
-                        <div className="text-[9px] text-[#888] mt-1">{mp.done}/{mp.total} done</div>
+                        <div className="relative z-10 text-[10px] uppercase tracking-widest font-black text-white/30 mt-3 flex justify-between">
+                          <span>Progress</span>
+                          <span className={mp.pct === 100 ? "text-emerald-400" : "text-white/60"}>{mp.done}/{mp.total} done</span>
+                        </div>
                       </button>
                     );
                   })}
@@ -809,17 +813,17 @@ function ProjectRoomContent() {
                     <div className="space-y-3">
                       {m.tasks.map(task => {
                         const sc: Record<TaskStatus, { label: string; color: string; bg: string }> = {
-                          "todo":        { label: "To Do",       color: "text-white/40",    bg: "bg-white/5 border-white/10" },
-                          "in-progress": { label: "In Progress", color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/30" },
-                          "validating":  { label: "Validating",  color: "text-yellow-400",  bg: "bg-yellow-500/10 border-yellow-500/30" },
-                          "review":      { label: "In Review",   color: "text-purple-400",  bg: "bg-purple-500/10 border-purple-500/30" },
-                          "approved":    { label: "Approved",    color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30" },
-                          "rejected":    { label: "Rejected",    color: "text-red-400",     bg: "bg-red-500/10 border-red-500/30" },
+                          "todo":        { label: "To Do",       color: "text-white/40",    bg: "bg-white/5 border-white/5" },
+                          "in-progress": { label: "In Progress", color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.15)]" },
+                          "validating":  { label: "Validating",  color: "text-yellow-400",  bg: "bg-yellow-500/10 border-yellow-500/30 shadow-[0_0_15px_rgba(234,179,8,0.15)]" },
+                          "review":      { label: "In Review",   color: "text-purple-400",  bg: "bg-purple-500/10 border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.15)]" },
+                          "approved":    { label: "Approved",    color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.15)]" },
+                          "rejected":    { label: "Rejected",    color: "text-red-400",     bg: "bg-red-500/10 border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.15)]" },
                         };
                         const s = sc[task.status];
                         return (
                           <div key={task.id}
-                            className={`p-5 rounded-2xl border transition-all ${task.status === "review" ? "glass-panel border-purple-500/30 cursor-pointer hover:border-purple-500/50" : "glass-panel border-white/10 hover:border-white/20"}`}
+                            className={`group relative p-5 rounded-3xl border transition-all duration-300 transform ${task.status === "review" ? "hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(168,85,247,0.2)] bg-gradient-to-br from-[#160f24] to-[#0A0A0A] border-purple-500/30 cursor-pointer" : "hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(0,0,0,0.4)] bg-gradient-to-br from-[#111] to-[#050505] border-white/5 hover:border-white/15"}`}
                             onClick={() => task.status === "review" && setReviewTask(task)}>
                             <div className="flex items-start justify-between gap-4 flex-wrap">
                               <div className="flex-1 min-w-0">
@@ -880,19 +884,20 @@ function ProjectRoomContent() {
                 ))}
 
                 {/* Approval dashboard summary */}
-                <div className="glass-panel p-6 rounded-2xl border border-white/10">
-                  <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50 mb-4 flex items-center gap-2">
-                    <BarChart2 className="w-3 h-3" /> Project Status Summary
+                <div className="relative overflow-hidden bg-gradient-to-br from-[#0c0c0c] to-[#040404] p-8 rounded-3xl border border-white/5 shadow-[0_15px_50px_rgba(0,0,0,0.5)]">
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-full blur-[80px] pointer-events-none" />
+                  <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50 mb-6 flex items-center gap-2 relative z-10">
+                    <BarChart2 className="w-4 h-4 text-indigo-400" /> Project Status Summary
                   </h3>
-                  <div className="grid grid-cols-3 gap-4">
+                  <div className="grid grid-cols-3 gap-5 relative z-10">
                     {[
-                      { label: "Approved", count: doneTasks, color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20" },
-                      { label: "In Review", count: inReview, color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20" },
-                      { label: "Remaining", count: allTasks.length - doneTasks - inReview, color: "text-white/40", bg: "bg-white/5 border-white/10" },
+                      { label: "Approved", count: doneTasks, color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20 shadow-[0_0_20px_rgba(16,185,129,0.1)]" },
+                      { label: "In Review", count: inReview, color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.1)]" },
+                      { label: "Remaining", count: allTasks.length - doneTasks - inReview, color: "text-white/60", bg: "bg-[#111] border-white/5" },
                     ].map(s => (
-                      <div key={s.label} className={`p-4 rounded-xl border text-center ${s.bg}`}>
-                        <div className={`text-2xl font-black ${s.color}`}>{s.count}</div>
-                        <div className="text-[10px] text-[#888] uppercase tracking-widest mt-1">{s.label}</div>
+                      <div key={s.label} className={`p-5 rounded-2xl border text-center transition-transform hover:-translate-y-1 ${s.bg}`}>
+                        <div className={`text-4xl font-black ${s.color}`}>{s.count}</div>
+                        <div className="text-[10px] text-white/40 font-bold uppercase tracking-widest mt-2">{s.label}</div>
                       </div>
                     ))}
                   </div>
@@ -945,7 +950,7 @@ function ProjectRoomContent() {
                 {matchLoading && (
                   <div className="space-y-4">
                     {[1,2,3].map(i => (
-                      <div key={i} className="glass-panel p-6 rounded-2xl border border-white/10 animate-pulse">
+                      <div key={i} className="relative group rounded-3xl border border-white/5 bg-gradient-to-br from-[#111] to-[#080808] p-6 animate-pulse">
                         <div className="flex gap-5 mb-4">
                           <div className="w-16 h-16 rounded-full bg-white/10 shrink-0" />
                           <div className="flex-1 space-y-2">
@@ -1360,7 +1365,7 @@ function ProjectRoomContent() {
                     </button>
                   </div>
                 ) : (
-                  <div className="glass-panel rounded-3xl border border-white/10 flex flex-col overflow-hidden" style={{ height: "60vh" }}>
+                  <div className="bg-gradient-to-br from-[#0c0c0c] to-[#050505] rounded-3xl border border-white/5 flex flex-col overflow-hidden shadow-[0_8px_40px_rgba(0,0,0,0.5)]" style={{ height: "60vh" }}>
                     {/* Chat header */}
                     <div className="p-4 border-b border-white/5 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
                       <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -1560,8 +1565,9 @@ function ProjectRoomContent() {
                 </div>
 
                 {/* Pipeline visualization */}
-                <div className="glass-panel p-6 rounded-2xl border border-white/10 space-y-4">
-                  <div className="flex items-center gap-2 mb-4">
+                <div className="relative overflow-hidden bg-gradient-to-br from-[#111] to-[#080808] p-6 rounded-3xl border border-white/5 space-y-4 shadow-[0_8px_30px_rgba(0,0,0,0.5)]">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-[60px] pointer-events-none" />
+                  <div className="relative z-10 flex items-center gap-2 mb-4">
                     <GitBranch className="w-4 h-4 text-white/40" />
                     <span className="text-xs text-white/60 font-mono">main ← feature/implementation · 12 commits ahead</span>
                   </div>
@@ -1610,7 +1616,7 @@ function ProjectRoomContent() {
                 )}
 
                 {/* Environment status */}
-                <div className="glass-panel p-5 rounded-2xl border border-white/10">
+                <div className="bg-gradient-to-br from-[#111] to-[#080808] p-6 rounded-3xl border border-white/5 shadow-[0_8px_30px_rgba(0,0,0,0.5)]">
                   <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50 mb-4">Environments</h3>
                   <div className="space-y-3">
                     {[
