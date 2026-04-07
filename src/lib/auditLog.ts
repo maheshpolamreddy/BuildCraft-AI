@@ -39,6 +39,9 @@ export interface AuditEntry {
   id?:        string;
   uid:        string;
   action:     AuditAction;
+  projectId?: string | null;
+  creatorUid?: string | null;
+  developerUid?: string | null;
   meta?:      Record<string, unknown>;
   timestamp:  Timestamp | null;
 }
@@ -57,8 +60,7 @@ function isFirebaseUid(uid: string): boolean {
 
 /**
  * Fire-and-forget: write an audit event to Firestore.
- * Never throws — failures are silently logged so they never block user flows.
- * Skips demo users entirely to avoid Firestore permission errors.
+ * Stores projectId, creatorUid and developerUid at top level for indexed security rules.
  */
 export async function logAction(
   uid: string,
@@ -67,9 +69,16 @@ export async function logAction(
 ): Promise<void> {
   if (!isFirebaseUid(uid)) return;
   try {
+    const projectId = meta?.projectId as string | undefined;
+    const developerUid = meta?.developerUid as string | undefined;
+    const creatorUid = (meta?.creatorUid || uid) as string | undefined;
+
     await addDoc(collection(db, "auditLog"), {
       uid,
       action,
+      projectId: projectId || null,
+      creatorUid: creatorUid || null,
+      developerUid: developerUid || null,
       meta: meta ?? {},
       timestamp: serverTimestamp(),
     });
@@ -100,6 +109,7 @@ export async function getUserAuditLog(
     return [];
   }
 }
+
 /** Load all audit entries for a specific project. Returns [] for demo users. */
 export async function getProjectAuditLog(
   projectId: string,
@@ -109,7 +119,7 @@ export async function getProjectAuditLog(
   try {
     const q = query(
       collection(db, "auditLog"),
-      where("meta.projectId", "==", projectId),
+      where("projectId", "==", projectId),
       orderBy("timestamp", "desc"),
       limit(maxEntries),
     );

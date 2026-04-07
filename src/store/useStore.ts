@@ -63,6 +63,10 @@ export interface ProjectState {
   aiBlueprint?: ProjectBlueprint | null;
   /** Persisted milestones scoped to this project (Project Room) */
   milestones?: Milestone[] | null;
+  /** Firebase UID of the project owner (creator) */
+  creatorUid?: string;
+  /** Firebase UID of the hired developer (if any) */
+  developerUid?: string;
 }
 
 interface BuildCraftStore {

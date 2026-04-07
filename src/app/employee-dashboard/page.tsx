@@ -369,6 +369,8 @@ export default function EmployeeDashboard() {
   const [matchLoading, setMatchLoading]         = useState(false);
   const [matchError, setMatchError]             = useState(false);
   const [invitedProjects, setInvitedProjects]   = useState<Set<string>>(new Set());
+  const [respondLoading,   setRespondLoading]    = useState<string | null>(null);
+  const [respondError,     setRespondError]      = useState<string | null>(null);
 
   const projectName = project?.name ?? "My Project";
   const chatViewerUid = useFirebaseUid(currentUser?.uid);
@@ -400,6 +402,16 @@ export default function EmployeeDashboard() {
   const acceptedHireTokens = useMemo(
     () => new Set(hireReqs.filter(r => r.status === "accepted").map(r => r.token)),
     [hireReqs],
+  );
+
+  const pendingInvitations = useMemo(
+    () => hireReqs.filter(r => r.status === "pending"),
+    [hireReqs]
+  );
+
+  const activeAssignments = useMemo(
+    () => hireReqs.filter(r => r.status === "accepted"),
+    [hireReqs]
   );
 
   const sortedPrds = useMemo(() => {
@@ -798,10 +810,39 @@ export default function EmployeeDashboard() {
       });
       await maybeSetOfflinePingForPartner(activeChatId, uid);
     } catch (e) {
-      setChatText(text);
-      setChatSubError(e instanceof Error ? e.message : "Could not send message.");
+      setChatSubError(e instanceof Error ? e.message : "Failed to send message");
     } finally {
       setChatSending(false);
+    }
+  }
+
+  async function handleRespond(token: string, action: "accept" | "reject") {
+    if (!currentUser) return;
+    setRespondLoading(token);
+    setRespondError(null);
+    try {
+      const res = await fetch("/api/hire-respond", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, action }),
+      });
+      const { ok, data } = await parseJsonResponse(res);
+      if (!ok) throw new Error(String(data?.error || "Failed to respond to invitation"));
+
+      if (action === "accept") {
+        // Success! Re-fetch hire requests and then redirect
+        const updated = await getHireRequestsByDeveloper(currentUser.uid);
+        setHireReqs(updated);
+        router.push(`/project-room?projectId=${data.projectId || ""}&tab=milestones`);
+      } else {
+        // Refetch to clear the rejected one
+        const updated = await getHireRequestsByDeveloper(currentUser.uid);
+        setHireReqs(updated);
+      }
+    } catch (err) {
+      setRespondError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setRespondLoading(null);
     }
   }
 
@@ -817,13 +858,13 @@ export default function EmployeeDashboard() {
   }
 
   // ── Derived stats ──────────────────────────────────────────────────────────
-  const allTasks = milestones.flatMap(m => m.tasks);
-  const doneTasks = allTasks.filter(t => t.status === "approved").length;
-  const inProgress = allTasks.filter(t => t.status === "in-progress" || t.status === "validating").length;
-  const inReview = allTasks.filter(t => t.status === "review").length;
+  const allTasks = (milestones || []).flatMap(m => m.tasks || []);
+  const doneTasks = allTasks.filter(t => t?.status === "approved").length;
+  const inProgress = allTasks.filter(t => t?.status === "in-progress" || t?.status === "validating").length;
+  const inReview = allTasks.filter(t => t?.status === "review").length;
   const progress = allTasks.length ? Math.round((doneTasks / allTasks.length) * 100) : 0;
 
-  const activeMilestone = milestones.find(m => m.id === activeMilestoneId) ?? milestones[0];
+  const activeMilestone = (milestones || []).find(m => m.id === activeMilestoneId) ?? (milestones?.[0] || null);
   const COLOR_MAP: Record<string, string> = {
     blue: "text-blue-400 bg-blue-500/10 border-blue-500/20",
     purple: "text-purple-400 bg-purple-500/10 border-purple-500/20",
@@ -908,8 +949,8 @@ export default function EmployeeDashboard() {
 
         <nav className="flex-grow space-y-2">
           {([
-            { id: "projects",    label: "Opportunities",  icon: <Briefcase className="w-5 h-5" /> },
-            { id: "workspace",   label: "My Workspace",   icon: <Code2 className="w-5 h-5" />, badge: inProgress > 0 ? String(inProgress) : null },
+            { id: "projects",    label: "Opportunities",  icon: <Briefcase className="w-5 h-5" />, badge: pendingInvitations.length > 0 ? String(pendingInvitations.length) : null },
+            { id: "workspace",   label: "Workspaces",     icon: <Code2 className="w-5 h-5" />, badge: activeAssignments.length > 0 ? String(activeAssignments.length) : null },
             { id: "prd",         label: "PRD Document",   icon: <FileText className="w-5 h-5" />, badge: prds.length > 0 ? "New" : null },
             { id: "chat",        label: "Chat with Client", icon: <MessageSquare className="w-5 h-5" />, badge: activeChatId ? "Live" : null },
             { id: "assessments", label: "Skill Tests",    icon: <Activity className="w-5 h-5" />, badge: openSkillTestCount > 0 ? String(openSkillTestCount) : null },
@@ -987,44 +1028,95 @@ export default function EmployeeDashboard() {
 
             {/* ── PROJECTS TAB ─────────────────────────────────────────────── */}
             {activeTab === "projects" && (
-              <motion.section key="projects" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+              <motion.section key="projects" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
 
-                {/* Active assignment — pinned at top */}
-                {project && (
-                  <div className="glass-panel p-7 rounded-3xl border border-blue-500/30 bg-blue-500/5">
-                    <div className="flex justify-between items-start flex-wrap gap-4 mb-5">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1.5">
-                          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                          <span className="text-[10px] text-green-500 font-bold uppercase tracking-widest">Active Assignment</span>
-                        </div>
-                        <h3 className="text-white text-2xl font-black tracking-tight">{projectName}</h3>
-                        <p className="text-[#888] text-sm mt-1 font-light">Plan locked · AI milestones ready to execute</p>
-                      </div>
-                      <div className="flex flex-col items-end gap-2">
-                        <span className="px-3 py-1 bg-green-500/10 border border-green-500/20 text-green-500 text-xs font-bold rounded-lg uppercase tracking-widest">Assigned</span>
-                        <span className="text-xs text-white/40 font-bold">{progress}% complete</span>
-                      </div>
+                {/* ── PROJECT INVITATIONS ── */}
+                {pendingInvitations.length > 0 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-white font-black tracking-tight flex items-center gap-2">
+                        <Star className="w-5 h-5 text-yellow-400" /> Project Invitations
+                      </h2>
+                      <span className="bg-yellow-500/20 text-yellow-500 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest">{pendingInvitations.length} Pending</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-3 mb-5">
-                      {[
-                        { label: "Milestones",    value: `${milestones.length}` },
-                        { label: "Total Tasks",   value: `${allTasks.length}` },
-                        { label: "Est. Duration", value: `${milestones.reduce((a, m) => a + m.estimatedDays, 0)}d` },
-                      ].map(s => (
-                        <div key={s.label} className="p-3 bg-white/5 rounded-xl text-center border border-white/5">
-                          <div className="text-white font-bold text-lg">{s.value}</div>
-                          <div className="text-[10px] text-[#888] uppercase tracking-widest">{s.label}</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {pendingInvitations?.map((invite) => (
+                        <div key={invite?.token} className="glass-panel p-6 rounded-2xl border border-yellow-500/30 bg-yellow-500/5 relative overflow-hidden group">
+                          {/* Glossy highlight */}
+                          <div className="absolute inset-0 bg-gradient-to-br from-yellow-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+                          
+                          <div className="flex justify-between items-start mb-4">
+                            <div>
+                              <div className="flex items-center gap-2 mb-1.5">
+                                <ShieldCheck className="w-3.5 h-3.5 text-yellow-400" />
+                                <span className="text-[9px] text-yellow-400 font-bold uppercase tracking-widest">New Invitation</span>
+                              </div>
+                              <h3 className="text-white text-lg font-black tracking-tight">{invite.projectName}</h3>
+                              <p className="text-white/40 text-[10px] uppercase tracking-widest font-bold mt-1">From: {invite.creatorName}</p>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[9px] text-white/30 uppercase tracking-widest block mb-1">Status</span>
+                              <span className="px-2 py-0.5 bg-white/5 border border-white/10 text-white/40 text-[8px] font-black rounded uppercase">Awaiting Action</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 mt-6">
+                            <button
+                              onClick={() => handleRespond(invite.token, "accept")}
+                              disabled={respondLoading === invite.token}
+                              className="flex-1 py-2.5 silver-gradient text-black font-black uppercase tracking-widest text-[10px] rounded-xl flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                            >
+                              {respondLoading === invite.token ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
+                              Accept Offer
+                            </button>
+                            <button
+                              onClick={() => handleRespond(invite.token, "reject")}
+                              disabled={respondLoading === invite.token}
+                              className="px-4 py-2.5 border border-white/10 text-white/40 hover:text-white hover:border-white/20 hover:bg-white/5 font-black uppercase tracking-widest text-[10px] rounded-xl transition-all disabled:opacity-50"
+                            >
+                              Decline
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
-                    <div className="h-1.5 bg-white/10 rounded-full overflow-hidden mb-5">
-                      <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${progress}%` }} />
+                  </div>
+                )}
+
+                {/* ── ACTIVE ASSIGNMENTS ── */}
+                {activeAssignments.length > 0 && (
+                  <div className="space-y-4">
+                    <h2 className="text-white font-black tracking-tight flex items-center gap-2">
+                      <Briefcase className="w-5 h-5 text-blue-400" /> My Active Projects
+                    </h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {activeAssignments?.map((assignment) => (
+                        <div key={assignment?.token} className="glass-panel p-6 rounded-2xl border border-blue-500/20 bg-blue-500/5 hover:border-blue-500/40 transition-all">
+                          <div className="flex justify-between items-start mb-4">
+                            <div>
+                              <div className="flex items-center gap-2 mb-1.5">
+                                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-widest">Active Workspace</span>
+                              </div>
+                              <h3 className="text-white font-black">{assignment.projectName}</h3>
+                              <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest mt-1">Client: {assignment.creatorName}</p>
+                            </div>
+                            <Link 
+                              href={`/project-room?projectId=${assignment.projectId}&tab=milestones`}
+                              className="p-2.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 rounded-xl transition-all"
+                            >
+                              <ArrowRight className="w-4 h-4" />
+                            </Link>
+                          </div>
+                          <button 
+                            onClick={() => router.push(`/project-room?projectId=${assignment.projectId}&tab=milestones`)}
+                            className="w-full py-2.5 flex items-center justify-center gap-2 bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                          >
+                            <Play className="w-3.5 h-3.5" /> Enter Workspace
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                    <button onClick={openWorkspace}
-                      className="w-full py-3.5 silver-gradient text-black font-black uppercase tracking-widest text-xs rounded-xl flex items-center justify-center gap-2">
-                      <Play className="w-4 h-4" /> Open Workspace
-                    </button>
                   </div>
                 )}
 
@@ -1181,180 +1273,217 @@ export default function EmployeeDashboard() {
             {/* ── WORKSPACE TAB ────────────────────────────────────────────── */}
             {activeTab === "workspace" && (
               <motion.section key="workspace" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-
-                {generatingMilestones && (
-                  <div className="p-5 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl flex items-center gap-3">
-                    <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
-                    <div>
-                      <p className="text-sm font-bold text-white">Generating AI Milestones…</p>
-                      <p className="text-xs text-[#888]">Breaking {projectName} into tasks with prompts</p>
+                
+                {!project && (
+                  <div className="glass-panel p-10 rounded-3xl border border-white/5 bg-white/[0.02] text-center space-y-6">
+                    <div className="w-16 h-16 bg-blue-500/10 border border-blue-500/20 rounded-2xl flex items-center justify-center mx-auto">
+                      <Code2 className="w-8 h-8 text-blue-400" />
                     </div>
+                    <div>
+                      <h2 className="text-white text-xl font-black tracking-tight">No Active Workspace Selected</h2>
+                      <p className="text-[#888] text-sm font-light mt-2 max-w-sm mx-auto">
+                        Select one of your active assignments from the Opportunities tab to open its dedicated project room and start coding.
+                      </p>
+                    </div>
+                    <button onClick={() => setActiveTab("projects")} 
+                      className="px-6 py-3 silver-gradient text-black font-black uppercase tracking-widest text-[10px] rounded-xl hover:scale-[1.02] transition-all">
+                      Browse Active Projects
+                    </button>
+                    
+                    {activeAssignments?.length > 0 && (
+                      <div className="pt-6 border-t border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto">
+                        {activeAssignments.map(a => (
+                          <Link key={a?.token || Math.random()} href={`/project-room?projectId=${a?.projectId || ""}&tab=milestones`}
+                            className="p-4 glass-panel border border-white/5 hover:border-blue-500/30 bg-white/5 rounded-2xl flex items-center justify-between group transition-all">
+                            <div className="text-left">
+                              <div className="text-white font-bold text-sm group-hover:text-blue-400 transition-colors">{a.projectName}</div>
+                              <div className="text-[9px] text-[#888] uppercase tracking-widest font-bold font-mono">ID: {a.projectId?.slice(-6)}</div>
+                            </div>
+                            <ArrowRight className="w-4 h-4 text-white/20 group-hover:text-blue-400 -translate-x-1 group-hover:translate-x-0 transition-all" />
+                          </Link>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* Milestone phase selector */}
-                <div className="flex gap-2 flex-wrap">
-                  {milestones.map(m => (
-                    <button key={m.id} onClick={() => setActiveMilestoneId(m.id)}
-                      className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all border ${activeMilestoneId === m.id ? `${COLOR_MAP[m.color] ?? "text-white bg-white/10 border-white/20"}` : "text-white/40 border-white/10 hover:text-white hover:border-white/20"}`}>
-                      {m.phase}: {m.title}
-                    </button>
-                  ))}
-                </div>
-
-                <div className={`flex gap-6 ${selectedTask ? "flex-col lg:flex-row" : "flex-col"}`}>
-
-                  {/* Task list */}
-                  <div className={`space-y-3 ${selectedTask ? "lg:w-80 shrink-0" : "w-full"}`}>
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50">{activeMilestone?.title}</h3>
-                      <span className="text-[10px] text-[#888]">{activeMilestone?.estimatedDays}d estimated</span>
-                    </div>
-                    {activeMilestone?.tasks.map(task => {
-                      const sc = STATUS_CONFIG[task.status];
-                      return (
-                        <div key={task.id}
-                          onClick={() => handleStartTask(task)}
-                          className={`p-4 rounded-2xl border cursor-pointer transition-all hover:border-white/20 ${selectedTask?.id === task.id ? "border-blue-500/40 bg-blue-500/5" : "glass-panel border-white/10"}`}>
-                          <div className="flex items-start justify-between gap-3 mb-2">
-                            <h4 className="text-white text-sm font-bold leading-snug">{task.title}</h4>
-                            <span className={`shrink-0 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${sc.bg} ${sc.color}`}>{sc.label}</span>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${TYPE_COLOR[task.type]}`}>
-                              {TYPE_ICON[task.type]} {task.type}
-                            </span>
-                            <span className={`text-[10px] font-bold uppercase ${PRIORITY_COLOR[task.priority]}`}>
-                              <Flag className="w-3 h-3 inline mr-1" />{task.priority}
-                            </span>
-                            <span className="text-[10px] text-[#888] ml-auto flex items-center gap-1">
-                              <Clock className="w-3 h-3" />{task.estimatedHours}h
-                            </span>
-                          </div>
+                {project && (
+                  <>
+                    {generatingMilestones && (
+                      <div className="p-5 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl flex items-center gap-3">
+                        <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
+                        <div>
+                          <p className="text-sm font-bold text-white">Generating AI Milestones…</p>
+                          <p className="text-xs text-[#888]">Breaking {projectName} into tasks with prompts</p>
                         </div>
-                      );
-                    })}
-                    {!selectedTask && (
-                      <button onClick={generateMilestones} disabled={generatingMilestones}
-                        className="w-full py-3 border border-dashed border-white/15 text-white/40 hover:text-white hover:border-white/30 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2">
-                        <RotateCcw className="w-3.5 h-3.5" /> Regenerate with AI
-                      </button>
+                      </div>
                     )}
-                  </div>
 
-                  {/* Task detail panel */}
-                  {selectedTask && (
-                    <div className="flex-1 space-y-5 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-1">
-                          <h3 className="text-white text-xl font-bold">{selectedTask.title}</h3>
-                          <p className="text-[#888] text-sm font-light">{selectedTask.description}</p>
-                        </div>
-                        <button onClick={() => setSelectedTask(null)} className="text-white/30 hover:text-white text-xs font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
-                          Close
+                    {/* Milestone phase selector */}
+                    <div className="flex gap-2 flex-wrap">
+                      {milestones?.map(m => (
+                        <button key={m?.id} onClick={() => setActiveMilestoneId(m.id)}
+                          className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all border ${activeMilestoneId === m.id ? `${COLOR_MAP[m.color] ?? "text-white bg-white/10 border-white/20"}` : "text-white/40 border-white/10 hover:text-white hover:border-white/20"}`}>
+                          {m.phase}: {m.title}
                         </button>
-                      </div>
+                      ))}
+                    </div>
 
-                      {/* AI Prompt */}
-                      <div className="glass-panel p-5 rounded-2xl border border-indigo-500/20 bg-indigo-500/5">
-                        <div className="flex items-center justify-between mb-3">
-                          <div className="flex items-center gap-2">
-                            <Sparkles className="w-4 h-4 text-indigo-400" />
-                            <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">AI Development Prompt</span>
-                          </div>
-                          <button onClick={copyPrompt} className="flex items-center gap-1 text-[10px] text-white/40 hover:text-white transition-colors font-bold uppercase tracking-widest">
-                            {copiedPrompt ? <><Check className="w-3 h-3 text-green-500" /> Copied</> : <><Copy className="w-3 h-3" /> Copy Prompt</>}
-                          </button>
-                        </div>
-                        <p className="text-white/70 text-xs font-light leading-relaxed">{selectedTask.aiPrompt}</p>
-                        <div className="mt-3 pt-3 border-t border-white/5 flex items-center gap-2 text-[10px] text-white/30">
-                          <Info className="w-3 h-3" /> Paste this into Cursor or your AI coding assistant to generate the implementation
-                        </div>
-                      </div>
+                    <div className={`flex gap-6 ${selectedTask ? "flex-col lg:flex-row" : "flex-col"}`}>
 
-                      {/* Submission */}
-                      <div className="space-y-3">
+                      {/* Task list */}
+                      <div className={`space-y-3 ${selectedTask ? "lg:w-80 shrink-0" : "w-full"}`}>
                         <div className="flex items-center justify-between">
-                          <label className="text-[10px] font-black uppercase tracking-widest text-white/50">Your Submission</label>
-                          {selectedTask.version > 1 && (
-                            <span className="text-[10px] text-white/30 flex items-center gap-1">
-                              <GitBranch className="w-3 h-3" /> v{selectedTask.version}
-                            </span>
-                          )}
+                          <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50">{activeMilestone?.title}</h3>
+                          <span className="text-[10px] text-[#888]">{activeMilestone?.estimatedDays}d estimated</span>
                         </div>
-                        <textarea
-                          ref={submissionRef}
-                          value={submission}
-                          onChange={e => setSubmission(e.target.value)}
-                          placeholder="Paste your code, implementation, or description here..."
-                          rows={10}
-                          className="w-full bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none rounded-xl px-4 py-3 text-sm text-white placeholder-white/20 font-mono resize-none transition-colors"
-                        />
-                        <div className="flex gap-3">
-                          <button onClick={handleValidate} disabled={validating || !submission.trim()}
-                            className="flex-1 py-3 bg-indigo-500 hover:bg-indigo-400 text-white font-black uppercase tracking-widest text-xs rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
-                            {validating ? <><Loader2 className="w-4 h-4 animate-spin" /> Validating…</> : <><Sparkles className="w-4 h-4" /> Validate with AI</>}
+                        {activeMilestone?.tasks?.map(task => {
+                          const sc = STATUS_CONFIG[task?.status || "todo"] || STATUS_CONFIG.todo;
+                          return (
+                            <div key={task?.id || Math.random()}
+                              onClick={() => handleStartTask(task)}
+                              className={`p-4 rounded-2xl border cursor-pointer transition-all hover:border-white/20 ${selectedTask?.id === task?.id ? "border-blue-500/40 bg-blue-500/5" : "glass-panel border-white/10"}`}>
+                              <div className="flex items-start justify-between gap-3 mb-2">
+                                <h4 className="text-white text-sm font-bold leading-snug">{task.title}</h4>
+                                <span className={`shrink-0 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${sc.bg} ${sc.color}`}>{sc.label}</span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${TYPE_COLOR[task.type]}`}>
+                                  {TYPE_ICON[task.type]} {task.type}
+                                </span>
+                                <span className={`text-[10px] font-bold uppercase ${PRIORITY_COLOR[task.priority]}`}>
+                                  <Flag className="w-3 h-3 inline mr-1" />{task.priority}
+                                </span>
+                                <span className="text-[10px] text-[#888] ml-auto flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />{task.estimatedHours}h
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {!selectedTask && (
+                          <button onClick={generateMilestones} disabled={generatingMilestones}
+                            className="w-full py-3 border border-dashed border-white/15 text-white/40 hover:text-white hover:border-white/30 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2">
+                            <RotateCcw className="w-3.5 h-3.5" /> Regenerate with AI
                           </button>
-                          {selectedTask.validationResult?.passed && (
-                            <button onClick={() => {
-                              const mid = milestones.find(m => m.tasks.some(t => t.id === selectedTask.id))?.id ?? "";
-                              updateTaskStatus(mid, selectedTask.id, "review");
-                              setSelectedTask(prev => prev ? { ...prev, status: "review" } : null);
-                            }} className="flex-1 py-3 bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-black uppercase tracking-widest text-xs rounded-xl hover:bg-emerald-500/30 transition-all flex items-center justify-center gap-2">
-                              <Send className="w-4 h-4" /> Submit for Review
-                            </button>
-                          )}
-                        </div>
+                        )}
                       </div>
 
-                      {/* Validation result */}
-                      {selectedTask.validationResult && (
-                        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                          className={`p-5 rounded-2xl border space-y-4 ${selectedTask.validationResult.passed ? "bg-emerald-500/5 border-emerald-500/20" : "bg-red-500/5 border-red-500/20"}`}>
+                      {/* Task detail panel */}
+                      {selectedTask && (
+                        <div className="flex-1 space-y-5 min-w-0">
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              {selectedTask.validationResult.passed
-                                ? <CheckCircle className="w-5 h-5 text-emerald-400" />
-                                : <XCircle className="w-5 h-5 text-red-400" />}
-                              <span className={`font-bold text-sm ${selectedTask.validationResult.passed ? "text-emerald-400" : "text-red-400"}`}>
-                                {selectedTask.validationResult.passed ? "Validation Passed" : "Validation Failed"}
-                              </span>
+                            <div className="space-y-1">
+                              <h3 className="text-white text-xl font-bold">{selectedTask.title}</h3>
+                              <p className="text-[#888] text-sm font-light">{selectedTask.description}</p>
                             </div>
-                            <div className={`text-2xl font-black ${selectedTask.validationResult.score >= 80 ? "text-emerald-400" : "text-red-400"}`}>
-                              {selectedTask.validationResult.score}<span className="text-sm">/100</span>
-                            </div>
+                            <button onClick={() => setSelectedTask(null)} className="text-white/30 hover:text-white text-xs font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
+                              Close
+                            </button>
                           </div>
-                          <p className="text-sm text-white/70 font-light">{selectedTask.validationResult.summary}</p>
-                          <div className="grid grid-cols-1 gap-2">
-                            {selectedTask.validationResult.checks.map((c, i) => (
-                              <div key={i} className="flex items-center gap-3 text-xs">
-                                {c.passed ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> : <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />}
-                                <span className={c.passed ? "text-white/70" : "text-red-400"}>{c.label}</span>
-                                <span className="text-[#888] ml-auto">{c.note}</span>
+
+                          {/* AI Prompt */}
+                          <div className="glass-panel p-5 rounded-2xl border border-indigo-500/20 bg-indigo-500/5">
+                            <div className="flex items-center justify-between mb-3">
+                              <div className="flex items-center gap-2">
+                                <Sparkles className="w-4 h-4 text-indigo-400" />
+                                <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">AI Development Prompt</span>
                               </div>
-                            ))}
+                              <button onClick={copyPrompt} className="flex items-center gap-1 text-[10px] text-white/40 hover:text-white transition-colors font-bold uppercase tracking-widest">
+                                {copiedPrompt ? <><Check className="w-3 h-3 text-green-500" /> Copied</> : <><Copy className="w-3 h-3" /> Copy Prompt</>}
+                              </button>
+                            </div>
+                            <p className="text-white/70 text-xs font-light leading-relaxed">{selectedTask.aiPrompt}</p>
+                            <div className="mt-3 pt-3 border-t border-white/5 flex items-center gap-2 text-[10px] text-white/30">
+                              <Info className="w-3 h-3" /> Paste this into Cursor or your AI coding assistant to generate the implementation
+                            </div>
                           </div>
-                          {selectedTask.validationResult.issues.length > 0 && (
-                            <div className="space-y-1">
-                              <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Issues</p>
-                              {selectedTask.validationResult.issues.map((iss, i) => (
-                                <p key={i} className="text-xs text-red-400/80 font-light flex items-start gap-2"><span>·</span>{iss}</p>
-                              ))}
+
+                          {/* Submission */}
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-white/50">Your Submission</label>
+                              {selectedTask.version > 1 && (
+                                <span className="text-[10px] text-white/30 flex items-center gap-1">
+                                  <GitBranch className="w-3 h-3" /> v{selectedTask.version}
+                                </span>
+                              )}
                             </div>
-                          )}
-                          {selectedTask.validationResult.suggestions.length > 0 && (
-                            <div className="space-y-1">
-                              <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Suggestions</p>
-                              {selectedTask.validationResult.suggestions.map((s, i) => (
-                                <p key={i} className="text-xs text-white/50 font-light flex items-start gap-2"><span>·</span>{s}</p>
-                              ))}
+                            <textarea
+                              ref={submissionRef}
+                              value={submission}
+                              onChange={e => setSubmission(e.target.value)}
+                              placeholder="Paste your code, implementation, or description here..."
+                              rows={10}
+                              className="w-full bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none rounded-xl px-4 py-3 text-sm text-white placeholder-white/20 font-mono resize-none transition-colors"
+                            />
+                            <div className="flex gap-3">
+                              <button onClick={handleValidate} disabled={validating || !submission.trim()}
+                                className="flex-1 py-3 bg-indigo-500 hover:bg-indigo-400 text-white font-black uppercase tracking-widest text-xs rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                                {validating ? <><Loader2 className="w-4 h-4 animate-spin" /> Validating…</> : <><Sparkles className="w-4 h-4" /> Validate with AI</>}
+                              </button>
+                              {selectedTask.validationResult?.passed && (
+                                <button onClick={() => {
+                                  const mid = milestones.find(m => m.tasks.some(t => t.id === selectedTask.id))?.id ?? "";
+                                  updateTaskStatus(mid, selectedTask.id, "review");
+                                  setSelectedTask(prev => prev ? { ...prev, status: "review" } : null);
+                                }} className="flex-1 py-3 bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-black uppercase tracking-widest text-xs rounded-xl hover:bg-emerald-500/30 transition-all flex items-center justify-center gap-2">
+                                  <Send className="w-4 h-4" /> Submit for Review
+                                </button>
+                              )}
                             </div>
+                          </div>
+
+                          {/* Validation result */}
+                          {selectedTask.validationResult && (
+                            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                              className={`p-5 rounded-2xl border space-y-4 ${selectedTask.validationResult.passed ? "bg-emerald-500/5 border-emerald-500/20" : "bg-red-500/5 border-red-500/20"}`}>
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  {selectedTask.validationResult.passed
+                                    ? <CheckCircle className="w-5 h-5 text-emerald-400" />
+                                    : <XCircle className="w-5 h-5 text-red-400" />}
+                                  <span className={`font-bold text-sm ${selectedTask.validationResult.passed ? "text-emerald-400" : "text-red-400"}`}>
+                                    {selectedTask.validationResult.passed ? "Validation Passed" : "Validation Failed"}
+                                  </span>
+                                </div>
+                                <div className={`text-2xl font-black ${selectedTask.validationResult.score >= 80 ? "text-emerald-400" : "text-red-400"}`}>
+                                  {selectedTask.validationResult.score}<span className="text-sm">/100</span>
+                                </div>
+                              </div>
+                              <p className="text-sm text-white/70 font-light">{selectedTask.validationResult.summary}</p>
+                              <div className="grid grid-cols-1 gap-2">
+                                {selectedTask.validationResult.checks.map((c, i) => (
+                                  <div key={i} className="flex items-center gap-3 text-xs">
+                                    {c.passed ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> : <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />}
+                                    <span className={c.passed ? "text-white/70" : "text-red-400"}>{c.label}</span>
+                                    <span className="text-[#888] ml-auto">{c.note}</span>
+                                  </div>
+                                ))}
+                              </div>
+                              {selectedTask.validationResult.issues.length > 0 && (
+                                <div className="space-y-1">
+                                  <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Issues</p>
+                                  {selectedTask.validationResult.issues.map((iss, i) => (
+                                    <p key={i} className="text-xs text-red-400/80 font-light flex items-start gap-2"><span>·</span>{iss}</p>
+                                  ))}
+                                </div>
+                              )}
+                              {selectedTask.validationResult.suggestions.length > 0 && (
+                                <div className="space-y-1">
+                                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Suggestions</p>
+                                  {selectedTask.validationResult.suggestions.map((s, i) => (
+                                    <p key={i} className="text-xs text-white/50 font-light flex items-start gap-2"><span>·</span>{s}</p>
+                                  ))}
+                                </div>
+                              )}
+                            </motion.div>
                           )}
-                        </motion.div>
+                        </div>
                       )}
                     </div>
-                  )}
-                </div>
+                  </>
+                )}
               </motion.section>
             )}
 

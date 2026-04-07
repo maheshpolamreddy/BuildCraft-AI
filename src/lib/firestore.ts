@@ -24,7 +24,8 @@ function isFirebaseUid(uid: string): boolean {
 
 export interface SavedProject {
   id:           string;
-  uid:          string;
+  uid:          string; // Creator UID
+  developerUid?: string; // Hired Developer UID (if any)
   project:      ProjectState;
   approvedTools: Record<string, boolean | undefined>;
   createdAt:    Timestamp | null;

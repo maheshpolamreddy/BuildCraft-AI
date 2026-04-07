@@ -136,6 +136,12 @@ function ProjectRoomContent() {
   const pathname = usePathname();
   const chatQueryParam = searchParams.get("chat");
   const { project, setProject, approvedTools, currentUser, savedProjectId, setSavedProjectId } = useStore();
+
+  // ── Role Detection (Moved to top to prevent initialization errors) ──────────
+  const isCreator   = !!currentUser && !!project && currentUser.uid === project.creatorUid;
+  const isDeveloper = !!currentUser && !!project && currentUser.uid === project.developerUid;
+  const userRole    = isCreator ? "creator" : "developer";
+
   const [loadingProject, setLoadingProject] = useState(!!searchParams.get("projectId"));
   const [activeTab, setActiveTab] = useState<Tab>("milestones");
   const [milestones, setMilestones] = useState<Milestone[]>(FALLBACK_MILESTONES);
@@ -186,15 +192,11 @@ function ProjectRoomContent() {
   const [chatSubError,   setChatSubError]   = useState<string | null>(null);
   const chatViewerUid = useFirebaseUid(currentUser?.uid);
 
-  // ── Role Detection ──────────────────────────────────────────────────────────
-  const isCreator   = !!currentUser && !!project && currentUser.uid === project.creatorUid;
-  const isDeveloper = !!currentUser && !!project && !isCreator; 
-  const userRole    = isCreator ? "creator" : "developer";
-
-  // Filter tabs for developers
+  // Filter tabs for developers: They only see what they need
   const visibleTabs = useMemo(() => {
     if (isCreator) return VALID_TABS;
-    return VALID_TABS.filter(t => !["talent", "deploy", "audit", "history"].includes(t));
+    // Developers only see milestones, chat, PRD, and history (if we allow it)
+    return VALID_TABS.filter(t => ["milestones", "chat", "prd"].includes(t));
   }, [isCreator]);
 
   // ── Remote Project Loading (Deep Linking) ──────────────────────────────────
@@ -259,6 +261,13 @@ function ProjectRoomContent() {
   const doneTasks  = allTasks.filter(t => t.status === "approved").length;
   const inReview   = allTasks.filter(t => t.status === "review").length;
   const progress   = allTasks.length ? Math.round((doneTasks / allTasks.length) * 100) : 0;
+
+  // ── Strict Tab Guard ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (isDeveloper && !visibleTabs.includes(activeTab)) {
+      setActiveTab("milestones");
+    }
+  }, [isDeveloper, activeTab, visibleTabs]);
 
 
   // ── Route Guard ────────────────────────────────────────────────────────────
@@ -377,7 +386,9 @@ function ProjectRoomContent() {
         if (currentUser) {
           logAction(currentUser.uid, "project.updated", { 
             action: "milestones_regenerated",
-            projectId: savedProjectId
+            projectId: savedProjectId,
+            creatorUid: project?.creatorUid,
+            developerUid: project?.developerUid
           }).catch(() => {});
         }
       })
@@ -555,7 +566,9 @@ function ProjectRoomContent() {
         if (currentUser) logAction(currentUser.uid, "analysis.generated", { 
           type: "developer-matching", 
           count: devs.length,
-          projectId: savedProjectId
+          projectId: savedProjectId,
+          creatorUid: project?.creatorUid,
+          developerUid: project?.developerUid
         });
       } else {
         setMatchError(true);
@@ -882,17 +895,21 @@ function ProjectRoomContent() {
             <span className="font-medium">Home</span>
           </Link>
 
-          {/* Requirements */}
-          <button onClick={() => router.push("/discovery")} className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 transition-all rounded-xl text-xs group">
-            <Layers className="w-4 h-4 group-hover:text-blue-400 transition-colors" />
-            <span className="font-medium">Requirements</span>
-          </button>
+          {isCreator && (
+            <>
+              {/* Requirements */}
+              <button onClick={() => router.push("/discovery")} className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 transition-all rounded-xl text-xs group">
+                <Layers className="w-4 h-4 group-hover:text-blue-400 transition-colors" />
+                <span className="font-medium">Requirements</span>
+              </button>
 
-          {/* Architecture */}
-          <button onClick={() => router.push("/architecture")} className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 transition-all rounded-xl text-xs group">
-            <Activity className="w-4 h-4 group-hover:text-indigo-400 transition-colors" />
-            <span className="font-medium">Architecture</span>
-          </button>
+              {/* Architecture */}
+              <button onClick={() => router.push("/architecture")} className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 transition-all rounded-xl text-xs group">
+                <Activity className="w-4 h-4 group-hover:text-indigo-400 transition-colors" />
+                <span className="font-medium">Architecture</span>
+              </button>
+            </>
+          )}
 
           <div className="pt-2 pb-1 border-t border-white/5 my-2"></div>
           
@@ -1120,8 +1137,8 @@ function ProjectRoomContent() {
               </motion.section>
             )}
 
-            {/* ── TALENT TAB — AI Developer Matching Engine ─────────────── */}
-            {activeTab === "talent" && (
+            {/* ── TALENT matching tab ────────────────────────────────────── */}
+            {activeTab === "talent" && isCreator && (
               <motion.section key="talent" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
 
                 {/* Header */}
@@ -1722,8 +1739,8 @@ function ProjectRoomContent() {
               </motion.section>
             )}
 
-            {/* ── HIRING HISTORY (all invites / hires — stored in Firestore) ─ */}
-            {activeTab === "history" && (
+            {/* ── HISTORY tab ────────────────────────────────────────────── */}
+            {activeTab === "history" && isCreator && (
               <motion.section key="history" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
                 <div>
                   <h2 className="text-white font-black text-xl tracking-tight flex items-center gap-2">
