@@ -11,7 +11,7 @@ import {
   Loader2, Layers, Terminal, GitBranch, CheckCircle,
   XCircle, Rocket, Play, Zap, Activity, GitMerge,
   Package, Eye, BarChart2, Flag, ArrowRight, Sparkles,
-  FileText, Mail, Home, FolderOpen, CheckSquare, Trash2,
+  FileText, Mail, Home, FolderOpen, CheckSquare, Trash2, Briefcase,
 } from "lucide-react";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _unused = { Download, ChevronRight, Play, Star, Scale };
@@ -40,8 +40,8 @@ import {
 import { useFirebaseUid } from "@/hooks/useFirebaseUid";
 import { deleteDoc, doc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
-import { getProject, type SavedProject } from "@/lib/firestore";
-import { CreatorFlowBreadcrumb } from "@/components/FlowNavigation";
+import { getProject, claimProjectAsDeveloper, type SavedProject } from "@/lib/firestore";
+import { CreatorFlowBreadcrumb, DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 import { ProjectCompletionPanel } from "@/components/ProjectCompletionPanel";
 import {
   initProjectExecution,
@@ -55,7 +55,12 @@ import {
 } from "@/lib/project-execution";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "milestones" | "talent" | "prd" | "chat" | "audit" | "deploy" | "history" | "completion";
+type Tab = "milestones" | "talent" | "prd" | "chat" | "audit" | "deploy" | "history" | "completion" | "architecture" | "deliverables";
+
+export type ProjectRoomContentProps = {
+  initialProjectId?: string | null;
+  isDeveloperWorkspace?: boolean;
+};
 
 interface ChatMessage {
   id: number;
@@ -140,13 +145,14 @@ const INITIAL_MESSAGES: ChatMessage[] = [
 ];
 
 // ── Component ──────────────────────────────────────────────────────────────────
-const VALID_TABS: Tab[] = ["milestones", "talent", "prd", "chat", "completion", "history", "audit", "deploy"];
+const VALID_TABS: Tab[] = ["milestones", "talent", "prd", "chat", "completion", "history", "audit", "deploy", "architecture", "deliverables"];
 
-function ProjectRoomContent() {
+export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspace = false }: ProjectRoomContentProps = {}) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
   const chatQueryParam = searchParams.get("chat");
+  const routeProjectId = (initialProjectId?.trim() || searchParams.get("projectId")) || null;
   const { authReady, project, setProject, approvedTools, currentUser, savedProjectId, setSavedProjectId, developerProfile, userRoles, role } = useStore();
 
   // ── Role Detection (Robust email-based recovery fallback) ──────────────────
@@ -180,7 +186,7 @@ function ProjectRoomContent() {
     projDev: project?.developerUid 
   });
 
-  const [loadingProject, setLoadingProject] = useState(!!searchParams.get("projectId"));
+  const [loadingProject, setLoadingProject] = useState(!!routeProjectId);
   const [projectLoadFailed, setProjectLoadFailed] = useState(false);
   const [loadRetry, setLoadRetry] = useState(0);
   const [activeTab, setActiveTab] = useState<Tab>("milestones");
@@ -235,15 +241,17 @@ function ProjectRoomContent() {
   // ── Project Execution state ──────────────────────────────────────────────
   const [projExec, setProjExec] = useState<ProjectExecution | null>(null);
 
-  // Filter tabs by role: developers don't see talent/deploy/audit/history
   const visibleTabs = useMemo(() => {
-    if (isCreator) return VALID_TABS;
+    if (isCreator) return VALID_TABS.filter(t => !["architecture", "deliverables"].includes(t));
+    if (isDeveloperWorkspace) {
+      return ["milestones", "architecture", "prd", "chat", "deliverables", "completion"] as Tab[];
+    }
     return VALID_TABS.filter(t => ["milestones", "chat", "prd", "completion"].includes(t));
-  }, [isCreator]);
+  }, [isCreator, isDeveloperWorkspace]);
 
   // ── Remote Project Loading (Deep Linking) ──────────────────────────────────
   useEffect(() => {
-    const pId = searchParams.get("projectId");
+    const pId = routeProjectId;
     if (!pId) {
       setLoadingProject(false);
       return;
@@ -301,7 +309,7 @@ function ProjectRoomContent() {
     loadRemote();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, project, savedProjectId, setProject, setSavedProjectId, authReady, loadRetry]);
+  }, [routeProjectId, project, savedProjectId, setProject, setSavedProjectId, authReady, loadRetry]);
 
   // Deep-link from Discovery / Architecture / hire emails (e.g. ?tab=chat&chat=…)
   useEffect(() => {
@@ -354,14 +362,14 @@ function ProjectRoomContent() {
 
   // ── Strict Tab Guard ───────────────────────────────────────────────────────
   useEffect(() => {
-    if (isDeveloper && !visibleTabs.includes(activeTab)) {
+    if ((isDeveloper || isDeveloperWorkspace) && !visibleTabs.includes(activeTab)) {
       setActiveTab("milestones");
     }
-  }, [isDeveloper, activeTab, visibleTabs]);
+  }, [isDeveloper, isDeveloperWorkspace, activeTab, visibleTabs]);
 
 
   // ── Route Guard (waits for Firebase auth before redirecting) ────────────────
-  const hasProjectIdParam = !!searchParams.get("projectId");
+  const hasProjectIdParam = !!routeProjectId;
   useEffect(() => {
     if (!authReady) return;
     if (loadingProject) return;
@@ -417,6 +425,16 @@ function ProjectRoomContent() {
       developerUid: project.developerUid || null,
     }).catch((e) => console.warn("[ProjectRoom] initProjectExecution:", e));
   }, [savedProjectId, currentUser?.uid, project?.name, project?.creatorUid, project?.developerUid, isCreator]);
+
+  useEffect(() => {
+    if (!isDeveloperWorkspace || !authReady || !currentUser?.uid || !savedProjectId || !project) return;
+    if (project.developerUid) return;
+    void claimProjectAsDeveloper(savedProjectId, currentUser.uid).then(ok => {
+      if (!ok) return;
+      const p = useStore.getState().project;
+      if (p) setProject({ ...p, developerUid: currentUser.uid });
+    });
+  }, [isDeveloperWorkspace, authReady, currentUser?.uid, savedProjectId, project?.name, project?.developerUid, setProject]);
 
   // ── Auto-update execution status when hire completes ────────────────────
   useEffect(() => {
@@ -1032,6 +1050,28 @@ function ProjectRoomContent() {
     );
   }
 
+  const devWorkspaceBlocked =
+    isDeveloperWorkspace &&
+    !!project &&
+    !!currentUser?.uid &&
+    !!project.developerUid &&
+    project.developerUid !== currentUser.uid;
+
+  if (devWorkspaceBlocked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#0a0a0a]">
+        <div className="text-center space-y-4 max-w-md px-4">
+          <Shield className="w-10 h-10 text-amber-400 mx-auto" />
+          <h2 className="text-white font-bold text-lg">Access restricted</h2>
+          <p className="text-white/40 text-sm">This workspace is assigned to another developer. Open a project from your dashboard that you were hired for.</p>
+          <button type="button" onClick={() => router.push("/employee-dashboard")} className="px-5 py-2.5 bg-white/10 border border-white/10 text-white rounded-xl text-sm font-bold hover:bg-white/20 transition-all">
+            Back to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen relative flex">
       <div className="fixed inset-0 pointer-events-none opacity-[0.03] z-50 bg-[url('/noise.svg')]" />
@@ -1072,6 +1112,13 @@ function ProjectRoomContent() {
             <span className="font-medium">Home</span>
           </Link>
 
+          {isDeveloperWorkspace && (
+            <Link href="/employee-dashboard" className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 rounded-xl transition-all text-xs group border border-transparent hover:border-indigo-500/20">
+              <Briefcase className="w-4 h-4 group-hover:text-indigo-400 transition-colors" />
+              <span className="font-medium">Developer Dashboard</span>
+            </Link>
+          )}
+
           {isCreator && (
             <>
               {/* Requirements */}
@@ -1092,10 +1139,12 @@ function ProjectRoomContent() {
           
           {/* Project Workspace tabs */}
           {([
-            { id: "milestones", label: "Project Steps",   icon: <ListOrdered className="w-5 h-5" />,  badge: inReview > 0 ? `${inReview} review` : null },
+            { id: "milestones", label: "Tasks & Milestones",   icon: <ListOrdered className="w-5 h-5" />,  badge: inReview > 0 ? `${inReview} review` : null },
             { id: "talent",     label: hiringState === "accepted" ? "Hired Developer" : hiringState === "pending" ? "Hiring Status" : "Find Developers", icon: <UserCheck className="w-5 h-5" />,    badge: hiringState === "accepted" ? "Active" : hiringState === "pending" ? "Pending" : (gate3Hired ? null : "!") },
+            { id: "architecture", label: "Architecture & Tools", icon: <Layers className="w-5 h-5" />, badge: approvedCount > 0 ? String(approvedCount) : null },
+            { id: "deliverables", label: "Files & Deliverables", icon: <Package className="w-5 h-5" />, badge: doneTasks > 0 ? `${doneTasks} done` : null },
             { id: "prd",        label: "PRD Document",    icon: <FileText className="w-5 h-5" />,     badge: prds.length > 0 ? "New" : null },
-            { id: "chat",       label: "Chat with Dev",   icon: <MessageSquare className="w-5 h-5" />, badge: activeChatId ? "Live" : null },
+            { id: "chat",       label: (isDeveloper || isDeveloperWorkspace) ? "Chat with Client" : "Chat with Dev",   icon: <MessageSquare className="w-5 h-5" />, badge: activeChatId ? "Live" : null },
             { id: "history",    label: "Hiring History",  icon: <FolderOpen className="w-5 h-5" />,   badge: hireRequests.length > 0 ? String(hireRequests.length) : null },
             { id: "completion",  label: "Completion",      icon: <Flag className="w-5 h-5" />,         badge: projExec?.status === "review" ? "Review" : projExec?.status === "completed" ? "Done" : null },
             { id: "deploy",     label: "CI/CD Deploy",    icon: <Rocket className="w-5 h-5" />,       badge: progress === 100 ? "Ready" : null },
@@ -1121,6 +1170,7 @@ function ProjectRoomContent() {
           ))}
         </nav>
 
+        {!isDeveloperWorkspace && (
         <div className="mt-4 space-y-3">
           <button onClick={() => setShowRollbackConfirm(true)}
             className="w-full flex items-center gap-2 p-3 text-[#888] hover:text-yellow-500 hover:bg-yellow-500/5 rounded-lg transition-all text-xs font-bold uppercase tracking-widest border border-transparent hover:border-yellow-500/20">
@@ -1133,17 +1183,28 @@ function ProjectRoomContent() {
             <p className="text-[10px] text-[#888] font-light">Next check-in: Monday 9:00 AM</p>
           </div>
         </div>
+        )}
       </aside>
 
       {/* ── Main Content ────────────────────────────────────────────────────── */}
       <main className="flex-grow p-10 overflow-y-auto">
         <div className="max-w-4xl space-y-10">
-          <CreatorFlowBreadcrumb />
+          {isDeveloperWorkspace ? (
+            <DeveloperFlowBreadcrumb className="rounded-2xl border border-white/10 bg-white/[0.03] mb-2" />
+          ) : (
+            <CreatorFlowBreadcrumb />
+          )}
 
           <header className="border-b border-white/10 pb-8 flex justify-between items-end flex-wrap gap-4">
             <div className="space-y-2">
-              <h1 className="text-5xl font-black tracking-tighter text-white">Project Workspace</h1>
-              <p className="text-[#888] text-lg font-light tracking-wide">Manage milestones, review submissions, and ship to production.</p>
+              <h1 className="text-5xl font-black tracking-tighter text-white">
+                {isDeveloperWorkspace ? "Developer workspace" : "Project Workspace"}
+              </h1>
+              <p className="text-[#888] text-lg font-light tracking-wide">
+                {isDeveloperWorkspace
+                  ? "PRD, milestones, chat, and completion — synced in real time with your client."
+                  : "Manage milestones, review submissions, and ship to production."}
+              </p>
             </div>
             <div className="flex gap-2 text-xs font-bold uppercase tracking-widest flex-wrap">
               <span className="px-3 py-1.5 rounded-md border border-white/10 bg-black text-[#888]">{userRole === "creator" ? "Employer" : "Developer"}</span>
@@ -2155,6 +2216,63 @@ function ProjectRoomContent() {
                       ))}
                   </div>
                 )}
+              </motion.section>
+            )}
+
+            {/* ── ARCHITECTURE & TOOLS (developer workspace) ───────────── */}
+            {activeTab === "architecture" && isDeveloperWorkspace && (
+              <motion.section key="architecture" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
+                <h2 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50">Architecture &amp; approved tools</h2>
+                <p className="text-sm text-white/50 font-light">
+                  Same plan as the client&apos;s project. Open the full architecture board to review assumptions, stack, and tooling.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => router.push("/architecture")}
+                  className="px-5 py-3 rounded-xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-200 text-xs font-black uppercase tracking-widest hover:bg-indigo-500/30 transition-all"
+                >
+                  Open architecture
+                </button>
+                <div className="glass-panel rounded-2xl border border-white/10 p-5 space-y-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Approved tools ({approvedCount})</p>
+                  <ul className="text-sm text-white/70 space-y-1">
+                    {Object.entries(approvedTools).filter(([, v]) => v).map(([k]) => (
+                      <li key={k} className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />{k}</li>
+                    ))}
+                    {approvedCount === 0 && <li className="text-white/35 text-xs">No tools flagged yet — check with the client in chat.</li>}
+                  </ul>
+                </div>
+              </motion.section>
+            )}
+
+            {/* ── FILES & DELIVERABLES (developer workspace) ────────────── */}
+            {activeTab === "deliverables" && isDeveloperWorkspace && (
+              <motion.section key="deliverables" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
+                <h2 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50">Files &amp; deliverables</h2>
+                <p className="text-sm text-white/50 font-light">
+                  Track work in <strong className="text-white/70">Tasks &amp; Milestones</strong> — submit tasks for review; approved items count as delivered. Use <strong className="text-white/70">Chat with Client</strong> for file links and handoffs.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="glass-panel p-4 rounded-2xl border border-white/10">
+                    <p className="text-[9px] text-white/40 uppercase font-bold tracking-widest mb-1">Approved tasks</p>
+                    <p className="text-2xl font-black text-emerald-400">{doneTasks}</p>
+                  </div>
+                  <div className="glass-panel p-4 rounded-2xl border border-white/10">
+                    <p className="text-[9px] text-white/40 uppercase font-bold tracking-widest mb-1">In review</p>
+                    <p className="text-2xl font-black text-purple-400">{inReview}</p>
+                  </div>
+                  <div className="glass-panel p-4 rounded-2xl border border-white/10">
+                    <p className="text-[9px] text-white/40 uppercase font-bold tracking-widest mb-1">Total tasks</p>
+                    <p className="text-2xl font-black text-white">{allTasks.length}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("milestones")}
+                  className="text-xs font-black uppercase tracking-widest text-indigo-300 hover:text-indigo-200 border border-indigo-500/30 px-4 py-2 rounded-xl"
+                >
+                  Go to milestones
+                </button>
               </motion.section>
             )}
 

@@ -4,11 +4,11 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ShieldCheck, User, Star, Activity, AlertTriangle, Briefcase,
-  FileText, CheckCircle2, Zap, Award, ChevronRight, Clock,
-  TrendingUp, Shield, Lock, Edit3, BarChart2, MessageSquare,
-  Play, Send, Loader2, Code2, CheckCircle, XCircle, ChevronDown,
-  Terminal, GitBranch, Layers, RotateCcw, Eye, Copy, Check, LogOut,
-  ArrowRight, Sparkles, Flag, AlertCircle, Info,
+  FileText, CheckCircle2, Award, Clock,
+  Shield, Lock, Edit3, BarChart2,
+  Play, Loader2, Code2, LogOut,
+  ArrowRight, Sparkles, Flag, AlertCircle,
+  GitBranch, RotateCcw,
 } from "lucide-react";
 import { useStore } from "@/store/useStore";
 import { logAction } from "@/lib/auditLog";
@@ -21,130 +21,14 @@ import {
 } from "@/lib/developerProfile";
 import { type MatchedProject } from "@/app/api/match-projects/route";
 import Link from "next/link";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { signOutUser } from "@/lib/auth";
-import { auth } from "@/lib/firebase";
 import { getHireRequestsByDeveloper, type HireRequest } from "@/lib/hireRequests";
 import { getProject, claimProjectAsDeveloper } from "@/lib/firestore";
-import { getPRDsByUser, type PRDDocument } from "@/lib/prd";
-import {
-  createOrGetChat,
-  sendChatMessage,
-  subscribeToChatMessages,
-  subscribeToChatRoom,
-  chatStorageKey,
-  classifyChatBubble,
-  updateChatPresence,
-  maybeSetOfflinePingForPartner,
-  clearOfflinePing,
-  type ChatMessage as FireChatMsg,
-  type ChatRoom,
-} from "@/lib/chat";
-import { useFirebaseUid } from "@/hooks/useFirebaseUid";
 import { DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Tab = "projects" | "workspace" | "assessments" | "profile" | "prd" | "chat";
-type TaskStatus = "todo" | "in-progress" | "validating" | "review" | "approved" | "rejected";
-
-interface Task {
-  id: string;
-  title: string;
-  description: string;
-  type: "frontend" | "backend" | "database" | "auth" | "devops" | "testing";
-  estimatedHours: number;
-  priority: "high" | "medium" | "low";
-  aiPrompt: string;
-  status: TaskStatus;
-  submission: string;
-  validationResult: ValidationResult | null;
-  version: number;
-  submittedAt?: string;
-}
-
-interface Milestone {
-  id: string;
-  phase: string;
-  title: string;
-  description: string;
-  estimatedDays: number;
-  color: string;
-  tasks: Task[];
-}
-
-interface ValidationResult {
-  passed: boolean;
-  score: number;
-  summary: string;
-  checks: { label: string; passed: boolean; note: string }[];
-  issues: string[];
-  suggestions: string[];
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-const TYPE_ICON: Record<Task["type"], React.ReactNode> = {
-  frontend: <Layers className="w-3.5 h-3.5" />,
-  backend:  <Terminal className="w-3.5 h-3.5" />,
-  database: <GitBranch className="w-3.5 h-3.5" />,
-  auth:     <Shield className="w-3.5 h-3.5" />,
-  devops:   <Zap className="w-3.5 h-3.5" />,
-  testing:  <CheckCircle2 className="w-3.5 h-3.5" />,
-};
-
-const TYPE_COLOR: Record<Task["type"], string> = {
-  frontend: "text-blue-400 bg-blue-500/10 border-blue-500/20",
-  backend:  "text-purple-400 bg-purple-500/10 border-purple-500/20",
-  database: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
-  auth:     "text-red-400 bg-red-500/10 border-red-500/20",
-  devops:   "text-yellow-400 bg-yellow-500/10 border-yellow-500/20",
-  testing:  "text-cyan-400 bg-cyan-500/10 border-cyan-500/20",
-};
-
-const STATUS_CONFIG: Record<TaskStatus, { label: string; color: string; bg: string }> = {
-  "todo":        { label: "To Do",      color: "text-white/40",    bg: "bg-white/5 border-white/10" },
-  "in-progress": { label: "In Progress",color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/30" },
-  "validating":  { label: "Validating", color: "text-yellow-400",  bg: "bg-yellow-500/10 border-yellow-500/30" },
-  "review":      { label: "In Review",  color: "text-purple-400",  bg: "bg-purple-500/10 border-purple-500/30" },
-  "approved":    { label: "Approved",   color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30" },
-  "rejected":    { label: "Rejected",   color: "text-red-400",     bg: "bg-red-500/10 border-red-500/30" },
-};
-
-const PRIORITY_COLOR = { high: "text-red-400", medium: "text-yellow-400", low: "text-white/40" };
-
-const MILESTONES_FALLBACK: Milestone[] = [
-  {
-    id: "m1", phase: "Phase 1", title: "Foundation & Setup", description: "Project scaffolding, auth, and database schema.", estimatedDays: 7, color: "blue",
-    tasks: [
-      { id: "t1", title: "Initialize Next.js project", description: "Set up Next.js 14+ with TypeScript, Tailwind CSS, and all required dependencies.", type: "devops", estimatedHours: 3, priority: "high", aiPrompt: "You are building the project foundation. Initialize a Next.js 14 App Router project with TypeScript strict mode, Tailwind CSS v3, and ESLint. Create the folder structure: src/app, src/components, src/lib, src/hooks, src/types, src/store. Set up environment variables in .env.local.example with all required keys. Configure tailwind.config.ts with a dark theme (bg: #09090b, accent: indigo-500). Return all config files ready to copy-paste.", status: "todo", submission: "", validationResult: null, version: 1 },
-      { id: "t2", title: "Database schema & migrations", description: "Design and create all database tables with RLS policies.", type: "database", estimatedHours: 5, priority: "high", aiPrompt: "You are building the database schema. Write SQL CREATE TABLE statements for all entities with UUID primary keys, created_at/updated_at timestamps, and proper foreign keys. Enable Row Level Security on every table. Write CREATE POLICY statements so users only see their own data. Add indexes on frequently queried columns. Include a trigger to auto-update updated_at.", status: "todo", submission: "", validationResult: null, version: 1 },
-      { id: "t3", title: "Authentication flow", description: "Implement sign-up, sign-in, OAuth, and session management.", type: "auth", estimatedHours: 6, priority: "high", aiPrompt: "You are building the authentication system. Implement email+password sign-up and sign-in using Supabase Auth. Add Google OAuth. Create src/middleware.ts to protect routes. Build app/(auth)/sign-in/page.tsx and sign-up/page.tsx with full form validation, error handling, and loading states. After successful auth, create a user profile record in the users table.", status: "todo", submission: "", validationResult: null, version: 1 },
-    ],
-  },
-  {
-    id: "m2", phase: "Phase 2", title: "Core Features", description: "Main application features and API routes.", estimatedDays: 14, color: "purple",
-    tasks: [
-      { id: "t4", title: "Build primary API routes", description: "Create all CRUD API routes with Zod validation and error handling.", type: "backend", estimatedHours: 8, priority: "high", aiPrompt: "You are building the API layer. Create Next.js App Router API routes for all main entities. Each route file handles GET (list with pagination), POST (create with Zod validation), GET by ID, PATCH (update), and DELETE (soft delete). Include proper HTTP status codes, error responses, and auth checks using Supabase server client.", status: "todo", submission: "", validationResult: null, version: 1 },
-      { id: "t5", title: "Dashboard UI components", description: "Build the main dashboard layout with stats, tables, and navigation.", type: "frontend", estimatedHours: 10, priority: "high", aiPrompt: "You are building the main dashboard. Create a responsive dashboard page at app/dashboard/page.tsx with: a collapsible sidebar with navigation links and user avatar, a top stats bar with 4 KPI cards showing animated numbers, a data table with sorting and pagination, and a recent activity feed. Use Tailwind CSS dark theme (bg-[#09090b]) with glass morphism panels. Add skeleton loading states.", status: "todo", submission: "", validationResult: null, version: 1 },
-      { id: "t6", title: "State management & data fetching", description: "Set up Zustand global state and TanStack Query for server state.", type: "frontend", estimatedHours: 5, priority: "medium", aiPrompt: "You are building the state management layer. Set up Zustand stores in src/store/ for each main feature with typed state and actions. Configure TanStack Query in app/providers.tsx with staleTime and retry settings. Create custom hooks in src/hooks/ for each entity that combine useQuery/useMutation with optimistic updates. Add proper cache invalidation after mutations.", status: "todo", submission: "", validationResult: null, version: 1 },
-    ],
-  },
-  {
-    id: "m3", phase: "Phase 3", title: "UI/UX Polish", description: "Animations, responsiveness, accessibility, and performance.", estimatedDays: 7, color: "emerald",
-    tasks: [
-      { id: "t7", title: "Responsive design & mobile", description: "Ensure all pages work perfectly on mobile, tablet, and desktop.", type: "frontend", estimatedHours: 6, priority: "medium", aiPrompt: "You are fixing responsive design. Audit every page for mobile issues. Fix: navigation (hamburger menu on mobile), grid layouts (stack vertically on <640px), data tables (horizontal scroll on mobile), modals (full-screen on mobile), sidebar (drawer/overlay on mobile). Test all breakpoints: 320px, 768px, 1024px, 1280px.", status: "todo", submission: "", validationResult: null, version: 1 },
-      { id: "t8", title: "Animations & transitions", description: "Add Framer Motion animations for page transitions and interactions.", type: "frontend", estimatedHours: 4, priority: "low", aiPrompt: "You are adding animations using Framer Motion. Add: page transitions (fade+slide on route change), list animations (stagger children with 50ms delay), modal animations (scale+fade with AnimatePresence), button press feedback (scale 0.97), card hover (translateY -2px + shadow). Create reusable animation variants in src/lib/animations.ts.", status: "todo", submission: "", validationResult: null, version: 1 },
-      { id: "t9", title: "Performance & SEO optimization", description: "Image optimization, code splitting, and meta tags.", type: "devops", estimatedHours: 4, priority: "medium", aiPrompt: "You are optimizing performance. Use next/image for all images with explicit width/height. Add dynamic imports for heavy components. Add loading.tsx and error.tsx for all route segments. Generate metadata in layout.tsx for SEO. Add Open Graph meta tags. Run next build and fix any warnings. Target: 90+ Lighthouse score.", status: "todo", submission: "", validationResult: null, version: 1 },
-    ],
-  },
-  {
-    id: "m4", phase: "Phase 4", title: "Testing & Deployment", description: "Tests, CI/CD pipeline, and production launch.", estimatedDays: 7, color: "orange",
-    tasks: [
-      { id: "t10", title: "Unit & integration tests", description: "Write tests for utilities, API routes, and key components.", type: "testing", estimatedHours: 8, priority: "high", aiPrompt: "You are writing tests. Set up Vitest with React Testing Library. Write unit tests for all utility functions in src/lib/. Write integration tests for all API routes using mock Supabase client. Write component tests for all forms (submit, validation, error states). Achieve >80% code coverage. Run: npm test --coverage.", status: "todo", submission: "", validationResult: null, version: 1 },
-      { id: "t11", title: "CI/CD pipeline setup", description: "Configure GitHub Actions for automated testing and deployment.", type: "devops", estimatedHours: 4, priority: "medium", aiPrompt: "You are setting up CI/CD. Create .github/workflows/ci.yml that runs on every PR: installs dependencies, runs TypeScript check, runs ESLint, runs tests with coverage. Create .github/workflows/deploy.yml that runs on merge to main: builds the app, deploys to Vercel using VERCEL_TOKEN. Add branch protection rules.", status: "todo", submission: "", validationResult: null, version: 1 },
-      { id: "t12", title: "Production deployment & monitoring", description: "Deploy to Vercel, configure environment, set up error monitoring.", type: "devops", estimatedHours: 3, priority: "high", aiPrompt: "You are deploying to production. Configure Vercel project: add all environment variables, set up custom domain, enable Edge Config. Set up Sentry for error monitoring: install @sentry/nextjs, configure sentry.client.config.ts and sentry.server.config.ts, add SENTRY_DSN to env. Configure Vercel Analytics. Test all features on production URL before marking complete.", status: "todo", submission: "", validationResult: null, version: 1 },
-    ],
-  },
-];
+type Tab = "projects" | "workspace" | "assessments" | "profile";
 
 // ── Role label map ────────────────────────────────────────────────────────────
 const ROLE_LABEL: Record<string, string> = {
@@ -333,39 +217,21 @@ const SKILL_ASSESSMENT_CATALOG: SkillAssessmentCatalogEntry[] = [
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function EmployeeDashboard() {
   const router = useRouter();
-  const pathname = usePathname();
   const { project, currentUser, developerProfile, setDeveloperProfile, patchDeveloperProfile, reset, addUserRole, userRoles, setRole, setProject, setSavedProjectId } = useStore();
 
-  // ── PRD + Chat state ────────────────────────────────────────────────────────
-  const [prds,         setPrds]        = useState<PRDDocument[]>([]);
-  const [prdLoading,   setPrdLoading]  = useState(false);
   const [hireReqs,     setHireReqs]    = useState<HireRequest[]>([]);
-  const [activeChatId, setActiveChatId] = useState<string | null>(null);
-  const [fireMsgs,     setFireMsgs]    = useState<FireChatMsg[]>([]);
-  const [chatRoom,     setChatRoom]    = useState<ChatRoom | null>(null);
-  const [chatText,     setChatText]    = useState("");
-  const [chatSending,  setChatSending] = useState(false);
-  const [chatSubError, setChatSubError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("projects");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const t = new URLSearchParams(window.location.search).get("tab") as Tab | null;
-    const allowed: Tab[] = ["projects", "workspace", "assessments", "profile", "prd", "chat"];
+    const allowed: Tab[] = ["projects", "workspace", "assessments", "profile"];
     if (t && allowed.includes(t)) setActiveTab(t);
   }, []);
-  const [milestones, setMilestones] = useState<Milestone[]>(MILESTONES_FALLBACK);
-  const [generatingMilestones, setGeneratingMilestones] = useState(false);
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [activeMilestoneId, setActiveMilestoneId] = useState("m1");
-  const [submission, setSubmission] = useState("");
-  const [validating, setValidating] = useState(false);
-  const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [startedAssessment, setStartedAssessment] = useState<string | null>(null);
   const [quizAnswers, setQuizAnswers] = useState<Record<string, number[]>>({});
   const [assessmentSubmitting, setAssessmentSubmitting] = useState(false);
   const [assessmentFeedback, setAssessmentFeedback] = useState<string | null>(null);
-  const submissionRef = useRef<HTMLTextAreaElement>(null);
 
   const [matchedProjects, setMatchedProjects]   = useState<MatchedProject[]>([]);
   const [matchLoading, setMatchLoading]         = useState(false);
@@ -374,8 +240,6 @@ export default function EmployeeDashboard() {
   const [respondLoading,   setRespondLoading]    = useState<string | null>(null);
   const [respondError,     setRespondError]      = useState<string | null>(null);
 
-  const projectName = project?.name ?? "My Project";
-  const chatViewerUid = useFirebaseUid(currentUser?.uid);
   const userName = developerProfile?.fullName || currentUser?.displayName || "Developer";
   const userSkills = developerProfile?.skills ?? [];
   const passedAssessmentSet = useMemo(
@@ -401,11 +265,6 @@ export default function EmployeeDashboard() {
     [derivedSkillAssessments],
   );
 
-  const acceptedHireTokens = useMemo(
-    () => new Set(hireReqs.filter(r => r.status === "accepted").map(r => r.token)),
-    [hireReqs],
-  );
-
   const pendingInvitations = useMemo(
     () => hireReqs.filter(r => r.status === "pending"),
     [hireReqs]
@@ -416,25 +275,9 @@ export default function EmployeeDashboard() {
     [hireReqs]
   );
 
-  const sortedPrds = useMemo(() => {
-    const copy = [...prds];
-    copy.sort((a, b) => {
-      const pa = acceptedHireTokens.has(a.hireToken) ? 1 : 0;
-      const pb = acceptedHireTokens.has(b.hireToken) ? 1 : 0;
-      if (pb !== pa) return pb - pa;
-      return (b.projectName || "").localeCompare(a.projectName || "");
-    });
-    return copy;
-  }, [prds, acceptedHireTokens]);
-
-  const prdForActiveChat = useMemo(
-    () => prds.find(p => p.hireToken === activeChatId) ?? null,
-    [prds, activeChatId],
-  );
-
-  const chatBubbleRows = useMemo(
-    () => fireMsgs.map(msg => ({ msg, ...classifyChatBubble(msg, chatViewerUid, chatRoom) })),
-    [fireMsgs, chatViewerUid, chatRoom],
+  const closedHireCount = useMemo(
+    () => hireReqs.filter(r => r.status === "rejected" || r.status === "expired").length,
+    [hireReqs],
   );
 
   const needsProfileAfterSkillPass = useMemo(() => {
@@ -555,135 +398,6 @@ export default function EmployeeDashboard() {
     }
   }, [activeTab]);
 
-  // ── Load PRDs + hire requests when PRD tab opens ────────────────────────────
-  useEffect(() => {
-    if (activeTab !== "prd" || !currentUser) return;
-    setPrdLoading(true);
-    Promise.all([
-      getPRDsByUser(currentUser.uid),
-      getHireRequestsByDeveloper(currentUser.uid),
-    ])
-      .then(([docs, reqs]) => {
-        setPrds(docs);
-        setHireReqs(reqs);
-      })
-      .catch(() => {})
-      .finally(() => setPrdLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, currentUser?.uid]);
-
-  // ── Chat tab: hire threads + PRDs for this hire (banner + PRD tab ordering) ─
-  useEffect(() => {
-    if (activeTab !== "chat" || !currentUser) return;
-    let cancelled = false;
-    const fromUrl =
-      typeof window !== "undefined"
-        ? new URLSearchParams(window.location.search).get("chat")
-        : null;
-    Promise.all([getHireRequestsByDeveloper(currentUser.uid), getPRDsByUser(currentUser.uid)])
-      .then(([reqs, docs]) => {
-        if (cancelled) return;
-        setHireReqs(reqs);
-        setPrds(docs);
-        const accepted = reqs.filter(r => r.status === "accepted");
-        if (!accepted.length) {
-          setActiveChatId(null);
-          return;
-        }
-        let stored: string | null = null;
-        try {
-          stored = sessionStorage.getItem(chatStorageKey("developer", currentUser.uid));
-        } catch {
-          /* */
-        }
-        const urlOk = fromUrl && accepted.some(r => r.token === fromUrl) ? fromUrl : null;
-        const storeOk = stored && accepted.some(r => r.token === stored) ? stored : null;
-        const sorted = [...accepted].sort(
-          (a, b) => (b.respondedAt?.toMillis?.() ?? 0) - (a.respondedAt?.toMillis?.() ?? 0),
-        );
-        const fallback = sorted[0]?.token ?? null;
-        const next = urlOk || storeOk || fallback;
-        setActiveChatId(prev => (prev && accepted.some(r => r.token === prev) ? prev : next));
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, currentUser?.uid]);
-
-  // ── Ensure chat room doc exists (signed-in developer can create per rules) ──
-  useEffect(() => {
-    if (activeTab !== "chat" || !currentUser?.uid || !activeChatId) return;
-    const req = hireReqs.find(r => r.token === activeChatId && r.status === "accepted");
-    if (!req) return;
-    createOrGetChat({
-      chatId:         activeChatId,
-      projectName:    req.projectName,
-      creatorUid:     req.creatorUid,
-      creatorName:    req.creatorName,
-      creatorEmail:   req.creatorEmail,
-      developerUid:   req.developerUid,
-      developerName:  req.developerName,
-      developerEmail: req.developerEmail,
-    }).catch(() => {});
-  }, [activeTab, currentUser?.uid, activeChatId, hireReqs]);
-
-  useEffect(() => {
-    if (!activeChatId) {
-      setFireMsgs([]);
-      setChatRoom(null);
-      return;
-    }
-    setChatSubError(null);
-    const unMsg = subscribeToChatMessages(
-      activeChatId,
-      msgs => setFireMsgs(msgs),
-      err => setChatSubError(err),
-    );
-    const unRoom = subscribeToChatRoom(
-      activeChatId,
-      setChatRoom,
-      err => setChatSubError(prev => prev ?? err),
-    );
-    return () => {
-      unMsg();
-      unRoom();
-    };
-  }, [activeChatId]);
-
-  // ── Persist developer’s active chat in URL + sessionStorage ─────────────────
-  useEffect(() => {
-    if (!currentUser?.uid || !activeChatId || activeTab !== "chat") return;
-    try {
-      sessionStorage.setItem(chatStorageKey("developer", currentUser.uid), activeChatId);
-    } catch {
-      /* */
-    }
-    const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
-    if (params.get("chat") === activeChatId && params.get("tab") === "chat") return;
-    params.set("tab", "chat");
-    params.set("chat", activeChatId);
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [activeChatId, activeTab, currentUser?.uid, pathname, router]);
-
-  useEffect(() => {
-    if (activeTab !== "chat" || !activeChatId || !currentUser?.uid) return;
-    const uid = currentUser.uid;
-    const tick = () => {
-      void updateChatPresence(activeChatId, uid);
-    };
-    tick();
-    const id = setInterval(tick, 45_000);
-    const onVis = () => {
-      if (document.visibilityState === "visible") tick();
-    };
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [activeTab, activeChatId, currentUser?.uid]);
-
   // ── Fetch AI-matched project opportunities ────────────────────────────────
   useEffect(() => {
     if (activeTab !== "projects") return;
@@ -723,122 +437,6 @@ export default function EmployeeDashboard() {
     }
   }
 
-  // ── Generate AI milestones on workspace open ──────────────────────────────
-  async function generateMilestones() {
-    if (!project) return;
-    setGeneratingMilestones(true);
-    try {
-      const res = await fetch("/api/generate-milestones", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectName: project.name, projectIdea: project.idea }),
-      });
-      const { ok, data } = await parseJsonResponse(res);
-      const rawMilestones = data.milestones;
-      if (ok && Array.isArray(rawMilestones) && rawMilestones.length) {
-        const withState = rawMilestones.map((m: Milestone) => ({
-          ...m,
-          tasks: m.tasks.map((t: Task) => ({ ...t, status: "todo" as TaskStatus, submission: "", validationResult: null, version: 1 })),
-        }));
-        setMilestones(withState);
-        if (currentUser) logAction(currentUser.uid, "analysis.generated", { type: "milestones", project: project.name });
-      }
-    } catch { /* use fallback */ }
-    finally { setGeneratingMilestones(false); }
-  }
-
-  // Open workspace and generate milestones
-  function openWorkspace() {
-    setActiveTab("workspace");
-    generateMilestones();
-  }
-
-  // ── Task actions ──────────────────────────────────────────────────────────
-  function updateTaskStatus(milestoneId: string, taskId: string, status: TaskStatus) {
-    setMilestones(prev => prev.map(m => m.id !== milestoneId ? m : {
-      ...m,
-      tasks: m.tasks.map(t => t.id !== taskId ? t : { ...t, status }),
-    }));
-    if (selectedTask?.id === taskId) setSelectedTask(prev => prev ? { ...prev, status } : null);
-  }
-
-  function updateTaskSubmission(milestoneId: string, taskId: string, sub: string, result: ValidationResult | null) {
-    setMilestones(prev => prev.map(m => m.id !== milestoneId ? m : {
-      ...m,
-      tasks: m.tasks.map(t => t.id !== taskId ? t : { ...t, submission: sub, validationResult: result, submittedAt: new Date().toLocaleTimeString() }),
-    }));
-  }
-
-  // ── Validate submission ───────────────────────────────────────────────────
-  async function handleValidate() {
-    if (!selectedTask || !submission.trim()) return;
-    setValidating(true);
-
-    const milestoneId = milestones.find(m => m.tasks.some(t => t.id === selectedTask.id))?.id ?? "";
-    updateTaskStatus(milestoneId, selectedTask.id, "validating");
-
-    try {
-      const res = await fetch("/api/validate-submission", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskTitle: selectedTask.title, taskDescription: selectedTask.description, submission }),
-      });
-      const { ok, data } = await parseJsonResponse(res);
-      if (!ok || typeof data.passed !== "boolean") {
-        updateTaskStatus(milestoneId, selectedTask.id, "in-progress");
-        return;
-      }
-      const result = data as unknown as ValidationResult;
-      updateTaskSubmission(milestoneId, selectedTask.id, submission, result);
-      const nextStatus: TaskStatus = result.passed ? "review" : "rejected";
-      updateTaskStatus(milestoneId, selectedTask.id, nextStatus);
-      setSelectedTask(prev => prev ? { ...prev, status: nextStatus, submission, validationResult: result } : null);
-      if (currentUser) logAction(currentUser.uid, "code.generated", { task: selectedTask.title, passed: result.passed, score: result.score });
-    } catch {
-      updateTaskStatus(milestoneId, selectedTask.id, "in-progress");
-    } finally {
-      setValidating(false);
-    }
-  }
-
-  function handleStartTask(task: Task) {
-    const milestoneId = milestones.find(m => m.tasks.some(t => t.id === task.id))?.id ?? "";
-    if (task.status === "todo") updateTaskStatus(milestoneId, task.id, "in-progress");
-    setSelectedTask({ ...task, status: task.status === "todo" ? "in-progress" : task.status });
-    setSubmission(task.submission);
-    setActiveTab("workspace");
-    setTimeout(() => submissionRef.current?.focus(), 300);
-  }
-
-  function copyPrompt() {
-    if (!selectedTask) return;
-    navigator.clipboard.writeText(selectedTask.aiPrompt);
-    setCopiedPrompt(true);
-    setTimeout(() => setCopiedPrompt(false), 2000);
-  }
-
-  async function sendFireMessage() {
-    if (!chatText.trim() || !activeChatId || !currentUser) return;
-    setChatSending(true);
-    const text = chatText.trim();
-    setChatText("");
-    setChatSubError(null);
-    try {
-      const uid = (auth.currentUser?.uid ?? currentUser.uid).trim();
-      if (!uid) throw new Error("Not signed in");
-      await sendChatMessage(activeChatId, {
-        text,
-        senderUid:  uid,
-        senderName: developerProfile?.fullName ?? currentUser.displayName ?? "Developer",
-      });
-      await maybeSetOfflinePingForPartner(activeChatId, uid);
-    } catch (e) {
-      setChatSubError(e instanceof Error ? e.message : "Failed to send message");
-    } finally {
-      setChatSending(false);
-    }
-  }
-
   async function handleRespond(token: string, action: "accept" | "reject") {
     if (!currentUser) return;
     setRespondLoading(token);
@@ -859,21 +457,10 @@ export default function EmployeeDashboard() {
         const pid = String(data?.projectId || targetReq?.projectId || "");
 
         if (pid) {
-          await claimProjectAsDeveloper(pid, currentUser.uid).catch(() => {});
-
-          const saved = await getProject(pid).catch(() => null);
-          if (saved) {
-            setProject({
-              ...saved.project,
-              creatorUid: saved.project.creatorUid || saved.uid,
-              creatorEmail: saved.project.creatorEmail || saved.email,
-              developerUid: currentUser.uid,
-            });
-            setSavedProjectId(pid);
-          }
+          await openDeveloperWorkspace(pid);
+        } else {
+          router.push("/employee-dashboard?tab=workspace");
         }
-
-        router.push(pid ? `/project-room?projectId=${pid}&tab=milestones` : `/project-room?tab=milestones`);
       } else {
         // Refetch to clear the rejected one
         const updated = await getHireRequestsByDeveloper(currentUser.uid);
@@ -886,6 +473,23 @@ export default function EmployeeDashboard() {
     }
   }
 
+  async function openDeveloperWorkspace(projectId: string | null | undefined) {
+    const pid = String(projectId || "").trim();
+    if (!pid || !currentUser?.uid) return;
+    await claimProjectAsDeveloper(pid, currentUser.uid).catch(() => {});
+    const saved = await getProject(pid).catch(() => null);
+    if (saved) {
+      setProject({
+        ...saved.project,
+        creatorUid: saved.project.creatorUid || saved.uid,
+        creatorEmail: saved.project.creatorEmail || saved.email,
+        developerUid: currentUser.uid,
+      });
+      setSavedProjectId(pid);
+    }
+    router.push(`/developer/workspace/${encodeURIComponent(pid)}`);
+  }
+
   async function handleLogout() {
     try {
       await signOutUser();
@@ -896,21 +500,6 @@ export default function EmployeeDashboard() {
       router.push("/");
     }
   }
-
-  // ── Derived stats ──────────────────────────────────────────────────────────
-  const allTasks = (milestones || []).flatMap(m => m.tasks || []);
-  const doneTasks = allTasks.filter(t => t?.status === "approved").length;
-  const inProgress = allTasks.filter(t => t?.status === "in-progress" || t?.status === "validating").length;
-  const inReview = allTasks.filter(t => t?.status === "review").length;
-  const progress = allTasks.length ? Math.round((doneTasks / allTasks.length) * 100) : 0;
-
-  const activeMilestone = (milestones || []).find(m => m.id === activeMilestoneId) ?? (milestones?.[0] || null);
-  const COLOR_MAP: Record<string, string> = {
-    blue: "text-blue-400 bg-blue-500/10 border-blue-500/20",
-    purple: "text-purple-400 bg-purple-500/10 border-purple-500/20",
-    emerald: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
-    orange: "text-orange-400 bg-orange-500/10 border-orange-500/20",
-  };
 
   return (
     <div className="min-h-screen relative flex">
@@ -985,13 +574,13 @@ export default function EmployeeDashboard() {
           );
         })()}
 
-        {/* Live stats */}
+        {/* Live stats — dashboard overview only (per-project work lives in each workspace) */}
         <div className="grid grid-cols-2 gap-2 mb-5">
           {[
-            { label: "Done", value: `${doneTasks}/${allTasks.length}`, icon: <CheckCircle2 className="w-3 h-3" />, color: "text-emerald-400" },
-            { label: "Active", value: String(inProgress), icon: <Activity className="w-3 h-3" />, color: "text-blue-400" },
-            { label: "Review", value: String(inReview), icon: <Eye className="w-3 h-3" />, color: "text-purple-400" },
-            { label: "Progress", value: `${progress}%`, icon: <TrendingUp className="w-3 h-3" />, color: "text-yellow-400" },
+            { label: "Pending invites", value: String(pendingInvitations.length), icon: <Star className="w-3 h-3" />, color: "text-yellow-400" },
+            { label: "Active projects", value: String(activeAssignments.length), icon: <Briefcase className="w-3 h-3" />, color: "text-blue-400" },
+            { label: "Closed", value: String(closedHireCount), icon: <Flag className="w-3 h-3" />, color: "text-white/40" },
+            { label: "Skill tests", value: String(openSkillTestCount), icon: <Activity className="w-3 h-3" />, color: "text-indigo-400" },
           ].map(s => (
             <div key={s.label} className="p-3 bg-white/5 rounded-xl text-center border border-white/5">
               <div className={`flex items-center justify-center gap-1 mb-1 ${s.color}`}>{s.icon}</div>
@@ -1005,8 +594,6 @@ export default function EmployeeDashboard() {
           {([
             { id: "projects",    label: "Opportunities",  icon: <Briefcase className="w-5 h-5" />, badge: pendingInvitations.length > 0 ? String(pendingInvitations.length) : null },
             { id: "workspace",   label: "Workspaces",     icon: <Code2 className="w-5 h-5" />, badge: activeAssignments.length > 0 ? String(activeAssignments.length) : null },
-            { id: "prd",         label: "PRD Document",   icon: <FileText className="w-5 h-5" />, badge: prds.length > 0 ? "New" : null },
-            { id: "chat",        label: "Chat with Client", icon: <MessageSquare className="w-5 h-5" />, badge: activeChatId ? "Live" : null },
             { id: "assessments", label: "Skill Tests",    icon: <Activity className="w-5 h-5" />, badge: openSkillTestCount > 0 ? String(openSkillTestCount) : null },
             { id: "profile",     label: "My Profile",     icon: <User className="w-5 h-5" /> },
           ] as const).map(tab => (
@@ -1036,7 +623,10 @@ export default function EmployeeDashboard() {
               <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${developerProfile?.profileStatus === "active" ? "bg-emerald-500" : "bg-white/30"}`} />
               {developerProfile?.profileStatus === "active" ? "Available for Projects" : "Status: Inactive"}
             </div>
-            <p className="text-[10px] text-[#888] font-light">{projectName} · {progress}% complete</p>
+            <p className="text-[10px] text-[#888] font-light">
+              {activeAssignments.length} active project{activeAssignments.length === 1 ? "" : "s"}
+              {pendingInvitations.length > 0 ? ` · ${pendingInvitations.length} invite${pendingInvitations.length === 1 ? "" : "s"} pending` : ""}
+            </p>
           </div>
           {(developerProfile?.payMin ?? 0) > 0 && (
             <div className="p-3 bg-white/5 border border-white/10 rounded-xl flex items-center justify-between">
@@ -1057,25 +647,17 @@ export default function EmployeeDashboard() {
               <div>
                 <h1 className="text-5xl font-black tracking-tighter text-white">
                   {activeTab === "projects" ? "Project Opportunities"
-                   : activeTab === "workspace" ? ""
+                   : activeTab === "workspace" ? "Workspaces"
                    : activeTab === "assessments" ? "Skill Assessments"
                    : "My Profile"}
                 </h1>
                 <p className="text-[#888] text-lg font-light tracking-wide mt-1">
-                  {activeTab === "projects" ? "Projects matched to your verified skills."
-                   : activeTab === "workspace" ? `${projectName} — execution pipeline with AI-validated tasks.`
+                  {activeTab === "projects" ? "Invitations, your active client projects, and AI-matched opportunities."
+                   : activeTab === "workspace" ? "Open a dedicated room per project — PRD, chat, milestones, and files stay scoped to that client."
                    : activeTab === "assessments" ? "Tests unlock from your profile skills. Finish your full profile after passing to activate Tier 2 verification."
                    : "Your verified developer profile."}
                 </p>
               </div>
-              {activeTab === "workspace" && (
-                <div className="flex items-center gap-3">
-                  <div className="h-2 w-40 bg-white/10 rounded-full overflow-hidden">
-                    <div className="h-full bg-emerald-500 rounded-full transition-all duration-700" style={{ width: `${progress}%` }} />
-                  </div>
-                  <span className="text-emerald-400 font-bold text-sm">{progress}%</span>
-                </div>
-              )}
             </div>
           </header>
 
@@ -1146,25 +728,7 @@ export default function EmployeeDashboard() {
                     </h2>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {activeAssignments?.map((assignment) => {
-                        const wsUrl = assignment.projectId
-                          ? `/project-room?projectId=${assignment.projectId}&tab=milestones`
-                          : `/project-room?tab=milestones`;
-                        const enterWorkspace = async () => {
-                          if (assignment.projectId && currentUser?.uid) {
-                            await claimProjectAsDeveloper(assignment.projectId, currentUser.uid).catch(() => {});
-                            const saved = await getProject(assignment.projectId).catch(() => null);
-                            if (saved) {
-                              setProject({
-                                ...saved.project,
-                                creatorUid: saved.project.creatorUid || saved.uid,
-                                creatorEmail: saved.project.creatorEmail || saved.email,
-                                developerUid: currentUser.uid,
-                              });
-                              setSavedProjectId(assignment.projectId);
-                            }
-                          }
-                          router.push(wsUrl);
-                        };
+                        const enterWorkspace = () => openDeveloperWorkspace(assignment.projectId);
                         return (
                         <div key={assignment?.token} className="glass-panel p-6 rounded-2xl border border-blue-500/20 bg-blue-500/5 hover:border-blue-500/40 transition-all">
                           <div className="flex justify-between items-start mb-4">
@@ -1185,9 +749,10 @@ export default function EmployeeDashboard() {
                           </div>
                           <button 
                             onClick={enterWorkspace}
-                            className="w-full py-2.5 flex items-center justify-center gap-2 bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                            disabled={!assignment.projectId}
+                            className="w-full py-2.5 flex items-center justify-center gap-2 bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                           >
-                            <Play className="w-3.5 h-3.5" /> Enter Workspace
+                            <Play className="w-3.5 h-3.5" /> Open workspace
                           </button>
                         </div>
                         );
@@ -1346,505 +911,94 @@ export default function EmployeeDashboard() {
               </motion.section>
             )}
 
-            {/* ── WORKSPACE TAB ────────────────────────────────────────────── */}
+            {/* ── WORKSPACE TAB — list only; each project opens /developer/workspace/:id ─ */}
             {activeTab === "workspace" && (
-              <motion.section key="workspace" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-                
-                {!project && (
-                  <div className="glass-panel p-10 rounded-3xl border border-white/5 bg-white/[0.02] text-center space-y-6">
-                    <div className="w-16 h-16 bg-blue-500/10 border border-blue-500/20 rounded-2xl flex items-center justify-center mx-auto">
-                      <Code2 className="w-8 h-8 text-blue-400" />
-                    </div>
-                    <div>
-                      <h2 className="text-white text-xl font-black tracking-tight">No Active Workspace Selected</h2>
-                      <p className="text-[#888] text-sm font-light mt-2 max-w-sm mx-auto">
-                        Select one of your active assignments from the Opportunities tab to open its dedicated project room and start coding.
-                      </p>
-                    </div>
-                    <button onClick={() => setActiveTab("projects")} 
-                      className="px-6 py-3 silver-gradient text-black font-black uppercase tracking-widest text-[10px] rounded-xl hover:scale-[1.02] transition-all">
-                      Browse Active Projects
-                    </button>
-                    
-                    {activeAssignments?.length > 0 && (
-                      <div className="pt-6 border-t border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto">
-                        {activeAssignments.map(a => (
-                          <button key={a?.token || Math.random()} onClick={async () => {
-                            if (a.projectId && currentUser?.uid) {
-                              await claimProjectAsDeveloper(a.projectId, currentUser.uid).catch(() => {});
-                              const saved = await getProject(a.projectId).catch(() => null);
-                              if (saved) {
-                                setProject({ ...saved.project, creatorUid: saved.project.creatorUid || saved.uid, creatorEmail: saved.project.creatorEmail || saved.email, developerUid: currentUser.uid });
-                                setSavedProjectId(a.projectId);
-                              }
-                            }
-                            router.push(a.projectId ? `/project-room?projectId=${a.projectId}&tab=milestones` : `/project-room?tab=milestones`);
-                          }}
-                            className="p-4 glass-panel border border-white/5 hover:border-blue-500/30 bg-white/5 rounded-2xl flex items-center justify-between group transition-all text-left w-full">
-                            <div>
-                              <div className="text-white font-bold text-sm group-hover:text-blue-400 transition-colors">{a.projectName}</div>
-                              <div className="text-[9px] text-[#888] uppercase tracking-widest font-bold font-mono">ID: {a.projectId?.slice(-6) || "—"}</div>
-                            </div>
-                            <ArrowRight className="w-4 h-4 text-white/20 group-hover:text-blue-400 -translate-x-1 group-hover:translate-x-0 transition-all" />
-                          </button>
-                        ))}
-                      </div>
-                    )}
+              <motion.section key="workspace" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
+                <div className="glass-panel p-5 rounded-2xl border border-white/10 bg-white/[0.02] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <p className="text-white font-bold">Dedicated room per project</p>
+                    <p className="text-xs text-white/45 font-light mt-1 max-w-xl">
+                      Open a workspace to work with PRD, architecture, milestones, chat, and deliverables for that client only — routed at
+                      {" "}
+                      <span className="text-indigo-300/90 font-mono text-[10px]">/developer/workspace/&lt;projectId&gt;</span>
+                      .
+                    </p>
                   </div>
-                )}
-
-                {project && (
-                  <>
-                    {generatingMilestones && (
-                      <div className="p-5 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl flex items-center gap-3">
-                        <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
-                        <div>
-                          <p className="text-sm font-bold text-white">Generating AI Milestones…</p>
-                          <p className="text-xs text-[#888]">Breaking {projectName} into tasks with prompts</p>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Milestone phase selector */}
-                    <div className="flex gap-2 flex-wrap">
-                      {milestones?.map(m => (
-                        <button key={m?.id} onClick={() => setActiveMilestoneId(m.id)}
-                          className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all border ${activeMilestoneId === m.id ? `${COLOR_MAP[m.color] ?? "text-white bg-white/10 border-white/20"}` : "text-white/40 border-white/10 hover:text-white hover:border-white/20"}`}>
-                          {m.phase}: {m.title}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className={`flex gap-6 ${selectedTask ? "flex-col lg:flex-row" : "flex-col"}`}>
-
-                      {/* Task list */}
-                      <div className={`space-y-3 ${selectedTask ? "lg:w-80 shrink-0" : "w-full"}`}>
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50">{activeMilestone?.title}</h3>
-                          <span className="text-[10px] text-[#888]">{activeMilestone?.estimatedDays}d estimated</span>
-                        </div>
-                        {activeMilestone?.tasks?.map(task => {
-                          const sc = STATUS_CONFIG[task?.status || "todo"] || STATUS_CONFIG.todo;
-                          return (
-                            <div key={task?.id || Math.random()}
-                              onClick={() => handleStartTask(task)}
-                              className={`p-4 rounded-2xl border cursor-pointer transition-all hover:border-white/20 ${selectedTask?.id === task?.id ? "border-blue-500/40 bg-blue-500/5" : "glass-panel border-white/10"}`}>
-                              <div className="flex items-start justify-between gap-3 mb-2">
-                                <h4 className="text-white text-sm font-bold leading-snug">{task.title}</h4>
-                                <span className={`shrink-0 text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full border ${sc.bg} ${sc.color}`}>{sc.label}</span>
-                              </div>
-                              <div className="flex items-center gap-3">
-                                <span className={`flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${TYPE_COLOR[task.type]}`}>
-                                  {TYPE_ICON[task.type]} {task.type}
-                                </span>
-                                <span className={`text-[10px] font-bold uppercase ${PRIORITY_COLOR[task.priority]}`}>
-                                  <Flag className="w-3 h-3 inline mr-1" />{task.priority}
-                                </span>
-                                <span className="text-[10px] text-[#888] ml-auto flex items-center gap-1">
-                                  <Clock className="w-3 h-3" />{task.estimatedHours}h
-                                </span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                        {!selectedTask && (
-                          <button onClick={generateMilestones} disabled={generatingMilestones}
-                            className="w-full py-3 border border-dashed border-white/15 text-white/40 hover:text-white hover:border-white/30 rounded-xl text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2">
-                            <RotateCcw className="w-3.5 h-3.5" /> Regenerate with AI
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Task detail panel */}
-                      {selectedTask && (
-                        <div className="flex-1 space-y-5 min-w-0">
-                          <div className="flex items-center justify-between">
-                            <div className="space-y-1">
-                              <h3 className="text-white text-xl font-bold">{selectedTask.title}</h3>
-                              <p className="text-[#888] text-sm font-light">{selectedTask.description}</p>
-                            </div>
-                            <button onClick={() => setSelectedTask(null)} className="text-white/30 hover:text-white text-xs font-bold uppercase tracking-widest px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
-                              Close
-                            </button>
-                          </div>
-
-                          {/* AI Prompt */}
-                          <div className="glass-panel p-5 rounded-2xl border border-indigo-500/20 bg-indigo-500/5">
-                            <div className="flex items-center justify-between mb-3">
-                              <div className="flex items-center gap-2">
-                                <Sparkles className="w-4 h-4 text-indigo-400" />
-                                <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">AI Development Prompt</span>
-                              </div>
-                              <button onClick={copyPrompt} className="flex items-center gap-1 text-[10px] text-white/40 hover:text-white transition-colors font-bold uppercase tracking-widest">
-                                {copiedPrompt ? <><Check className="w-3 h-3 text-green-500" /> Copied</> : <><Copy className="w-3 h-3" /> Copy Prompt</>}
-                              </button>
-                            </div>
-                            <p className="text-white/70 text-xs font-light leading-relaxed">{selectedTask.aiPrompt}</p>
-                            <div className="mt-3 pt-3 border-t border-white/5 flex items-center gap-2 text-[10px] text-white/30">
-                              <Info className="w-3 h-3" /> Paste this into Cursor or your AI coding assistant to generate the implementation
-                            </div>
-                          </div>
-
-                          {/* Submission */}
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                              <label className="text-[10px] font-black uppercase tracking-widest text-white/50">Your Submission</label>
-                              {selectedTask.version > 1 && (
-                                <span className="text-[10px] text-white/30 flex items-center gap-1">
-                                  <GitBranch className="w-3 h-3" /> v{selectedTask.version}
-                                </span>
-                              )}
-                            </div>
-                            <textarea
-                              ref={submissionRef}
-                              value={submission}
-                              onChange={e => setSubmission(e.target.value)}
-                              placeholder="Paste your code, implementation, or description here..."
-                              rows={10}
-                              className="w-full bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none rounded-xl px-4 py-3 text-sm text-white placeholder-white/20 font-mono resize-none transition-colors"
-                            />
-                            <div className="flex gap-3">
-                              <button onClick={handleValidate} disabled={validating || !submission.trim()}
-                                className="flex-1 py-3 bg-indigo-500 hover:bg-indigo-400 text-white font-black uppercase tracking-widest text-xs rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
-                                {validating ? <><Loader2 className="w-4 h-4 animate-spin" /> Validating…</> : <><Sparkles className="w-4 h-4" /> Validate with AI</>}
-                              </button>
-                              {selectedTask.validationResult?.passed && (
-                                <button onClick={() => {
-                                  const mid = milestones.find(m => m.tasks.some(t => t.id === selectedTask.id))?.id ?? "";
-                                  updateTaskStatus(mid, selectedTask.id, "review");
-                                  setSelectedTask(prev => prev ? { ...prev, status: "review" } : null);
-                                }} className="flex-1 py-3 bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-black uppercase tracking-widest text-xs rounded-xl hover:bg-emerald-500/30 transition-all flex items-center justify-center gap-2">
-                                  <Send className="w-4 h-4" /> Submit for Review
-                                </button>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Validation result */}
-                          {selectedTask.validationResult && (
-                            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                              className={`p-5 rounded-2xl border space-y-4 ${selectedTask.validationResult.passed ? "bg-emerald-500/5 border-emerald-500/20" : "bg-red-500/5 border-red-500/20"}`}>
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  {selectedTask.validationResult.passed
-                                    ? <CheckCircle className="w-5 h-5 text-emerald-400" />
-                                    : <XCircle className="w-5 h-5 text-red-400" />}
-                                  <span className={`font-bold text-sm ${selectedTask.validationResult.passed ? "text-emerald-400" : "text-red-400"}`}>
-                                    {selectedTask.validationResult.passed ? "Validation Passed" : "Validation Failed"}
-                                  </span>
-                                </div>
-                                <div className={`text-2xl font-black ${selectedTask.validationResult.score >= 80 ? "text-emerald-400" : "text-red-400"}`}>
-                                  {selectedTask.validationResult.score}<span className="text-sm">/100</span>
-                                </div>
-                              </div>
-                              <p className="text-sm text-white/70 font-light">{selectedTask.validationResult.summary}</p>
-                              <div className="grid grid-cols-1 gap-2">
-                                {selectedTask.validationResult.checks.map((c, i) => (
-                                  <div key={i} className="flex items-center gap-3 text-xs">
-                                    {c.passed ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> : <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />}
-                                    <span className={c.passed ? "text-white/70" : "text-red-400"}>{c.label}</span>
-                                    <span className="text-[#888] ml-auto">{c.note}</span>
-                                  </div>
-                                ))}
-                              </div>
-                              {selectedTask.validationResult.issues.length > 0 && (
-                                <div className="space-y-1">
-                                  <p className="text-[10px] font-black uppercase tracking-widest text-red-400">Issues</p>
-                                  {selectedTask.validationResult.issues.map((iss, i) => (
-                                    <p key={i} className="text-xs text-red-400/80 font-light flex items-start gap-2"><span>·</span>{iss}</p>
-                                  ))}
-                                </div>
-                              )}
-                              {selectedTask.validationResult.suggestions.length > 0 && (
-                                <div className="space-y-1">
-                                  <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Suggestions</p>
-                                  {selectedTask.validationResult.suggestions.map((s, i) => (
-                                    <p key={i} className="text-xs text-white/50 font-light flex items-start gap-2"><span>·</span>{s}</p>
-                                  ))}
-                                </div>
-                              )}
-                            </motion.div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </motion.section>
-            )}
-
-            {/* ── PRD TAB ──────────────────────────────────────────────────── */}
-            {activeTab === "prd" && (
-              <motion.section key="prd" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-                <div>
-                  <h2 className="text-white font-black text-xl tracking-tight flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-indigo-400" /> Project Requirement Document
-                  </h2>
-                  <p className="text-white/40 text-xs font-light mt-1">AI-generated PRD shared after hire acceptance. This is your project contract.</p>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("projects")}
+                    className="shrink-0 px-4 py-2.5 rounded-xl border border-white/15 text-white/70 hover:text-white hover:bg-white/5 text-[10px] font-black uppercase tracking-widest transition-colors"
+                  >
+                    View opportunities
+                  </button>
                 </div>
 
-                {prdLoading && (
-                  <div className="flex items-center gap-3 p-5 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl">
-                    <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
-                    <p className="text-sm text-white/70 font-light">Loading PRD documents…</p>
-                  </div>
-                )}
-
-                {!prdLoading && prds.length === 0 && (
-                  <div className="text-center py-16 space-y-4">
-                    <FileText className="w-12 h-12 text-white/10 mx-auto" />
-                    <p className="text-white/40 text-sm">No PRD available yet.</p>
-                    <p className="text-white/20 text-xs">A PRD will appear here once a project creator hires you and accepts your response.</p>
-                  </div>
-                )}
-
-                {!prdLoading && sortedPrds.map(prd => (
-                  <div key={prd.id} className="glass-panel p-8 rounded-3xl border border-indigo-500/20 space-y-6">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <span className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded">{prd.version}</span>
-                      <h3 className="text-2xl font-black text-white tracking-tighter">{prd.projectName}</h3>
-                    </div>
-
-                    {prd.projectBrief?.trim() && (
-                      <div className="p-4 rounded-2xl bg-white/[0.04] border border-emerald-500/15 space-y-2">
-                        <p className="text-[9px] font-black uppercase tracking-widest text-emerald-400/90">
-                          What the project creator submitted (your source of truth)
-                        </p>
-                        <p className="text-sm text-white/75 font-light leading-relaxed whitespace-pre-wrap">
-                          {prd.projectBrief.trim()}
-                        </p>
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                      <div>
-                        <p className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-2">Overview</p>
-                        <p className="text-sm text-white/70 font-light leading-relaxed">{prd.overview}</p>
-                      </div>
-                      <div>
-                        <p className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-2">Scope</p>
-                        <p className="text-sm text-white/70 font-light leading-relaxed">{prd.scope}</p>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                      <div>
-                        <p className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-2">Features</p>
-                        <ul className="space-y-1.5">
-                          {prd.features.map((f, i) => (
-                            <li key={i} className="flex items-start gap-2 text-xs text-white/60 font-light">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" /> {f}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                      <div>
-                        <p className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-2">Tech Stack</p>
-                        <div className="flex flex-wrap gap-1.5 mb-4">
-                          {prd.techStack.map(t => (
-                            <span key={t} className="px-2.5 py-1 rounded-lg text-[10px] font-bold border text-indigo-400 bg-indigo-500/10 border-indigo-500/20">{t}</span>
-                          ))}
-                        </div>
-                        <p className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-2">Risks</p>
-                        <ul className="space-y-1">
-                          {prd.risks.map((r, i) => (
-                            <li key={i} className="flex items-start gap-2 text-xs text-yellow-400/70 font-light">
-                              <AlertCircle className="w-3 h-3 shrink-0 mt-0.5" /> {r}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-
-                    <div>
-                      <p className="text-[9px] font-black uppercase tracking-widest text-white/30 mb-3">Milestones</p>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                        {prd.milestones.map((m, i) => (
-                          <div key={i} className="p-4 bg-white/5 rounded-xl border border-white/5">
-                            <div className="text-[9px] text-white/30 uppercase tracking-widest font-bold mb-1">{m.phase}</div>
-                            <div className="text-white font-bold text-sm mb-1">{m.title}</div>
-                            <div className="text-[10px] text-white/40 mb-2">{m.duration}</div>
-                            <ul className="space-y-1">
-                              {m.deliverables.map((d, j) => (
-                                <li key={j} className="text-[10px] text-white/50 font-light flex items-start gap-1">
-                                  <span className="text-white/20">·</span> {d}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Chat CTA */}
-                    {hireReqs.find(r => r.prdId === prd.id || r.token === prd.hireToken) && (
-                      <button
-                        onClick={() => { setActiveChatId(prd.hireToken); setActiveTab("chat"); }}
-                        className="w-full py-3 border border-indigo-500/30 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 font-bold uppercase tracking-widest text-xs rounded-xl transition-all flex items-center justify-center gap-2">
-                        <MessageSquare className="w-4 h-4" /> Open Chat with Client
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </motion.section>
-            )}
-
-            {/* ── CHAT TAB ─────────────────────────────────────────────────── */}
-            {activeTab === "chat" && (
-              <motion.section key="chat" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
-                <h2 className="text-white font-black text-xl tracking-tight flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-indigo-400" /> Chat with Client
-                </h2>
-
-                {prdForActiveChat && (
-                  <div className="p-4 rounded-2xl bg-indigo-500/10 border border-indigo-500/25 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-indigo-300">PRD for this chat</p>
-                      <p className="text-sm text-white font-bold">{prdForActiveChat.projectName}</p>
-                      <p className="text-xs text-white/45 font-light">Same hire as this thread — overview reflects this project.</p>
-                    </div>
+                {activeAssignments.length === 0 ? (
+                  <div className="glass-panel p-12 rounded-3xl border border-white/5 text-center space-y-4">
+                    <Code2 className="w-12 h-12 text-white/15 mx-auto" />
+                    <h2 className="text-white font-black text-lg">No workspaces yet</h2>
+                    <p className="text-sm text-white/40 font-light max-w-md mx-auto">
+                      Accept a hire under Opportunities to get an isolated workspace for that client project.
+                    </p>
                     <button
                       type="button"
-                      onClick={() => setActiveTab("prd")}
-                      className="shrink-0 px-4 py-2.5 rounded-xl bg-indigo-500/20 border border-indigo-500/35 text-indigo-200 text-xs font-bold uppercase tracking-widest hover:bg-indigo-500/30 transition-colors">
-                      Open PRD
+                      onClick={() => setActiveTab("projects")}
+                      className="px-6 py-3 silver-gradient text-black font-black uppercase tracking-widest text-[10px] rounded-xl transition-all hover:scale-[1.02]"
+                    >
+                      Go to opportunities
                     </button>
                   </div>
-                )}
-
-                {chatSubError && (
-                  <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/25 text-red-200 text-sm font-light">
-                    {chatSubError}
-                  </div>
-                )}
-
-                {activeChatId && chatRoom && chatViewerUid && (() => {
-                  const ping =
-                    chatRoom.creatorUid === chatViewerUid
-                      ? chatRoom.offlinePingForCreator
-                      : chatRoom.developerUid === chatViewerUid
-                        ? chatRoom.offlinePingForDeveloper
-                        : null;
-                  if (!ping) return null;
-                  const which = chatRoom.creatorUid === chatViewerUid ? "creator" as const : "developer" as const;
-                  return (
-                    <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                      <p className="text-sm text-amber-100/90 font-light">{ping}</p>
-                      <button
-                        type="button"
-                        onClick={() => void clearOfflinePing(activeChatId, which)}
-                        className="shrink-0 text-[10px] font-black uppercase tracking-widest text-amber-400 hover:text-white border border-amber-500/30 rounded-lg px-3 py-2"
-                      >
-                        Dismiss
-                      </button>
-                    </div>
-                  );
-                })()}
-
-                {!activeChatId ? (
-                  <div className="text-center py-16 space-y-4">
-                    <MessageSquare className="w-12 h-12 text-white/10 mx-auto" />
-                    <p className="text-white/40 text-sm">Chat is activated after you accept a hire invitation.</p>
-                  </div>
                 ) : (
-                  <div className="glass-panel rounded-3xl border border-white/10 flex flex-col overflow-hidden" style={{ height: "60vh" }}>
-                    <div className="p-4 border-b border-white/5 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3">
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shrink-0" />
-                        <span className="text-white font-bold text-sm truncate">
-                          {hireReqs.find(r => r.token === activeChatId)?.creatorName ?? "Project Creator"}
-                        </span>
-                        <span className="text-[10px] text-white/30 ml-auto sm:ml-2 shrink-0">
-                          {hireReqs.find(r => r.token === activeChatId)?.projectName ?? "—"}
-                        </span>
-                      </div>
-                      {hireReqs.filter(r => r.status === "accepted").length > 1 && (
-                        <select
-                          value={activeChatId}
-                          onChange={e => setActiveChatId(e.target.value)}
-                          className="w-full sm:w-auto sm:max-w-[240px] bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50"
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {activeAssignments.map(a => {
+                      const lastMs = a.respondedAt?.toMillis?.() ?? null;
+                      const last = lastMs != null ? new Date(lastMs) : null;
+                      const lastLabel = last
+                        ? `Last update ${last.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
+                        : "Activity timestamp not recorded";
+                      const hasId = Boolean(a.projectId?.trim());
+                      return (
+                        <div
+                          key={a.token}
+                          className="glass-panel p-6 rounded-2xl border border-blue-500/20 bg-blue-500/[0.03] flex flex-col gap-4"
                         >
-                          {hireReqs
-                            .filter(r => r.status === "accepted")
-                            .map(r => (
-                              <option key={r.token} value={r.token}>
-                                {r.projectName} · {r.creatorName}
-                              </option>
-                            ))}
-                        </select>
-                      )}
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto p-5 space-y-3">
-                      {fireMsgs.length === 0 && (
-                        <div className="flex flex-col items-center justify-center h-full gap-2 text-white/20">
-                          <MessageSquare className="w-8 h-8" />
-                          <p className="text-xs font-light">No messages yet. Start the conversation!</p>
-                        </div>
-                      )}
-                      {chatBubbleRows.map(({ msg, isMine, label }) => (
-                          <div
-                            key={msg.id}
-                            className={`flex w-full items-end gap-2 ${isMine ? "flex-row-reverse" : "flex-row"}`}
-                          >
-                            <div
-                              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[10px] font-black ${
-                                isMine ? "bg-emerald-400 text-zinc-900" : "bg-violet-500 text-white"
-                              }`}
-                              aria-hidden
-                            >
-                              {isMine
-                                ? (developerProfile?.fullName || currentUser?.displayName || currentUser?.email || "Y")
-                                    .slice(0, 1)
-                                    .toUpperCase()
-                                : (label || msg.senderName || "?").slice(0, 1).toUpperCase()}
-                            </div>
-                            <div
-                              className={`max-w-[min(100%,380px)] rounded-2xl px-4 py-2.5 shadow-lg ${
-                                isMine
-                                  ? "rounded-br-md bg-emerald-600 text-white ring-1 ring-emerald-300/35"
-                                  : "rounded-bl-md bg-zinc-800 text-zinc-100 ring-1 ring-violet-400/25"
-                              }`}
-                            >
-                              <p
-                                className={`text-[9px] font-bold uppercase tracking-widest mb-1 ${isMine ? "text-emerald-100/90" : "text-violet-300/95"}`}
-                              >
-                                {label}
-                              </p>
-                              <p className={`text-sm font-light leading-relaxed ${isMine ? "text-white" : "text-white/90"}`}>
-                                {msg.text}
-                              </p>
-                              <p
-                                className={`text-[9px] mt-1 tabular-nums ${isMine ? "text-emerald-100/65 text-right" : "text-white/40 text-left"}`}
-                              >
-                                {msg.sentAt
-                                  ? new Date(msg.sentAt.seconds * 1000).toLocaleTimeString([], {
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    })
-                                  : ""}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-full">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" aria-hidden />
+                                In progress
+                              </span>
+                              <h3 className="text-white font-black text-lg mt-2 truncate">{a.projectName}</h3>
+                              <p className="text-[10px] text-white/35 font-bold uppercase tracking-widest mt-1">
+                                Client · {a.creatorName}
                               </p>
                             </div>
                           </div>
-                        ))}
-                    </div>
-
-                    <div className="p-4 border-t border-white/5 flex gap-3">
-                      <input
-                        value={chatText}
-                        onChange={e => setChatText(e.target.value)}
-                        onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendFireMessage()}
-                        placeholder="Type a message…"
-                        className="flex-1 bg-white/5 border border-white/10 focus:border-indigo-500/50 rounded-xl px-4 py-3 text-sm text-white placeholder-white/20 focus:outline-none transition-colors"
-                      />
-                      <button
-                        onClick={sendFireMessage}
-                        disabled={!chatText.trim() || chatSending}
-                        className="px-4 py-3 silver-gradient text-black rounded-xl font-black disabled:opacity-40 flex items-center gap-2">
-                        {chatSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                      </button>
-                    </div>
+                          <p className="text-[10px] text-white/30 font-light">{lastLabel}</p>
+                          {!hasId && (
+                            <p className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                              Project ID is still linking. Refresh shortly or contact support if this does not resolve.
+                            </p>
+                          )}
+                          <button
+                            type="button"
+                            disabled={!hasId}
+                            onClick={() => openDeveloperWorkspace(a.projectId)}
+                            className="w-full py-3 silver-gradient text-black font-black uppercase tracking-widest text-[10px] rounded-xl flex items-center justify-center gap-2 transition-all hover:scale-[1.01] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                          >
+                            <Play className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                            Open workspace
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
+                )}
+
+                {closedHireCount > 0 && (
+                  <p className="text-center text-[10px] text-white/25 font-light">
+                    {closedHireCount} declined or expired invitation{closedHireCount === 1 ? "" : "s"} (not listed above).
+                  </p>
                 )}
               </motion.section>
             )}
@@ -2026,15 +1180,15 @@ export default function EmployeeDashboard() {
                   </div>
                 </div>
 
-                {/* Workspace Stats */}
+                {/* Client project overview (task detail lives in each /developer/workspace/:id) */}
                 <div className="glass-panel p-6 rounded-2xl border border-white/10">
-                  <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50 mb-4">Workspace Stats</h3>
+                  <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50 mb-4">Client projects</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {[
-                      { label: "Tasks Done",  value: `${doneTasks}`,  color: "text-emerald-400" },
-                      { label: "In Progress", value: `${inProgress}`, color: "text-blue-400" },
-                      { label: "In Review",   value: `${inReview}`,   color: "text-purple-400" },
-                      { label: "Overall %",   value: `${progress}%`,  color: "text-yellow-400" },
+                      { label: "Active", value: String(activeAssignments.length), color: "text-blue-400" },
+                      { label: "Pending invites", value: String(pendingInvitations.length), color: "text-yellow-400" },
+                      { label: "Closed", value: String(closedHireCount), color: "text-white/40" },
+                      { label: "Profile", value: `${completionPct}%`, color: "text-emerald-400" },
                     ].map(s => (
                       <div key={s.label} className="p-4 bg-white/5 rounded-xl text-center border border-white/5">
                         <div className={`text-2xl font-black ${s.color}`}>{s.value}</div>

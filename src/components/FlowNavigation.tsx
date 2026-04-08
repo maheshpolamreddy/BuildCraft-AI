@@ -114,6 +114,12 @@ export function DeveloperFlowBreadcrumb({ className }: { className?: string }) {
       <Link href="/developer/profile" className={linkCls(pathname === "/developer/profile")}>
         Profile
       </Link>
+      {pathname.startsWith("/developer/workspace") && (
+        <>
+          <ChevronRight className="w-3.5 h-3.5 text-white/25 shrink-0" />
+          <span className={linkCls(true)}>Project workspace</span>
+        </>
+      )}
       {pathname.startsWith("/developer/register") && (
         <>
           <ChevronRight className="w-3.5 h-3.5 text-white/25 shrink-0" />
