@@ -225,6 +225,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   // ── PRD state ─────────────────────────────────────────────────────────────
   const [prds,      setPrds]     = useState<PRDDocument[]>([]);
   const [prdLoading, setPrdLoading] = useState(false);
+  const [prdRetrying, setPrdRetrying] = useState(false);
+  const [prdRetryMessage, setPrdRetryMessage] = useState<string | null>(null);
 
   // ── Hire requests state ────────────────────────────────────────────────────
   const [hireRequests, setHireRequests] = useState<HireRequest[]>([]);
@@ -344,17 +346,80 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
   // ── Hiring state derivation (state machine for talent tab UI) ─────────────
   const projectHireReqs = useMemo(() => {
-    if (!workspaceProjectId && !projectName) return hireRequests;
+    const uid = currentUser?.uid;
+    const pid = workspaceProjectId;
+    const name = (projectName || "").trim();
+    const rNamesMatch = (a: string, b: string) => a.trim() === b.trim();
+
+    if (!pid && !name) return hireRequests;
+
+    let pDev = project?.developerUid;
+    let pCre = project?.creatorUid || legacyProjectUid || null;
+    if (isCreator && !pCre && uid) pCre = uid;
+
+    if (!pDev && uid && isCreator) {
+      const mine = hireRequests.filter(r => r.creatorUid === uid && r.status === "accepted");
+      const byPid = pid ? mine.find(r => r.projectId === pid) : undefined;
+      const byName = name ? mine.find(r => rNamesMatch(r.projectName || "", name)) : undefined;
+      const solo = mine.length === 1 ? mine[0] : undefined;
+      pDev = byPid?.developerUid || byName?.developerUid || solo?.developerUid || pDev;
+    }
+
+    if (!pCre && uid && (isDeveloper || isDeveloperWorkspace)) {
+      const mine = hireRequests.filter(r => r.developerUid === uid && r.status === "accepted");
+      const byPid = pid ? mine.find(r => r.projectId === pid) : undefined;
+      const byName = name ? mine.find(r => rNamesMatch(r.projectName || "", name)) : undefined;
+      const solo = mine.length === 1 ? mine[0] : undefined;
+      pCre = byPid?.creatorUid || byName?.creatorUid || solo?.creatorUid || pCre;
+    }
+
+    const acceptedPairCounts = new Map<string, number>();
+    for (const r of hireRequests) {
+      if (r.status !== "accepted") continue;
+      const k = `${r.creatorUid}\0${r.developerUid}`;
+      acceptedPairCounts.set(k, (acceptedPairCounts.get(k) ?? 0) + 1);
+    }
+
     return hireRequests.filter(r => {
-      if (workspaceProjectId) {
-        if (r.projectId === workspaceProjectId) return true;
-        // Legacy hire rows created before projectId was stored — match name within this workspace only
-        if (!r.projectId && projectName && r.projectName === projectName) return true;
+      const rName = (r.projectName || "").trim();
+
+      if (pid && r.projectId === pid) return true;
+
+      if (!r.projectId && name && rNamesMatch(rName, name)) {
+        if (uid && (r.creatorUid === uid || r.developerUid === uid)) return true;
+      }
+
+      if (
+        r.status === "accepted" &&
+        pDev &&
+        pCre &&
+        r.developerUid === pDev &&
+        r.creatorUid === pCre
+      ) {
+        const ambiguous = (acceptedPairCounts.get(`${r.creatorUid}\0${r.developerUid}`) ?? 0) > 1;
+        if (!ambiguous) return true;
+        if (pid && r.projectId === pid) return true;
+        if (!r.projectId && name && rNamesMatch(rName, name)) return true;
+        if (name && rNamesMatch(rName, name)) return true;
         return false;
       }
-      return projectName ? r.projectName === projectName : false;
+
+      if (!pid && name) return rNamesMatch(rName, name);
+
+      return false;
     });
-  }, [hireRequests, workspaceProjectId, projectName]);
+  }, [
+    hireRequests,
+    workspaceProjectId,
+    projectName,
+    project?.developerUid,
+    project?.creatorUid,
+    legacyProjectUid,
+    currentUser?.uid,
+    isCreator,
+    isDeveloper,
+    isDeveloperWorkspace,
+  ]);
   const acceptedHire  = useMemo(() => projectHireReqs.find(r => r.status === "accepted") ?? null, [projectHireReqs]);
   const pendingHires  = useMemo(() => projectHireReqs.filter(r => r.status === "pending"), [projectHireReqs]);
   type HiringState = "no-hire" | "pending" | "accepted";
@@ -573,11 +638,14 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     if (activeTab !== "prd" || !currentUser) return;
     const uid = currentUser.uid;
     setPrdLoading(true);
+    setPrdRetryMessage(null);
     let cancelled = false;
 
     async function loadScopedPrds() {
+      const pid = workspaceProjectId;
+      const nameTrim = (projectName || "").trim();
       try {
-        const hasWorkspace = !!(workspaceProjectId || projectName);
+        const hasWorkspace = !!(pid || projectName);
         if (hasWorkspace) {
           const accepted = projectHireReqs.filter(r => r.status === "accepted");
           const docs: PRDDocument[] = [];
@@ -590,9 +658,34 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
               docs.push(...byToken);
             }
           }
-          if (!cancelled) {
-            setPrds([...new Map(docs.map(p => [p.id, p])).values()]);
+          let merged = [...new Map(docs.map(p => [p.id, p])).values()];
+
+          if (merged.length === 0) {
+            const fallbackTokens = new Set(
+              hireRequests
+                .filter(r => r.status === "accepted")
+                .filter(r => {
+                  if (pid && r.projectId === pid) return true;
+                  if (nameTrim && (r.projectName || "").trim() === nameTrim) return true;
+                  if (
+                    project?.developerUid &&
+                    project?.creatorUid &&
+                    r.developerUid === project.developerUid &&
+                    r.creatorUid === project.creatorUid
+                  )
+                    return true;
+                  return false;
+                })
+                .map(r => r.token),
+            );
+            if (fallbackTokens.size > 0) {
+              const all = await getPRDsByUser(uid);
+              const healed = all.filter(p => fallbackTokens.has(p.hireToken));
+              merged = [...new Map(healed.map(p => [p.id, p])).values()];
+            }
           }
+
+          if (!cancelled) setPrds(merged);
         } else {
           const all = await getPRDsByUser(uid);
           if (!cancelled) setPrds(all);
@@ -608,7 +701,53 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     return () => {
       cancelled = true;
     };
-  }, [activeTab, currentUser, workspaceProjectId, projectName, projectHireReqs]);
+  }, [
+    activeTab,
+    currentUser,
+    workspaceProjectId,
+    projectName,
+    projectHireReqs,
+    hireRequests,
+    project?.developerUid,
+    project?.creatorUid,
+  ]);
+
+  async function retryGeneratePrd() {
+    if (!acceptedHire) return;
+    setPrdRetrying(true);
+    setPrdRetryMessage(null);
+    setPrdLoading(true);
+    try {
+      const res = await fetch("/api/generate-prd", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectName:    acceptedHire.projectName,
+          projectIdea:    acceptedHire.projectIdea,
+          projectSummary: acceptedHire.projectSummary,
+          techStack:      [],
+          creatorUid:     acceptedHire.creatorUid,
+          developerUid:   acceptedHire.developerUid,
+          hireToken:      acceptedHire.token,
+        }),
+      });
+      const { ok, data } = await parseJsonResponse(res);
+      if (!ok) {
+        setPrdRetryMessage(String((data as { error?: string })?.error || "Could not generate PRD"));
+        return;
+      }
+      const prdId = (data as { prdId?: string })?.prdId;
+      if (prdId) {
+        const one = await getPRD(String(prdId));
+        if (one) setPrds([one]);
+      }
+    } catch (e) {
+      setPrdRetryMessage(e instanceof Error ? e.message : "Request failed");
+    } finally {
+      setPrdRetrying(false);
+      setPrdLoading(false);
+    }
+  }
 
   // ── Subscribe to real-time chat (signed-in client — Firestore rules apply) ─
   useEffect(() => {
@@ -1937,20 +2076,53 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                   <div className="text-center py-16 space-y-4">
                     <FileText className="w-12 h-12 text-white/10 mx-auto" />
                     <p className="text-white/40 text-sm">
-                      {isDeveloper || isDeveloperWorkspace
-                        ? "No PRD is linked to this project yet."
-                        : "No PRD generated yet."}
+                      {hiringState === "accepted"
+                        ? "PRD isn’t showing in this workspace yet."
+                        : isDeveloper || isDeveloperWorkspace
+                          ? "No PRD is linked to this project yet."
+                          : "No PRD generated yet."}
                     </p>
-                    <p className="text-white/20 text-xs">
-                      {isDeveloper || isDeveloperWorkspace
-                        ? "The client’s PRD appears here after hire acceptance and generation completes."
-                        : "A PRD is auto-generated when a developer accepts your hire invitation."}
+                    <p className="text-white/20 text-xs max-w-md mx-auto leading-relaxed">
+                      {hiringState === "accepted"
+                        ? "The hire is active — the doc may still be generating, or the link didn’t match this project. Use the button below to regenerate, or refresh the page."
+                        : isDeveloper || isDeveloperWorkspace
+                          ? "The client’s PRD appears here after hire acceptance and generation completes."
+                          : "A PRD is auto-generated when a developer accepts your hire invitation."}
                     </p>
-                    {!(isDeveloper || isDeveloperWorkspace) && (
-                    <button onClick={() => setActiveTab("talent")}
-                      className="px-5 py-2.5 silver-gradient text-black font-black uppercase tracking-widest text-xs rounded-xl">
-                      Go to Find Developers
-                    </button>
+                    {prdRetryMessage && (
+                      <p className="text-xs text-red-400/90 max-w-md mx-auto">{prdRetryMessage}</p>
+                    )}
+                    {hiringState === "accepted" && acceptedHire && (
+                      <div className="flex flex-col sm:flex-row gap-3 justify-center items-center pt-2">
+                        <button
+                          type="button"
+                          disabled={prdRetrying}
+                          onClick={() => void retryGeneratePrd()}
+                          className="px-5 py-2.5 rounded-xl border border-indigo-500/40 bg-indigo-500/10 text-indigo-300 font-black uppercase tracking-widest text-[10px] hover:bg-indigo-500/20 disabled:opacity-40 inline-flex items-center justify-center gap-2"
+                        >
+                          {prdRetrying ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                              Generating…
+                            </>
+                          ) : (
+                            "Generate or refresh PRD"
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => window.location.reload()}
+                          className="px-5 py-2.5 rounded-xl border border-white/15 text-white/50 hover:text-white hover:bg-white/5 font-bold uppercase tracking-widest text-[10px]"
+                        >
+                          Reload page
+                        </button>
+                      </div>
+                    )}
+                    {!(isDeveloper || isDeveloperWorkspace) && hiringState !== "accepted" && (
+                      <button onClick={() => setActiveTab("talent")}
+                        className="px-5 py-2.5 silver-gradient text-black font-black uppercase tracking-widest text-xs rounded-xl">
+                        Go to Find Developers
+                      </button>
                     )}
                   </div>
                 )}
