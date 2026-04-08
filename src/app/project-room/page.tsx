@@ -23,7 +23,7 @@ import { parseJsonResponse } from "@/lib/parse-api-json";
 import { getAllDeveloperProfiles, isDeveloperRegistrationComplete, shouldDefaultToDeveloperDashboard } from "@/lib/developerProfile";
 import { type MatchedDeveloper } from "@/app/api/match-developers/route";
 import { getHireRequestsByCreator, getHireRequestsByDeveloper, createHireRequest, type HireRequest } from "@/lib/hireRequests";
-import { getPRDsByUser, type PRDDocument } from "@/lib/prd";
+import { getPRD, getPRDsByHireToken, getPRDsByUser, type PRDDocument } from "@/lib/prd";
 import {
   createOrGetChat,
   sendChatMessage,
@@ -339,16 +339,22 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   const projectName  = project?.name ?? "My Project";
   const version      = project?.version ?? "v1.0";
 
+  /** Firestore project doc id from store or URL — keeps hire/PRD scope aligned per workspace. */
+  const workspaceProjectId = savedProjectId || routeProjectId || null;
+
   // ── Hiring state derivation (state machine for talent tab UI) ─────────────
   const projectHireReqs = useMemo(() => {
-    if (!savedProjectId && !projectName) return hireRequests;
+    if (!workspaceProjectId && !projectName) return hireRequests;
     return hireRequests.filter(r => {
-      if (savedProjectId && r.projectId === savedProjectId) return true;
-      if (projectName && r.projectName === projectName) return true;
-      if (!r.projectId && !savedProjectId) return true;
-      return false;
+      if (workspaceProjectId) {
+        if (r.projectId === workspaceProjectId) return true;
+        // Legacy hire rows created before projectId was stored — match name within this workspace only
+        if (!r.projectId && projectName && r.projectName === projectName) return true;
+        return false;
+      }
+      return projectName ? r.projectName === projectName : false;
     });
-  }, [hireRequests, savedProjectId, projectName]);
+  }, [hireRequests, workspaceProjectId, projectName]);
   const acceptedHire  = useMemo(() => projectHireReqs.find(r => r.status === "accepted") ?? null, [projectHireReqs]);
   const pendingHires  = useMemo(() => projectHireReqs.filter(r => r.status === "pending"), [projectHireReqs]);
   type HiringState = "no-hire" | "pending" | "accepted";
@@ -562,13 +568,47 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     return () => { clearTimeout(timer); matchTriggeredRef.current = false; };
   }, [activeTab, isCreator, matchedDevs.length, matchLoading, authReady, currentUser?.uid]);
 
-  // ── Load PRDs when prd tab opens ──────────────────────────────────────────
+  // ── Load PRDs when PRD tab opens — scoped to this workspace (not all user PRDs) ─
   useEffect(() => {
     if (activeTab !== "prd" || !currentUser) return;
+    const uid = currentUser.uid;
     setPrdLoading(true);
-    // If developer, we should eventually filter by projectId as well
-    getPRDsByUser(currentUser.uid).then(docs => setPrds(docs)).catch(() => {}).finally(() => setPrdLoading(false));
-  }, [activeTab, currentUser]);
+    let cancelled = false;
+
+    async function loadScopedPrds() {
+      try {
+        const hasWorkspace = !!(workspaceProjectId || projectName);
+        if (hasWorkspace) {
+          const accepted = projectHireReqs.filter(r => r.status === "accepted");
+          const docs: PRDDocument[] = [];
+          for (const r of accepted) {
+            if (r.prdId) {
+              const one = await getPRD(r.prdId);
+              if (one) docs.push(one);
+            } else {
+              const byToken = await getPRDsByHireToken(r.token);
+              docs.push(...byToken);
+            }
+          }
+          if (!cancelled) {
+            setPrds([...new Map(docs.map(p => [p.id, p])).values()]);
+          }
+        } else {
+          const all = await getPRDsByUser(uid);
+          if (!cancelled) setPrds(all);
+        }
+      } catch {
+        if (!cancelled) setPrds([]);
+      } finally {
+        if (!cancelled) setPrdLoading(false);
+      }
+    }
+
+    void loadScopedPrds();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, currentUser, workspaceProjectId, projectName, projectHireReqs]);
 
   // ── Subscribe to real-time chat (signed-in client — Firestore rules apply) ─
   useEffect(() => {
@@ -1879,7 +1919,11 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                   <h2 className="text-white font-black text-xl tracking-tight flex items-center gap-2">
                     <FileText className="w-5 h-5 text-indigo-400" /> Project Requirement Document
                   </h2>
-                  <p className="text-white/40 text-xs font-light mt-1">AI-generated PRD shared with your developer after hire acceptance.</p>
+                  <p className="text-white/40 text-xs font-light mt-1">
+                    {isDeveloper || isDeveloperWorkspace
+                      ? "PRD for this project only — tied to your accepted hire for this workspace."
+                      : "AI-generated PRD shared with your developer after hire acceptance."}
+                  </p>
                 </div>
 
                 {prdLoading && (
@@ -1892,12 +1936,22 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                 {!prdLoading && prds.length === 0 && (
                   <div className="text-center py-16 space-y-4">
                     <FileText className="w-12 h-12 text-white/10 mx-auto" />
-                    <p className="text-white/40 text-sm">No PRD generated yet.</p>
-                    <p className="text-white/20 text-xs">A PRD is auto-generated when a developer accepts your hire invitation.</p>
+                    <p className="text-white/40 text-sm">
+                      {isDeveloper || isDeveloperWorkspace
+                        ? "No PRD is linked to this project yet."
+                        : "No PRD generated yet."}
+                    </p>
+                    <p className="text-white/20 text-xs">
+                      {isDeveloper || isDeveloperWorkspace
+                        ? "The client’s PRD appears here after hire acceptance and generation completes."
+                        : "A PRD is auto-generated when a developer accepts your hire invitation."}
+                    </p>
+                    {!(isDeveloper || isDeveloperWorkspace) && (
                     <button onClick={() => setActiveTab("talent")}
                       className="px-5 py-2.5 silver-gradient text-black font-black uppercase tracking-widest text-xs rounded-xl">
                       Go to Find Developers
                     </button>
+                    )}
                   </div>
                 )}
 
