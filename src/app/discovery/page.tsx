@@ -52,8 +52,8 @@ export default function DiscoveryHub() {
   const router = useRouter();
   const {
     authReady,
-    project, setProject, toggleAssumption, currentUser, savedProjectId, setSavedProjectId, approvedTools, setToolApproval,
-    employerProfile, setEmployerProfile, clearProject, incrementVersion,
+    project, setProject, toggleAssumption, currentUser, savedProjectId, setSavedProjectId, setToolApproval,
+    setEmployerProfile, clearProject,
     developerProfile, userRoles, role,
   } = useStore();
 
@@ -382,10 +382,6 @@ export default function DiscoveryHub() {
     }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") runAnalysis(idea);
-  };
-
   return (
     <div className="min-h-screen relative flex">
       <div className="fixed top-0 right-0 w-[700px] h-[700px] bg-blue-500/[0.04] rounded-full blur-[180px] pointer-events-none -z-10" />
@@ -559,7 +555,11 @@ export default function DiscoveryHub() {
                             </p>
                           </div>
                           <button
-                            onClick={e => { e.stopPropagation(); showDeleted ? handleRestoreHistory(saved.id) : handleDeleteHistory(saved.id); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (showDeleted) void handleRestoreHistory(saved.id);
+                              else void handleDeleteHistory(saved.id);
+                            }}
                             disabled={deletingId === saved.id}
                             className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-white/40 hover:text-white p-1"
                             title={showDeleted ? "Restore Project" : "Delete Project"}
@@ -804,7 +804,11 @@ export default function DiscoveryHub() {
                             {isLocked ? <><Lock className="w-3 h-3" /> Locked</> : <><FolderOpen className="w-3 h-3" /> Draft</>}
                           </span>
                           <button
-                            onClick={e => { e.stopPropagation(); showDeleted ? handleRestoreHistory(saved.id) : handleDeleteHistory(saved.id); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (showDeleted) void handleRestoreHistory(saved.id);
+                              else void handleDeleteHistory(saved.id);
+                            }}
                             disabled={deletingId === saved.id}
                             className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-lg ${showDeleted ? "text-emerald-400/40 hover:text-emerald-400 hover:bg-emerald-500/10" : "text-red-400/40 hover:text-red-400 hover:bg-red-500/10"}`}
                             title={showDeleted ? "Restore Project" : "Delete Project"}

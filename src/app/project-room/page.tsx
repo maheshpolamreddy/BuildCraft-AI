@@ -1,6 +1,6 @@
 "use client";
 
-import { subscribeToWorkspace, updateWorkspaceTask, getWorkspaceState, setWorkspaceMilestones, setWorkspaceMatchedDevelopers, type Task, type Milestone, type TaskStatus } from "@/lib/workspace";
+import { subscribeToWorkspace, getWorkspaceState, setWorkspaceMilestones, setWorkspaceMatchedDevelopers, type Task, type Milestone, type TaskStatus } from "@/lib/workspace";
 import React, { useState, useEffect, useMemo, Suspense, useRef, useCallback, cloneElement } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -51,7 +51,6 @@ import {
   getStatusLabel,
   getStatusColor,
   type ProjectExecution,
-  type ProjectStatus,
 } from "@/lib/project-execution";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -196,7 +195,6 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   const [reviewTask, setReviewTask] = useState<Task | null>(null);
   const [gate3Hired, setGate3Hired] = useState(false);
   const [showContact, setShowContact] = useState(false);
-  const [selectedDev, setSelectedDev] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [newMsg, setNewMsg] = useState("");
   const [showRollbackConfirm, setShowRollbackConfirm] = useState(false);
@@ -213,8 +211,6 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   const [matchDetail, setMatchDetail]       = useState<string | null>(null);
   const [hiredDevIds, setHiredDevIds]       = useState<Set<string>>(new Set());
   const [expandedDevs, setExpandedDevs]       = useState<Record<string, boolean>>({});
-  const [chatDevId, setChatDevId]           = useState<string | null>(null);
-
   // ── Hire modal state ───────────────────────────────────────────────────────
   const [hireTarget,    setHireTarget]   = useState<MatchedDeveloper | null>(null);
   const [hireSending,   setHireSending]  = useState(false);
@@ -564,7 +560,6 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
          .catch(() => {})
          .finally(() => setLoadingMilestones(false));
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project, savedProjectId]);
 
 
@@ -2842,7 +2837,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                     <UserCheck className="w-5 h-5 text-white/60" />
                   </div>
                   <div>
-                    <h3 className="text-white font-bold">{selectedDev === "alex" ? "Alex M." : "Sarah J."}</h3>
+                    <h3 className="text-white font-bold">Sarah J.</h3>
                     <p className="text-[10px] text-green-500 font-bold uppercase tracking-widest">Online · All messages logged</p>
                   </div>
                 </div>

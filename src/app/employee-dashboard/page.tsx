@@ -667,6 +667,19 @@ export default function EmployeeDashboard() {
             {activeTab === "projects" && (
               <motion.section key="projects" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
 
+                {respondError && (
+                  <div className="flex items-start justify-between gap-4 p-4 rounded-2xl border border-red-500/25 bg-red-500/10 text-red-200 text-sm">
+                    <span className="font-light leading-relaxed">{respondError}</span>
+                    <button
+                      type="button"
+                      onClick={() => setRespondError(null)}
+                      className="shrink-0 text-[10px] font-black uppercase tracking-widest text-red-300 hover:text-white"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
                 {/* ── PROJECT INVITATIONS ── */}
                 {pendingInvitations.length > 0 && (
                   <div className="space-y-4">

@@ -175,7 +175,7 @@ export async function creatorRejectCompletion(
 ): Promise<void> {
   await updateDoc(doc(db, COL, projectId), {
     status: "in_progress",
-    creatorApproval: emptyApproval(),
+    creatorApproval: { approved: false, approvedAt: Date.now(), notes },
     developerApproval: emptyApproval(),
     updatedAt: serverTimestamp(),
   });

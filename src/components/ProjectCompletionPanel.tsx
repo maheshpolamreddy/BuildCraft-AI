@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   CheckCircle2, XCircle, Rocket, Shield, Star, Send,
   AlertTriangle, ExternalLink, Loader2, Award, FileText,
-  ChevronDown, Upload, Trash2, Plus, Flag, Lock,
+  Trash2, Plus, Flag, Lock,
 } from "lucide-react";
 import type {
   ProjectExecution,

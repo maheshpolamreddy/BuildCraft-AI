@@ -1572,7 +1572,11 @@ export default function ArchitectureView() {
                             </p>
                           </div>
                           <button
-                            onClick={e => { e.stopPropagation(); showDeleted ? handleRestoreHistory(saved.id) : handleDeleteHistory(saved.id); }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (showDeleted) void handleRestoreHistory(saved.id);
+                              else void handleDeleteHistory(saved.id);
+                            }}
                             disabled={deletingId === saved.id}
                             className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-white/40 hover:text-white p-1"
                             title={showDeleted ? "Restore Project" : "Delete Project"}
