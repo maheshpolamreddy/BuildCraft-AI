@@ -26,6 +26,7 @@ import { signOutUser } from "@/lib/auth";
 import { getHireRequestsByDeveloper, type HireRequest } from "@/lib/hireRequests";
 import { getProject, claimProjectAsDeveloper } from "@/lib/firestore";
 import { DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
+import { formatDateTimeSmart } from "@/lib/dateDisplay";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Tab = "projects" | "workspace" | "assessments" | "profile";
@@ -967,7 +968,7 @@ export default function EmployeeDashboard() {
                       const lastMs = a.respondedAt?.toMillis?.() ?? null;
                       const last = lastMs != null ? new Date(lastMs) : null;
                       const lastLabel = last
-                        ? `Last update ${last.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
+                        ? `Last update ${formatDateTimeSmart(last)}`
                         : "Activity timestamp not recorded";
                       const hasId = Boolean(a.projectId?.trim());
                       return (

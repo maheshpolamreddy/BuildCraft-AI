@@ -24,6 +24,7 @@ import Logo from "@/components/Logo";
 import { CreatorFlowBreadcrumb } from "@/components/FlowNavigation";
 import { parseJsonResponse } from "@/lib/parse-api-json";
 import { Timestamp } from "firebase/firestore";
+import { parseToDate, formatDateBadge } from "@/lib/dateDisplay";
 
 const typeConfig: Record<Requirement["type"], { label: string; color: string; bg: string }> = {
   feature:     { label: "Feature",     color: "text-blue-400",    bg: "border-blue-500/20 bg-blue-500/5"    },
@@ -561,9 +562,10 @@ export default function DiscoveryHub() {
                           <div className="flex-1 min-w-0">
                             <p className="text-[10px] font-bold text-white/70 truncate leading-tight">{saved.project.name}</p>
                             <p className="text-[9px] text-white/20 truncate">
-                              {saved.createdAt
-                                ? new Date((saved.createdAt as { seconds: number }).seconds * 1000).toLocaleDateString()
-                                : "—"}
+                              {(() => {
+                                const d = parseToDate(saved.createdAt);
+                                return d ? formatDateBadge(d) : "—";
+                              })()}
                             </p>
                           </div>
                           <button
@@ -791,9 +793,10 @@ export default function DiscoveryHub() {
                     const isLocked = saved.project.locked;
                     const toolCount = Object.values(saved.approvedTools ?? {}).filter(Boolean).length;
                     const reqCount  = saved.project.requirements?.length ?? 0;
-                    const dateStr   = saved.createdAt
-                      ? new Date((saved.createdAt as { seconds: number }).seconds * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-                      : "—";
+                    const dateStr = (() => {
+                      const d = parseToDate(saved.createdAt);
+                      return d ? formatDateBadge(d) : "—";
+                    })();
 
                     return (
                       <motion.div

@@ -58,6 +58,14 @@ import {
   getStatusColor,
   type ProjectExecution,
 } from "@/lib/project-execution";
+import {
+  parseToDate,
+  formatJoinedPrefix,
+  formatSentPrefix,
+  formatExpiresLabel,
+  formatChatMessageTime,
+  formatDateTimeSmart,
+} from "@/lib/dateDisplay";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Tab = "milestones" | "talent" | "prd" | "chat" | "audit" | "deploy" | "history" | "completion" | "architecture" | "deliverables";
@@ -1602,9 +1610,12 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                           <p className="text-xs text-white/40 truncate">{acceptedHire.developerEmail}</p>
                           <div className="flex items-center gap-2 mt-2">
                             <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg border text-emerald-400 border-emerald-500/30 bg-emerald-500/10">Accepted</span>
-                            {acceptedHire.respondedAt && (
-                              <span className="text-[10px] text-white/25">Joined {new Date(acceptedHire.respondedAt.toMillis?.() ?? 0).toLocaleDateString()}</span>
-                            )}
+                            {acceptedHire.respondedAt && (() => {
+                              const jd = parseToDate(acceptedHire.respondedAt);
+                              return jd ? (
+                                <span className="text-[10px] text-white/25">{formatJoinedPrefix(jd)}</span>
+                              ) : null;
+                            })()}
                           </div>
                         </div>
                         <div className="shrink-0 flex gap-2">
@@ -1677,12 +1688,18 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                                 <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-lg border text-amber-400 border-amber-500/30 bg-amber-500/10 flex items-center gap-1.5">
                                   <div className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" /> Pending
                                 </span>
-                                {r.createdAt && (
-                                  <span className="text-[10px] text-white/25">Sent {new Date(r.createdAt.toMillis?.() ?? 0).toLocaleDateString()}</span>
-                                )}
-                                {r.expiresAt && (
-                                  <span className="text-[10px] text-white/20">Expires {new Date(r.expiresAt.toMillis?.() ?? 0).toLocaleDateString()}</span>
-                                )}
+                                {r.createdAt && (() => {
+                                  const sd = parseToDate(r.createdAt);
+                                  return sd ? (
+                                    <span className="text-[10px] text-white/25">{formatSentPrefix(sd)}</span>
+                                  ) : null;
+                                })()}
+                                {r.expiresAt && (() => {
+                                  const ed = parseToDate(r.expiresAt);
+                                  return ed ? (
+                                    <span className="text-[10px] text-white/20">{formatExpiresLabel(ed)}</span>
+                                  ) : null;
+                                })()}
                               </div>
                             </div>
                             <button
@@ -2348,12 +2365,10 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                               <p
                                 className={`text-[9px] mt-1 tabular-nums ${isMine ? "text-emerald-100/65 text-right" : "text-white/40 text-left"}`}
                               >
-                                {msg.sentAt
-                                  ? new Date(msg.sentAt.seconds * 1000).toLocaleTimeString([], {
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    })
-                                  : ""}
+                                {(() => {
+                                  const md = parseToDate(msg.sentAt);
+                                  return md ? formatChatMessageTime(md) : "";
+                                })()}
                               </p>
                             </div>
                           </div>
@@ -2718,7 +2733,10 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                     {auditEntries.map((entry, i) => {
                       const cfg = AUDIT_ICONS[entry.action] ?? { icon: <Info className="w-4 h-4" />, color: "white" };
                       const cls = COLOR_CLS[cfg.color] ?? COLOR_CLS.white;
-                      const ts = entry.timestamp ? new Date((entry.timestamp as { seconds: number }).seconds * 1000).toLocaleString() : "—";
+                      const ts = (() => {
+                        const ad = parseToDate(entry.timestamp);
+                        return ad ? formatDateTimeSmart(ad) : "—";
+                      })();
                       return (
                         <div key={entry.id ?? i} className="flex gap-4 group">
                           <div className="flex flex-col items-center">

@@ -27,6 +27,7 @@ import { Timestamp } from "firebase/firestore";
 import type { GeneratedPromptRow, ProjectBlueprint as StoreProjectBlueprint } from "@/lib/plan-orchestration";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { CreatorFlowBreadcrumb } from "@/components/FlowNavigation";
+import { parseToDate, formatDateBadge } from "@/lib/dateDisplay";
 
 type Tab = "architecture" | "tools" | "risks" | "prompts" | "code" | "config";
 
@@ -1566,9 +1567,10 @@ export default function ArchitectureView() {
                           <div className="flex-1 min-w-0">
                             <p className="text-[10px] font-bold text-white/70 truncate leading-tight">{saved.project.name}</p>
                             <p className="text-[9px] text-white/20 truncate">
-                              {saved.createdAt
-                                ? new Date((saved.createdAt as { seconds: number }).seconds * 1000).toLocaleDateString()
-                                : "—"}
+                              {(() => {
+                                const d = parseToDate(saved.createdAt);
+                                return d ? formatDateBadge(d) : "—";
+                              })()}
                             </p>
                           </div>
                           <button
