@@ -8,13 +8,20 @@ import { type Milestone } from "@/lib/workspace";
 export type Role = "employer" | "employee" | null;
 export type Purpose = "startup" | "enterprise" | "learning" | "freelance" | null;
 
-/** Project creator (employer) profile collected after role selection */
+export type ProfileImageMeta = { type: "upload" | "avatar"; url: string };
+
+/** Project creator (employer) profile — also persisted under Firestore `users/{uid}.employerProfile` */
 export interface EmployerProfile {
   fullName: string;
   companyName: string;
   jobTitle: string;
   phone: string;
   website: string;
+  /** Professional / product experience (years or summary) */
+  experience: string;
+  /** Types of projects or domains the creator cares about */
+  projectInterests: string;
+  profileImage: ProfileImageMeta | null;
 }
 
 /** Roles a user can hold simultaneously */
@@ -88,6 +95,10 @@ interface BuildCraftStore {
   purpose:          Purpose;
   compliance:       { soc2: boolean; gdpr: boolean; hipaa: boolean };
   employerProfile:  EmployerProfile;
+  /** True after first Firestore user doc load for project-creator gate (session-scoped). */
+  projectCreatorHydrated: boolean;
+  /** Mirrors Firestore `projectCreatorProfileCompleted`; false blocks creator hub until setup. */
+  projectCreatorProfileCompleted: boolean | null;
 
   // Project (employer)
   project:       ProjectState | null;
@@ -110,6 +121,8 @@ interface BuildCraftStore {
   setPurpose:        (purpose: Purpose) => void;
   setCompliance:     (c: { soc2: boolean; gdpr: boolean; hipaa: boolean }) => void;
   setEmployerProfile: (p: EmployerProfile) => void;
+  setProjectCreatorHydrated: (v: boolean) => void;
+  setProjectCreatorProfileCompleted: (v: boolean | null) => void;
   setProject:        (p: ProjectState) => void;
   /** Merge fields into the current project (e.g. saved landing page HTML). */
   patchProject:      (partial: Partial<ProjectState>) => void;
@@ -137,7 +150,12 @@ const defaultState = {
     jobTitle: "",
     phone: "",
     website: "",
+    experience: "",
+    projectInterests: "",
+    profileImage: null,
   } satisfies EmployerProfile,
+  projectCreatorHydrated: false,
+  projectCreatorProfileCompleted: null as boolean | null,
   project:              null as ProjectState | null,
   approvedTools:        {} as Record<string, boolean | undefined>,
   promptsViewed:        false,
@@ -169,6 +187,9 @@ export const useStore = create<BuildCraftStore>()(
       setPurpose:        (purpose)        => set({ purpose }),
       setCompliance:     (compliance)     => set({ compliance }),
       setEmployerProfile: (employerProfile) => set({ employerProfile }),
+      setProjectCreatorHydrated: (projectCreatorHydrated) => set({ projectCreatorHydrated }),
+      setProjectCreatorProfileCompleted: (projectCreatorProfileCompleted) =>
+        set({ projectCreatorProfileCompleted }),
       setProject:        (project)        => set({ project }),
       patchProject:      (partial) =>
         set((state) => ({
@@ -228,6 +249,8 @@ export const useStore = create<BuildCraftStore>()(
         project:             state.project,
         approvedTools:       state.approvedTools,
         promptsViewed:       state.promptsViewed,
+        /** Survives refresh so returning creators are not re-prompted before Firestore responds */
+        projectCreatorProfileCompleted: state.projectCreatorProfileCompleted,
       }),
     }
   )

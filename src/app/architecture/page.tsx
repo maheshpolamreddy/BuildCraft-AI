@@ -6,7 +6,7 @@ import {
   History, Layers, CheckCircle2, ShieldAlert, Cpu, Database, Cloud, FileCode,
   ThumbsUp, ThumbsDown, ArrowRight, Lock, Eye, Copy, Check, Terminal, FolderOpen,
   GitBranch, AlertTriangle, Info, Code2, Sparkles, LayoutDashboard, Trash2,
-  LogIn, Home, User, Bell, Loader2, RefreshCw, ChevronDown, ChevronUp, Users,
+  LogIn, Home, User, Bell, Loader2, RefreshCw, ChevronDown, ChevronUp, Users, UserRound,
   ImageIcon, X, ZoomIn, Wand2, ExternalLink, Monitor, Settings, Link as LinkIcon, KeyRound,
   BookOpen, Zap, Globe, Server, ShieldCheck, Package, CreditCard, Mail, Wifi,
   BrainCircuit, LayoutGrid, Activity
@@ -20,6 +20,7 @@ import { logAction } from "@/lib/auditLog";
 import { parseApiJson } from "@/lib/parse-api-json";
 import { getUserFacingError } from "@/lib/user-facing-error";
 import Logo from "@/components/Logo";
+import { CreatorFlowGuard } from "@/components/CreatorFlowGuard";
 import { DynamicUIRenderer } from "@/components/ui-json/DynamicUIRenderer";
 import type { UIScreenJson } from "@/lib/ui-json-schema";
 import { isDeveloperRegistrationComplete, shouldDefaultToDeveloperDashboard } from "@/lib/developerProfile";
@@ -849,8 +850,25 @@ function aiToolId(name: string) {
 
 export default function ArchitectureView() {
   const router = useRouter();
-  const { authReady, project, setProject, approvedTools, setToolApproval, setPromptsViewed, promptsViewed, currentUser, savedProjectId, setSavedProjectId, patchProject, clearProject, incrementVersion, developerProfile, userRoles, role } =
-    useStore();
+  const {
+    authReady,
+    project,
+    setProject,
+    approvedTools,
+    setToolApproval,
+    setPromptsViewed,
+    promptsViewed,
+    currentUser,
+    savedProjectId,
+    setSavedProjectId,
+    patchProject,
+    clearProject,
+    incrementVersion,
+    developerProfile,
+    userRoles,
+    role,
+    projectCreatorHydrated,
+  } = useStore();
   const [activeTab, setActiveTab] = useState<Tab>("architecture");
   const version = project?.version ?? "v1.0";
 
@@ -1381,8 +1399,25 @@ export default function ArchitectureView() {
     { id: "code",         label: "UI/UX Code" },
   ];
 
+  const mustWaitCreatorHydration =
+    authReady &&
+    currentUser &&
+    currentUser.uid !== "demo-guest" &&
+    userRoles.includes("employer") &&
+    !projectCreatorHydrated;
+
+  if (mustWaitCreatorHydration) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-[#030303] text-white/50">
+        <Loader2 className="w-10 h-10 animate-spin text-indigo-400/80" />
+        <p className="text-xs font-light">Loading workspace…</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen relative flex">
+      <CreatorFlowGuard />
       {/* Ambient background glows */}
       <div className="fixed top-0 left-0 w-[600px] h-[600px] bg-indigo-500/[0.04] rounded-full blur-[200px] pointer-events-none -z-10" />
       <div className="fixed bottom-0 right-0 w-[700px] h-[700px] bg-purple-500/[0.04] rounded-full blur-[200px] pointer-events-none -z-10" />
@@ -1408,6 +1443,16 @@ export default function ArchitectureView() {
             <Home className="w-4 h-4 group-hover:text-blue-400 transition-colors" />
             <span className="text-xs font-medium">Home</span>
           </Link>
+
+          {currentUser && userRoles.includes("employer") && (
+            <Link
+              href="/creator/profile"
+              className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 rounded-xl transition-all text-xs group"
+            >
+              <UserRound className="w-4 h-4 group-hover:text-indigo-400 transition-colors shrink-0" />
+              <span className="font-medium">Profile</span>
+            </Link>
+          )}
 
           {/* Requirements */}
           <button onClick={() => router.push("/discovery")} className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 transition-all rounded-xl group">

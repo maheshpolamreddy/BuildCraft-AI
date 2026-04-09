@@ -181,15 +181,20 @@ function PlatformEntryInner() {
       jobTitle: employerJobTitle.trim(),
       phone: employerPhone.trim(),
       website: employerWebsite.trim(),
+      experience: "",
+      projectInterests: "",
+      profileImage: null,
     };
     setEmployerProfile(next);
     addUserRole("employer");
+    useStore.getState().setProjectCreatorProfileCompleted(false);
 
     const { currentUser } = useStore.getState();
     if (currentUser && currentUser.uid !== "demo-guest") {
       await updateUserProfile(currentUser.uid, {
         role: "employer",
         employerProfile: next,
+        projectCreatorProfileCompleted: false,
         onboardedAt: new Date().toISOString(),
       });
       await logAction(currentUser.uid, "employer.profile_saved", { company: next.companyName });

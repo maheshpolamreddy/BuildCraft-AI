@@ -11,7 +11,7 @@ import {
   Loader2, Layers, Terminal, GitBranch, CheckCircle,
   XCircle, Rocket, Play, Zap, Activity, GitMerge,
   Package, Eye, BarChart2, Flag, ArrowRight, Sparkles,
-  FileText, Mail, Home, FolderOpen, CheckSquare, Trash2, Briefcase,
+  FileText, Mail, Home, FolderOpen, CheckSquare, Trash2, Briefcase, UserRound,
 } from "lucide-react";
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _unused = { Download, ChevronRight, Play, Star, Scale };
@@ -48,6 +48,7 @@ import { deleteDoc, doc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { getProject, claimProjectAsDeveloper, type SavedProject } from "@/lib/firestore";
 import { CreatorFlowBreadcrumb, DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
+import { CreatorFlowGuard } from "@/components/CreatorFlowGuard";
 import { ProjectCompletionPanel } from "@/components/ProjectCompletionPanel";
 import {
   initProjectExecution,
@@ -166,7 +167,20 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   const pathname = usePathname();
   const chatQueryParam = searchParams.get("chat");
   const routeProjectId = (initialProjectId?.trim() || searchParams.get("projectId")) || null;
-  const { authReady, project, setProject, approvedTools, currentUser, savedProjectId, setSavedProjectId, clearProject, developerProfile, userRoles, role } = useStore();
+  const {
+    authReady,
+    project,
+    setProject,
+    approvedTools,
+    currentUser,
+    savedProjectId,
+    setSavedProjectId,
+    clearProject,
+    developerProfile,
+    userRoles,
+    role,
+    projectCreatorHydrated,
+  } = useStore();
 
   // ── Role Detection (Robust email-based recovery fallback) ──────────────────
   const legacyProjectUid =
@@ -1263,8 +1277,27 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     );
   }
 
+  const mustWaitCreatorHydration =
+    isCreator &&
+    !isDeveloperWorkspace &&
+    authReady &&
+    currentUser &&
+    currentUser.uid !== "demo-guest" &&
+    userRoles.includes("employer") &&
+    !projectCreatorHydrated;
+
+  if (mustWaitCreatorHydration) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-[#0a0a0a] text-white/50">
+        <Loader2 className="w-10 h-10 animate-spin text-purple-400/80" />
+        <p className="text-xs font-light">Loading workspace…</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen relative flex">
+      <CreatorFlowGuard />
       <div className="fixed inset-0 pointer-events-none opacity-[0.03] z-50 bg-[url('/noise.svg')]" />
       <div className="fixed top-1/4 right-1/4 w-[500px] h-[500px] bg-white/[0.02] rounded-full blur-[150px] pointer-events-none -z-10" />
 
@@ -1307,6 +1340,16 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
             <Link href="/employee-dashboard" className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 rounded-xl transition-all text-xs group border border-transparent hover:border-indigo-500/20">
               <Briefcase className="w-4 h-4 group-hover:text-indigo-400 transition-colors" />
               <span className="font-medium">Developer Dashboard</span>
+            </Link>
+          )}
+
+          {isCreator && currentUser && userRoles.includes("employer") && (
+            <Link
+              href="/creator/profile"
+              className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 rounded-xl transition-all text-xs group"
+            >
+              <UserRound className="w-4 h-4 group-hover:text-purple-400 transition-colors shrink-0" />
+              <span className="font-medium">Profile</span>
             </Link>
           )}
 

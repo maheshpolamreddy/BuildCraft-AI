@@ -4,6 +4,12 @@ import { useEffect } from "react";
 import { onAuthChange } from "@/lib/auth";
 import { useStore } from "@/store/useStore";
 import { getDeveloperProfile, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
+import { getUserProfile, updateUserProfile } from "@/lib/firestore";
+import {
+  inferProjectCreatorProfileCompletedFromProfile,
+  normalizeEmployerProfile,
+  resolveProjectCreatorProfileCompletedFromFirestore,
+} from "@/lib/projectCreatorProfile";
 
 function clearStaleDeveloperStateForUid(uid: string | undefined) {
   const { developerProfile, userRoles } = useStore.getState();
@@ -40,6 +46,8 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
           devRegistrationStep: 1,
           userRoles: [],
           role: null,
+          projectCreatorHydrated: false,
+          projectCreatorProfileCompleted: null,
         });
         previousUid = null;
       } else {
@@ -47,12 +55,59 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
         if (previousUid !== null && previousUid !== user.uid) {
           useStore.getState().clearProject();
+          useStore.setState({
+            projectCreatorProfileCompleted: null,
+            projectCreatorHydrated: false,
+          });
         }
         previousUid = user.uid;
 
         useStore.setState({ currentUser: user, authReady: true });
 
         if (user.uid !== "demo-guest") {
+          useStore.setState({ projectCreatorHydrated: false });
+
+          getUserProfile(user.uid)
+            .then((data) => {
+              const s = useStore.getState();
+              const persistedCompleted = s.projectCreatorProfileCompleted;
+              if (!data) {
+                const ep = s.employerProfile;
+                const inferred = inferProjectCreatorProfileCompletedFromProfile(ep);
+                s.setProjectCreatorProfileCompleted(
+                  !!(inferred || persistedCompleted === true),
+                );
+                return;
+              }
+              const ep = normalizeEmployerProfile(data.employerProfile ?? {});
+              s.setEmployerProfile(ep);
+              if ((data as { role?: string }).role === "employer") {
+                s.addUserRole("employer");
+              }
+              const rawFlag = (data as { projectCreatorProfileCompleted?: unknown })
+                .projectCreatorProfileCompleted;
+              let completed = resolveProjectCreatorProfileCompletedFromFirestore(rawFlag, ep);
+              if (rawFlag !== true && rawFlag !== false) {
+                if (persistedCompleted === true) completed = true;
+              }
+              s.setProjectCreatorProfileCompleted(completed);
+              if (rawFlag !== true && rawFlag !== false && completed) {
+                void updateUserProfile(user.uid, { projectCreatorProfileCompleted: true });
+              }
+            })
+            .catch(() => {
+              const s = useStore.getState();
+              const ep = s.employerProfile;
+              const persistedCompleted = s.projectCreatorProfileCompleted;
+              const inferred = inferProjectCreatorProfileCompletedFromProfile(ep);
+              s.setProjectCreatorProfileCompleted(
+                !!(inferred || persistedCompleted === true),
+              );
+            })
+            .finally(() => {
+              useStore.getState().setProjectCreatorHydrated(true);
+            });
+
           getDeveloperProfile(user.uid).then((p) => {
             if (p && isDeveloperRegistrationComplete(p)) {
               const s = useStore.getState();
@@ -60,6 +115,11 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
               s.addUserRole("developer");
             }
           }).catch(() => {});
+        } else {
+          useStore.setState({
+            projectCreatorHydrated: true,
+            projectCreatorProfileCompleted: true,
+          });
         }
       }
     });

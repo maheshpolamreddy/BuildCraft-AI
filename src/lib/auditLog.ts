@@ -20,6 +20,7 @@ export type AuditAction =
   | "onboarding.developer_role"
   | "employer.profile_saved"
   | "employer.profile_updated"
+  | "employer.project_creator_profile_completed"
   | "project.created"
   | "project.updated"
   | "project.locked"

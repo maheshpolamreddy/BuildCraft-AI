@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles, Layers, Activity, Check, AlertTriangle,
   ArrowRight, ShieldCheck, Zap, Target, AlertCircle,
   Home, Users, History, Trash2, FolderOpen, Lock, Clock, ChevronDown,
-  RefreshCw, LogIn, UserCheck, CheckCircle2, Loader2, UserRound, Phone, Globe, Briefcase, Building2,
+  RefreshCw, LogIn, UserCheck, CheckCircle2, Loader2, UserRound,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -14,13 +14,14 @@ import { useStore, analyzeIdea, type ProjectState } from "@/store/useStore";
 import type { Requirement } from "@/store/useStore";
 import { 
   saveProject, getUserProjects, getProjectsByEmail, deleteProject, restoreProject, 
-  getUserProfile, updateUserProfile, firestoreTimestampSeconds, type SavedProject 
+  firestoreTimestampSeconds, type SavedProject 
 } from "@/lib/firestore";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { logAction } from "@/lib/auditLog";
 import { getAllDeveloperProfiles, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
 import { type MatchedDeveloper } from "@/app/api/match-developers/route";
 import Logo from "@/components/Logo";
+import { CreatorFlowGuard } from "@/components/CreatorFlowGuard";
 import { CreatorFlowBreadcrumb } from "@/components/FlowNavigation";
 import { parseJsonResponse } from "@/lib/parse-api-json";
 import { Timestamp } from "firebase/firestore";
@@ -54,29 +55,12 @@ export default function DiscoveryHub() {
   const {
     authReady,
     project, setProject, toggleAssumption, currentUser, savedProjectId, setSavedProjectId, setToolApproval,
-    setEmployerProfile, clearProject,
+    clearProject,
     developerProfile, userRoles, role,
+    projectCreatorHydrated,
   } = useStore();
 
   useAutoSave();
-
-  const employerProfileRef = useRef<HTMLElement>(null);
-  const [profileOpen, setProfileOpen] = useState(false);
-
-  const scrollToEmployerProfile = () => {
-    setProfileOpen(true);
-    requestAnimationFrame(() => {
-      employerProfileRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  };
-  const [profileSaving, setProfileSaving] = useState(false);
-  const [profileDraft, setProfileDraft] = useState({
-    fullName: "",
-    companyName: "",
-    jobTitle: "",
-    phone: "",
-    website: "",
-  });
 
   const [idea, setIdea]               = useState(project?.idea ?? "");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -143,75 +127,6 @@ export default function DiscoveryHub() {
 
     fetchHistory();
   }, [currentUser, savedProjectId]);
-
-  // Deep link: /discovery#employer-profile
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (window.location.hash !== "#employer-profile") return;
-    setProfileOpen(true);
-    const t = window.setTimeout(() => {
-      employerProfileRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 100);
-    return () => window.clearTimeout(t);
-  }, []);
-
-  // Load employer profile from Firestore into store + local draft (when user changes)
-  useEffect(() => {
-    const uid = currentUser?.uid;
-    if (!uid) return;
-
-    if (uid === "demo-guest") {
-      const ep = useStore.getState().employerProfile;
-      setProfileDraft({
-        fullName: ep.fullName,
-        companyName: ep.companyName,
-        jobTitle: ep.jobTitle,
-        phone: ep.phone,
-        website: ep.website,
-      });
-      return;
-    }
-
-    getUserProfile(uid).then((data) => {
-      const ep = data?.employerProfile;
-      if (ep && typeof ep === "object" && "fullName" in ep) {
-        const next = {
-          fullName: String((ep as { fullName?: string }).fullName ?? ""),
-          companyName: String((ep as { companyName?: string }).companyName ?? ""),
-          jobTitle: String((ep as { jobTitle?: string }).jobTitle ?? ""),
-          phone: String((ep as { phone?: string }).phone ?? ""),
-          website: String((ep as { website?: string }).website ?? ""),
-        };
-        setEmployerProfile(next);
-        setProfileDraft(next);
-      } else {
-        const epLocal = useStore.getState().employerProfile;
-        const display = useStore.getState().currentUser?.displayName ?? "";
-        setProfileDraft({
-          fullName: epLocal.fullName || display || "",
-          companyName: epLocal.companyName,
-          jobTitle: epLocal.jobTitle,
-          phone: epLocal.phone,
-          website: epLocal.website,
-        });
-      }
-    });
-  }, [currentUser?.uid, setEmployerProfile]);
-
-  async function saveEmployerProfile() {
-    if (!currentUser?.uid || currentUser.uid === "demo-guest") {
-      setEmployerProfile(profileDraft);
-      return;
-    }
-    setProfileSaving(true);
-    try {
-      setEmployerProfile(profileDraft);
-      await updateUserProfile(currentUser.uid, { employerProfile: profileDraft });
-      await logAction(currentUser.uid, "employer.profile_updated", {});
-    } finally {
-      setProfileSaving(false);
-    }
-  }
 
   // Restore history item as the active project and navigate to correct page
   function loadFromHistory(saved: SavedProject) {
@@ -395,8 +310,25 @@ export default function DiscoveryHub() {
     }
   }
 
+  const mustWaitCreatorHydration =
+    authReady &&
+    currentUser &&
+    currentUser.uid !== "demo-guest" &&
+    userRoles.includes("employer") &&
+    !projectCreatorHydrated;
+
+  if (mustWaitCreatorHydration) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3 bg-[#030303] text-white/50">
+        <Loader2 className="w-10 h-10 animate-spin text-blue-400/80" />
+        <p className="text-xs font-light">Loading workspace…</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen relative flex">
+      <CreatorFlowGuard />
       <div className="fixed top-0 right-0 w-[700px] h-[700px] bg-blue-500/[0.04] rounded-full blur-[180px] pointer-events-none -z-10" />
       <div className="fixed bottom-0 left-0 w-[600px] h-[600px] bg-purple-500/[0.03] rounded-full blur-[180px] pointer-events-none -z-10" />
       <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-emerald-500/[0.02] rounded-full blur-[150px] pointer-events-none -z-10" />
@@ -461,21 +393,20 @@ export default function DiscoveryHub() {
           <div className="pt-2 mt-1 border-t border-white/5" />
 
           {currentUser ? (
-            <button
-              type="button"
-              onClick={scrollToEmployerProfile}
-              className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 rounded-xl transition-all text-xs group text-left"
-            >
-              <UserRound className="w-4 h-4 group-hover:text-blue-400 transition-colors shrink-0" />
-              <span className="font-medium">Your profile</span>
-            </button>
-          ) : (
             <Link
-              href="/auth?return=/discovery%23employer-profile"
+              href="/creator/profile"
               className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 rounded-xl transition-all text-xs group"
             >
               <UserRound className="w-4 h-4 group-hover:text-blue-400 transition-colors shrink-0" />
-              <span className="font-medium">Your profile</span>
+              <span className="font-medium">Profile</span>
+            </Link>
+          ) : (
+            <Link
+              href="/auth?return=/creator/profile"
+              className="flex items-center gap-3 w-full px-3 py-2.5 text-white/40 hover:text-white hover:bg-white/5 rounded-xl transition-all text-xs group"
+            >
+              <UserRound className="w-4 h-4 group-hover:text-blue-400 transition-colors shrink-0" />
+              <span className="font-medium">Profile</span>
             </Link>
           )}
         </nav>
@@ -1204,114 +1135,6 @@ export default function DiscoveryHub() {
             </AnimatePresence>
           )}
 
-          {/* Project creator (employer) profile — anchored from sidebar “Your profile” */}
-          {currentUser && (
-            <section
-              ref={employerProfileRef}
-              id="employer-profile"
-              className="rounded-3xl border border-white/8 bg-white/[0.02] overflow-hidden backdrop-blur-sm shadow-[0_8px_32px_rgba(0,0,0,0.4)] scroll-mt-28"
-            >
-              <button
-                type="button"
-                onClick={() => setProfileOpen((o) => !o)}
-                className="w-full flex items-center justify-between gap-4 p-5 text-left hover:bg-white/[0.03] transition-colors group"
-              >
-                <div className="flex items-center gap-3.5 min-w-0">
-                  <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-500/20 to-blue-500/5 border border-blue-500/30 flex items-center justify-center shrink-0 shadow-[0_0_20px_rgba(59,130,246,0.1)] group-hover:shadow-[0_0_25px_rgba(59,130,246,0.2)] transition-all">
-                    <UserRound className="w-5 h-5 text-blue-400" />
-                  </div>
-                  <div className="min-w-0">
-                    <h2 className="text-sm font-black text-white tracking-tight">Your profile</h2>
-                    <p className="text-[11px] text-white/40 truncate">
-                      {profileDraft.fullName || "Add your name and org"} · Project creator
-                    </p>
-                  </div>
-                </div>
-                <div className={`w-7 h-7 rounded-full bg-white/5 border border-white/10 flex items-center justify-center transition-all ${profileOpen ? "rotate-180 border-white/20" : ""}`}>
-                  <ChevronDown className="w-3.5 h-3.5 text-white/50" />
-                </div>
-              </button>
-              <AnimatePresence>
-                {profileOpen && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="border-t border-white/10"
-                  >
-                    <div className="p-5 pt-2 space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-[10px] font-bold uppercase tracking-widest text-white/35 mb-1.5">Full name</label>
-                          <input
-                            value={profileDraft.fullName}
-                            onChange={(e) => setProfileDraft((d) => ({ ...d, fullName: e.target.value }))}
-                            placeholder="Your name"
-                            className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-blue-500/40"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold uppercase tracking-widest text-white/35 mb-1.5 flex items-center gap-1.5">
-                            <Building2 className="w-3 h-3" /> Company / org
-                          </label>
-                          <input
-                            value={profileDraft.companyName}
-                            onChange={(e) => setProfileDraft((d) => ({ ...d, companyName: e.target.value }))}
-                            placeholder="Company or team"
-                            className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-blue-500/40"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold uppercase tracking-widest text-white/35 mb-1.5 flex items-center gap-1.5">
-                            <Briefcase className="w-3 h-3" /> Role / title
-                          </label>
-                          <input
-                            value={profileDraft.jobTitle}
-                            onChange={(e) => setProfileDraft((d) => ({ ...d, jobTitle: e.target.value }))}
-                            placeholder="e.g. Product lead"
-                            className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-blue-500/40"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold uppercase tracking-widest text-white/35 mb-1.5 flex items-center gap-1.5">
-                            <Phone className="w-3 h-3" /> Phone
-                          </label>
-                          <input
-                            value={profileDraft.phone}
-                            onChange={(e) => setProfileDraft((d) => ({ ...d, phone: e.target.value }))}
-                            placeholder="+1 …"
-                            className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-blue-500/40"
-                          />
-                        </div>
-                        <div className="md:col-span-2">
-                          <label className="block text-[10px] font-bold uppercase tracking-widest text-white/35 mb-1.5 flex items-center gap-1.5">
-                            <Globe className="w-3 h-3" /> Website (optional)
-                          </label>
-                          <input
-                            value={profileDraft.website}
-                            onChange={(e) => setProfileDraft((d) => ({ ...d, website: e.target.value }))}
-                            placeholder="https://"
-                            className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder:text-white/25 focus:outline-none focus:border-blue-500/40"
-                          />
-                        </div>
-                      </div>
-                      <div className="flex justify-end">
-                        <button
-                          type="button"
-                          onClick={() => void saveEmployerProfile()}
-                          disabled={profileSaving}
-                          className="px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest silver-gradient text-black disabled:opacity-50 flex items-center gap-2"
-                        >
-                          {profileSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                          Save profile
-                        </button>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </section>
-          )}
         </div>
 
         {/* Right Panel — AI Analysis HUD */}
