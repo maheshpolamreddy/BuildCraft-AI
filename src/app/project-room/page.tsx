@@ -400,6 +400,34 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   type HiringState = "no-hire" | "pending" | "accepted";
   const hiringState: HiringState = acceptedHire ? "accepted" : pendingHires.length > 0 ? "pending" : "no-hire";
 
+  /** Chat labels + partner name: developer sees client; employer sees developer. */
+  const viewerIsDeveloperRole = Boolean(isDeveloper || isDeveloperWorkspace);
+  const chatSectionTitle = viewerIsDeveloperRole ? "Chat with Client" : "Chat with Developer";
+
+  const activeChatHire = useMemo(
+    () => projectHireReqs.find((r) => r.token === activeChatId),
+    [projectHireReqs, activeChatId],
+  );
+  const acceptedHiresForWorkspace = useMemo(
+    () => projectHireReqs.filter((r) => r.status === "accepted"),
+    [projectHireReqs],
+  );
+  const chatPartnerDisplayName = useMemo(() => {
+    const req = activeChatHire;
+    if (viewerIsDeveloperRole) {
+      return (
+        (req?.creatorName || "").trim() ||
+        (chatRoom?.creatorName || "").trim() ||
+        "Client"
+      );
+    }
+    return (
+      (req?.developerName || "").trim() ||
+      (chatRoom?.developerName || "").trim() ||
+      "Developer"
+    );
+  }, [viewerIsDeveloperRole, activeChatHire, chatRoom?.creatorName, chatRoom?.developerName]);
+
   // ── Derived stats ──────────────────────────────────────────────────────────
   const allTasks   = milestones.flatMap(m => m.tasks);
   const doneTasks  = allTasks.filter(t => t.status === "approved").length;
@@ -797,7 +825,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   // ── Ensure Firestore chat room exists (signed-in creator can create per rules) ─
   useEffect(() => {
     if (activeTab !== "chat" || !currentUser?.uid || !activeChatId) return;
-    const req = hireRequests.find(r => r.token === activeChatId && r.status === "accepted");
+    const req = projectHireReqs.find((r) => r.token === activeChatId && r.status === "accepted");
     if (!req) return;
     createOrGetChat({
       chatId:         activeChatId,
@@ -809,7 +837,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       developerName:  req.developerName,
       developerEmail: req.developerEmail,
     }).catch(() => {});
-  }, [activeTab, currentUser?.uid, activeChatId, hireRequests]);
+  }, [activeTab, currentUser?.uid, activeChatId, projectHireReqs]);
 
   // ── Persist active thread in URL + sessionStorage (reopen later) ───────────
   useEffect(() => {
@@ -1299,7 +1327,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
             { id: "architecture", label: "Architecture & Tools", icon: <Layers className="w-5 h-5" />, badge: approvedCount > 0 ? String(approvedCount) : null },
             { id: "deliverables", label: "Files & Deliverables", icon: <Package className="w-5 h-5" />, badge: doneTasks > 0 ? `${doneTasks} done` : null },
             { id: "prd",        label: "PRD Document",    icon: <FileText className="w-5 h-5" />,     badge: prds.length > 0 ? "New" : null },
-            { id: "chat",       label: (isDeveloper || isDeveloperWorkspace) ? "Chat with Client" : "Chat with Dev",   icon: <MessageSquare className="w-5 h-5" />, badge: activeChatId ? "Live" : null },
+            { id: "chat",       label: (isDeveloper || isDeveloperWorkspace) ? "Chat with Client" : "Chat with Developer",   icon: <MessageSquare className="w-5 h-5" />, badge: activeChatId ? "Live" : null },
             { id: "history",    label: "Hiring History",  icon: <FolderOpen className="w-5 h-5" />,   badge: hireRequests.length > 0 ? String(hireRequests.length) : null },
             { id: "completion",  label: "Completion",      icon: <Flag className="w-5 h-5" />,         badge: projExec?.status === "review" ? "Review" : projExec?.status === "completed" ? "Done" : null },
             { id: "deploy",     label: "CI/CD Deploy",    icon: <Rocket className="w-5 h-5" />,       badge: progress === 100 ? "Ready" : null },
@@ -2199,7 +2227,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
             {activeTab === "chat" && (
               <motion.section key="chat" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="space-y-4">
                 <h2 className="text-white font-black text-xl tracking-tight flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-indigo-400" /> Chat with Developer
+                  <MessageSquare className="w-5 h-5 text-indigo-400" /> {chatSectionTitle}
                 </h2>
 
                 {chatSubError && (
@@ -2234,10 +2262,16 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                 {!activeChatId ? (
                   <div className="text-center py-16 space-y-4">
                     <MessageSquare className="w-12 h-12 text-white/10 mx-auto" />
-                    <p className="text-white/40 text-sm">Chat is activated after a developer accepts your hire invitation.</p>
-                    <button onClick={() => setActiveTab("talent")} className="px-5 py-2.5 silver-gradient text-black font-black uppercase tracking-widest text-xs rounded-xl">
-                      Hire a Developer
-                    </button>
+                    <p className="text-white/40 text-sm">
+                      {viewerIsDeveloperRole
+                        ? "Chat opens here once the client has sent a hire invitation and you have accepted it for this project."
+                        : "Chat is activated after a developer accepts your hire invitation."}
+                    </p>
+                    {!viewerIsDeveloperRole && (
+                      <button onClick={() => setActiveTab("talent")} className="px-5 py-2.5 silver-gradient text-black font-black uppercase tracking-widest text-xs rounded-xl">
+                        Hire a Developer
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="bg-gradient-to-br from-[#0c0c0c] to-[#050505] rounded-3xl border border-white/5 flex flex-col overflow-hidden shadow-[0_8px_40px_rgba(0,0,0,0.5)]" style={{ height: "60vh" }}>
@@ -2246,25 +2280,26 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                       <div className="flex items-center gap-3 min-w-0 flex-1">
                         <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shrink-0" />
                         <span className="text-white font-bold text-sm truncate">
-                          {hireRequests.find(r => r.token === activeChatId)?.developerName ?? "Developer"}
+                          {chatPartnerDisplayName}
                         </span>
                         <span className="text-[10px] text-white/30 ml-auto sm:ml-2 shrink-0">
-                          {hireRequests.find(r => r.token === activeChatId)?.projectName ?? projectName}
+                          {activeChatHire?.projectName ?? projectName}
                         </span>
                       </div>
-                      {hireRequests.filter(r => r.status === "accepted").length > 1 && (
+                      {acceptedHiresForWorkspace.length > 1 && (
                         <select
-                          value={activeChatId}
+                          value={activeChatId ?? ""}
                           onChange={e => setActiveChatId(e.target.value)}
-                          className="w-full sm:w-auto sm:max-w-[240px] bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50"
+                          className="w-full sm:w-auto sm:max-w-[280px] bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500/50"
+                          aria-label="Switch active chat thread for this project"
                         >
-                          {hireRequests
-                            .filter(r => r.status === "accepted")
-                            .map(r => (
-                              <option key={r.token} value={r.token}>
-                                {r.projectName} · {r.developerName}
-                              </option>
-                            ))}
+                          {acceptedHiresForWorkspace.map(r => (
+                            <option key={r.token} value={r.token}>
+                              {viewerIsDeveloperRole
+                                ? `${r.projectName} · ${(r.creatorName || "").trim() || "Client"}`
+                                : `${r.projectName} · ${(r.developerName || "").trim() || "Developer"}`}
+                            </option>
+                          ))}
                         </select>
                       )}
                     </div>
