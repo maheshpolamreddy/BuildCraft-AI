@@ -1372,8 +1372,11 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       {/* ── Main Content ────────────────────────────────────────────────────── */}
       <main className="flex-grow p-10 overflow-y-auto">
         <div className="max-w-4xl space-y-10">
-          {isDeveloperWorkspace ? (
-            <DeveloperFlowBreadcrumb className="rounded-2xl border border-white/10 bg-white/[0.03] mb-2" />
+          {isDeveloper || isDeveloperWorkspace ? (
+            <DeveloperFlowBreadcrumb
+              className="rounded-2xl border border-white/10 bg-white/[0.03] mb-2"
+              includeProjectRoomPath={isDeveloper && !isDeveloperWorkspace}
+            />
           ) : (
             <CreatorFlowBreadcrumb />
           )}

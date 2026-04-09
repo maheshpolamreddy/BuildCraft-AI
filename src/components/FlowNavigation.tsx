@@ -75,13 +75,29 @@ export function CreatorFlowBreadcrumb() {
   );
 }
 
-export function DeveloperFlowBreadcrumb({ className }: { className?: string }) {
+export type DeveloperFlowBreadcrumbProps = {
+  className?: string;
+  /**
+   * Set when this nav is shown on `/project-room` for a hired developer.
+   * That route is shared with creators; without this flag the breadcrumb would not render.
+   */
+  includeProjectRoomPath?: boolean;
+};
+
+export function DeveloperFlowBreadcrumb({
+  className,
+  includeProjectRoomPath = false,
+}: DeveloperFlowBreadcrumbProps) {
   const pathname = usePathname();
   const userRoles = useStore((s) => s.userRoles);
 
+  const onDeveloperProjectRoom =
+    includeProjectRoomPath && pathname === "/project-room";
+
   const devRoot =
     pathname.startsWith("/employee-dashboard") ||
-    pathname.startsWith("/developer");
+    pathname.startsWith("/developer") ||
+    onDeveloperProjectRoom;
 
   if (!devRoot) {
     return null;
@@ -114,7 +130,7 @@ export function DeveloperFlowBreadcrumb({ className }: { className?: string }) {
       <Link href="/developer/profile" className={linkCls(pathname === "/developer/profile")}>
         Profile
       </Link>
-      {pathname.startsWith("/developer/workspace") && (
+      {(pathname.startsWith("/developer/workspace") || onDeveloperProjectRoom) && (
         <>
           <ChevronRight className="w-3.5 h-3.5 text-white/25 shrink-0" />
           <span className={linkCls(true)}>Project workspace</span>
