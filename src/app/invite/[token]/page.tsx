@@ -95,7 +95,10 @@ function InvitePageInner() {
           senderName: req.developerName,
         });
         try {
-          sessionStorage.setItem(chatStorageKey("developer", u.uid), req.token);
+          sessionStorage.setItem(
+            chatStorageKey("developer", u.uid, req.projectId),
+            req.token,
+          );
         } catch {
           /* */
         }

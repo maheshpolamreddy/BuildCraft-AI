@@ -22,7 +22,13 @@ import { logAction, getProjectAuditLog, type AuditEntry } from "@/lib/auditLog";
 import { parseJsonResponse } from "@/lib/parse-api-json";
 import { getAllDeveloperProfiles, isDeveloperRegistrationComplete, shouldDefaultToDeveloperDashboard } from "@/lib/developerProfile";
 import { type MatchedDeveloper } from "@/app/api/match-developers/route";
-import { getHireRequestsByCreator, getHireRequestsByDeveloper, createHireRequest, type HireRequest } from "@/lib/hireRequests";
+import {
+  getHireRequestsByCreator,
+  getHireRequestsByDeveloper,
+  createHireRequest,
+  hireRequestsForProject,
+  type HireRequest,
+} from "@/lib/hireRequests";
 import { getPRD, getPRDsByHireToken, getPRDsByUser, type PRDDocument } from "@/lib/prd";
 import {
   createOrGetChat,
@@ -152,7 +158,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   const pathname = usePathname();
   const chatQueryParam = searchParams.get("chat");
   const routeProjectId = (initialProjectId?.trim() || searchParams.get("projectId")) || null;
-  const { authReady, project, setProject, approvedTools, currentUser, savedProjectId, setSavedProjectId, developerProfile, userRoles, role } = useStore();
+  const { authReady, project, setProject, approvedTools, currentUser, savedProjectId, setSavedProjectId, clearProject, developerProfile, userRoles, role } = useStore();
 
   // ── Role Detection (Robust email-based recovery fallback) ──────────────────
   const legacyProjectUid =
@@ -209,7 +215,6 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   const [matchLoading, setMatchLoading]     = useState(false);
   const [matchError, setMatchError]         = useState(false);
   const [matchDetail, setMatchDetail]       = useState<string | null>(null);
-  const [hiredDevIds, setHiredDevIds]       = useState<Set<string>>(new Set());
   const [expandedDevs, setExpandedDevs]       = useState<Record<string, boolean>>({});
   // ── Hire modal state ───────────────────────────────────────────────────────
   const [hireTarget,    setHireTarget]   = useState<MatchedDeveloper | null>(null);
@@ -239,6 +244,9 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   // ── Project Execution state ──────────────────────────────────────────────
   const [projExec, setProjExec] = useState<ProjectExecution | null>(null);
 
+  /** Reset when switching Firestore project doc so milestone AI does not skip for the new id. */
+  const generatedRef = useRef(false);
+
   const visibleTabs = useMemo(() => {
     if (isCreator) return VALID_TABS.filter(t => !["architecture", "deliverables"].includes(t));
     if (isDeveloperWorkspace) {
@@ -246,6 +254,37 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     }
     return VALID_TABS.filter(t => ["milestones", "chat", "prd", "completion"].includes(t));
   }, [isCreator, isDeveloperWorkspace]);
+
+  /**
+   * Deep-linked workspace (`/developer/workspace/:id` or `?projectId=`) — URL is the source of truth.
+   * Clears persisted Zustand project/approvedTools if they belong to another Firestore doc so we never
+   * flash another project’s data while the correct one loads.
+   */
+  useEffect(() => {
+    const pId = routeProjectId;
+    if (!pId) return;
+    if (savedProjectId && savedProjectId !== pId) {
+      setLoadingProject(true);
+      setProjectLoadFailed(false);
+      clearProject();
+      generatedRef.current = false;
+      setMilestones(FALLBACK_MILESTONES);
+      setMatchedDevs([]);
+      setPrds([]);
+      setProjExec(null);
+      setActiveTab("milestones");
+      setGate3Hired(false);
+      setExpandedMilestone("m1");
+    }
+  }, [routeProjectId, savedProjectId, clearProject]);
+
+  /** New URL project → drop in-memory chat subscription state (prevents cross-project message bleed). */
+  useEffect(() => {
+    if (!routeProjectId) return;
+    setActiveChatId(null);
+    setFireMsgs([]);
+    setChatRoom(null);
+  }, [routeProjectId]);
 
   // ── Remote Project Loading (Deep Linking) ──────────────────────────────────
   useEffect(() => {
@@ -285,11 +324,14 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
         if (cancelled) return;
         if (saved) {
+          const devFromDoc =
+            saved.project.developerUid ?? saved.developerUid ?? undefined;
           const merged = {
             ...saved.project,
             creatorUid: saved.project.creatorUid || saved.uid,
             creatorEmail: saved.project.creatorEmail || saved.email,
-            developerUid: saved.project.developerUid || saved.developerUid || undefined,
+            /** Per Firestore project doc only — never infer from other projects. */
+            developerUid: devFromDoc,
           };
           setProject(merged);
           setSavedProjectId(pId);
@@ -315,107 +357,44 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     if (t && VALID_TABS.includes(t as Tab)) setActiveTab(t as Tab);
   }, [searchParams]);
 
-  // ── All hire requests (history + chat threads) — load for BOTH creators and developers ──
-  useEffect(() => {
-    if (!authReady || !currentUser?.uid) return;
-    const fetcher = isCreator ? getHireRequestsByCreator : getHireRequestsByDeveloper;
-    fetcher(currentUser.uid)
-      .then(reqs => {
-        setHireRequests(reqs);
-        const tokens: Record<string, string> = {};
-        reqs.forEach(r => {
-          tokens[r.developerUid] = r.token;
-        });
-        setSentTokens(tokens);
-        const hired = new Set(reqs.filter(r => r.status === "accepted").map(r => r.developerUid));
-        if (hired.size) setHiredDevIds(hired);
-      })
-      .catch(() => {});
-  }, [authReady, currentUser?.uid, isCreator]);
-
   const approvedCount = Object.values(approvedTools).filter(Boolean).length;
   const projectName  = project?.name ?? "My Project";
   const version      = project?.version ?? "v1.0";
 
   /** Firestore project doc id from store or URL — keeps hire/PRD scope aligned per workspace. */
   const workspaceProjectId = savedProjectId || routeProjectId || null;
+  /** Prefer URL id for sessionStorage keys so chat persistence matches the open workspace. */
+  const chatScopeProjectId = routeProjectId || savedProjectId || null;
 
-  // ── Hiring state derivation (state machine for talent tab UI) ─────────────
+  // ── All hire requests — load for BOTH creators and developers (full list; scope per workspace below) ──
+  useEffect(() => {
+    if (!authReady || !currentUser?.uid) return;
+    const fetcher = isCreator ? getHireRequestsByCreator : getHireRequestsByDeveloper;
+    fetcher(currentUser.uid)
+      .then((reqs) => {
+        setHireRequests(reqs);
+        const tokens: Record<string, string> = {};
+        reqs.forEach((r) => {
+          tokens[r.developerUid] = r.token;
+        });
+        setSentTokens(tokens);
+      })
+      .catch(() => {});
+  }, [authReady, currentUser?.uid, isCreator]);
+
+  // ── Hiring state derivation (state machine for talent tab UI) — project-scoped ─────────────
   const projectHireReqs = useMemo(() => {
     const uid = currentUser?.uid;
-    const pid = workspaceProjectId;
-    const name = (projectName || "").trim();
-    const rNamesMatch = (a: string, b: string) => a.trim() === b.trim();
-
-    if (!pid && !name) return hireRequests;
-
-    let pDev = project?.developerUid;
-    let pCre = project?.creatorUid || legacyProjectUid || null;
-    if (isCreator && !pCre && uid) pCre = uid;
-
-    if (!pDev && uid && isCreator) {
-      const mine = hireRequests.filter(r => r.creatorUid === uid && r.status === "accepted");
-      const byPid = pid ? mine.find(r => r.projectId === pid) : undefined;
-      const byName = name ? mine.find(r => rNamesMatch(r.projectName || "", name)) : undefined;
-      const solo = mine.length === 1 ? mine[0] : undefined;
-      pDev = byPid?.developerUid || byName?.developerUid || solo?.developerUid || pDev;
-    }
-
-    if (!pCre && uid && (isDeveloper || isDeveloperWorkspace)) {
-      const mine = hireRequests.filter(r => r.developerUid === uid && r.status === "accepted");
-      const byPid = pid ? mine.find(r => r.projectId === pid) : undefined;
-      const byName = name ? mine.find(r => rNamesMatch(r.projectName || "", name)) : undefined;
-      const solo = mine.length === 1 ? mine[0] : undefined;
-      pCre = byPid?.creatorUid || byName?.creatorUid || solo?.creatorUid || pCre;
-    }
-
-    const acceptedPairCounts = new Map<string, number>();
-    for (const r of hireRequests) {
-      if (r.status !== "accepted") continue;
-      const k = `${r.creatorUid}\0${r.developerUid}`;
-      acceptedPairCounts.set(k, (acceptedPairCounts.get(k) ?? 0) + 1);
-    }
-
-    return hireRequests.filter(r => {
-      const rName = (r.projectName || "").trim();
-
-      if (pid && r.projectId === pid) return true;
-
-      if (!r.projectId && name && rNamesMatch(rName, name)) {
-        if (uid && (r.creatorUid === uid || r.developerUid === uid)) return true;
-      }
-
-      if (
-        r.status === "accepted" &&
-        pDev &&
-        pCre &&
-        r.developerUid === pDev &&
-        r.creatorUid === pCre
-      ) {
-        const ambiguous = (acceptedPairCounts.get(`${r.creatorUid}\0${r.developerUid}`) ?? 0) > 1;
-        if (!ambiguous) return true;
-        if (pid && r.projectId === pid) return true;
-        if (!r.projectId && name && rNamesMatch(rName, name)) return true;
-        if (name && rNamesMatch(rName, name)) return true;
-        return false;
-      }
-
-      if (!pid && name) return rNamesMatch(rName, name);
-
-      return false;
-    });
-  }, [
-    hireRequests,
-    workspaceProjectId,
-    projectName,
-    project?.developerUid,
-    project?.creatorUid,
-    legacyProjectUid,
-    currentUser?.uid,
-    isCreator,
-    isDeveloper,
-    isDeveloperWorkspace,
-  ]);
+    if (!uid) return [];
+    const scoped = hireRequestsForProject(
+      hireRequests,
+      workspaceProjectId,
+      projectName,
+    );
+    return scoped.filter(
+      (r) => r.creatorUid === uid || r.developerUid === uid,
+    );
+  }, [hireRequests, workspaceProjectId, projectName, currentUser?.uid]);
   const acceptedHire  = useMemo(() => projectHireReqs.find(r => r.status === "accepted") ?? null, [projectHireReqs]);
   const pendingHires  = useMemo(() => projectHireReqs.filter(r => r.status === "pending"), [projectHireReqs]);
   type HiringState = "no-hire" | "pending" | "accepted";
@@ -506,14 +485,12 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   // ── Auto-update execution status when hire completes ────────────────────
   useEffect(() => {
     if (!savedProjectId || !projExec) return;
-    if (hiredDevIds.size > 0 && projExec.status === "draft") {
+    if (hiringState !== "no-hire" && projExec.status === "draft") {
       updateProjectStatus(savedProjectId, "hiring").catch(() => {});
     }
-  }, [savedProjectId, projExec?.status, hiredDevIds.size]);
+  }, [savedProjectId, projExec?.status, hiringState]);
 
   // ── Generate milestones from AI ────────────────────────────────────────────
-  const generatedRef = useRef(false);
-
   useEffect(() => {
     if (!project || !savedProjectId || generatedRef.current) return;
     
@@ -565,7 +542,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
 
   const regenerateMilestones = useCallback(() => {
-    if (!project || hiredDevIds.size > 0 || !savedProjectId) return;
+    if (!project || hiringState !== "no-hire" || !savedProjectId) return;
     if (!confirm("Are you sure you want to regenerate all milestones? Any unsaved manual modifications will be lost.")) return;
     
     setLoadingMilestones(true);
@@ -607,10 +584,13 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       })
       .catch((err) => console.error("Regeneration failed", err))
       .finally(() => setLoadingMilestones(false));
-  }, [project, savedProjectId, hiredDevIds.size]);
+  }, [project, savedProjectId, hiringState]);
 
   // ── Automatic Matching Trigger ─────────────────────────────────────────────
   const matchTriggeredRef = useRef(false);
+  useEffect(() => {
+    matchTriggeredRef.current = false;
+  }, [savedProjectId]);
   useEffect(() => {
     if (!authReady || !currentUser?.uid) return;
     if (activeTab !== "talent" || !isCreator) return;
@@ -626,7 +606,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       runMatchingEngine();
     }, 600);
     return () => { clearTimeout(timer); matchTriggeredRef.current = false; };
-  }, [activeTab, isCreator, matchedDevs.length, matchLoading, authReady, currentUser?.uid]);
+  }, [activeTab, isCreator, matchedDevs.length, matchLoading, authReady, currentUser?.uid, savedProjectId]);
 
   // ── Load PRDs when PRD tab opens — scoped to this workspace (not all user PRDs) ─
   useEffect(() => {
@@ -657,21 +637,9 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
           if (merged.length === 0) {
             const fallbackTokens = new Set(
-              hireRequests
-                .filter(r => r.status === "accepted")
-                .filter(r => {
-                  if (pid && r.projectId === pid) return true;
-                  if (nameTrim && (r.projectName || "").trim() === nameTrim) return true;
-                  if (
-                    project?.developerUid &&
-                    project?.creatorUid &&
-                    r.developerUid === project.developerUid &&
-                    r.creatorUid === project.creatorUid
-                  )
-                    return true;
-                  return false;
-                })
-                .map(r => r.token),
+              hireRequestsForProject(hireRequests, pid, nameTrim)
+                .filter((r) => r.status === "accepted")
+                .map((r) => r.token),
             );
             if (fallbackTokens.size > 0) {
               const all = await getPRDsByUser(uid);
@@ -778,38 +746,53 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     if (activeTab !== "chat" || !currentUser) return;
     let cancelled = false;
 
-    // Use role-appropriate fetcher
     const fetcher = isCreator ? getHireRequestsByCreator : getHireRequestsByDeveloper;
 
     fetcher(currentUser.uid)
-      .then(reqs => {
+      .then((reqs) => {
         if (cancelled) return;
         setHireRequests(reqs);
-        const accepted = reqs.filter(r => r.status === "accepted");
+        const scoped = hireRequestsForProject(
+          reqs,
+          workspaceProjectId,
+          projectName,
+        );
+        const accepted = scoped.filter((r) => r.status === "accepted");
         if (!accepted.length) {
           setActiveChatId(null);
           return;
         }
         let stored: string | null = null;
         try {
-          stored = sessionStorage.getItem(chatStorageKey(userRole, currentUser.uid));
+          stored = sessionStorage.getItem(
+            chatStorageKey(userRole, currentUser.uid, chatScopeProjectId),
+          );
         } catch {
           /* private mode */
         }
-        const fromUrl = chatQueryParam && accepted.some(r => r.token === chatQueryParam) ? chatQueryParam : null;
-        const fromStore = stored && accepted.some(r => r.token === stored) ? stored : null;
+        const fromUrl = chatQueryParam && accepted.some((r) => r.token === chatQueryParam) ? chatQueryParam : null;
+        const fromStore = stored && accepted.some((r) => r.token === stored) ? stored : null;
         const sorted = [...accepted].sort(
           (a, b) => (b.respondedAt?.toMillis?.() ?? 0) - (a.respondedAt?.toMillis?.() ?? 0),
         );
         const fallback = sorted[0]?.token ?? null;
         const next = fromUrl || fromStore || fallback;
-        setActiveChatId(prev => (prev && accepted.some(r => r.token === prev) ? prev : next));
+        setActiveChatId((prev) => (prev && accepted.some((r) => r.token === prev) ? prev : next));
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [activeTab, currentUser?.uid, chatQueryParam, isCreator, userRole]);
+  }, [
+    activeTab,
+    currentUser?.uid,
+    chatQueryParam,
+    isCreator,
+    userRole,
+    workspaceProjectId,
+    projectName,
+    chatScopeProjectId,
+  ]);
 
   // ── Ensure Firestore chat room exists (signed-in creator can create per rules) ─
   useEffect(() => {
@@ -832,7 +815,10 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   useEffect(() => {
     if (!currentUser?.uid || !activeChatId || activeTab !== "chat") return;
     try {
-      sessionStorage.setItem(chatStorageKey(userRole, currentUser.uid), activeChatId);
+      sessionStorage.setItem(
+        chatStorageKey(userRole, currentUser.uid, chatScopeProjectId),
+        activeChatId,
+      );
     } catch {
       /* */
     }
@@ -841,7 +827,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     params.set("tab", "chat");
     params.set("chat", activeChatId);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [activeChatId, activeTab, currentUser?.uid, pathname, router, searchParams]);
+  }, [activeChatId, activeTab, currentUser?.uid, pathname, router, searchParams, userRole, chatScopeProjectId]);
 
   // ── Presence on chat tab (so offline pings work) ────────────────────────────
   useEffect(() => {
@@ -947,24 +933,22 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     setHireErrorDetail(null);
     try {
       const existing = await getHireRequestsByCreator(currentUser.uid);
+      const wsId = savedProjectId ?? null;
       const duplicate = existing.find(
-        r =>
+        (r) =>
           r.developerUid === dev.userId &&
-          r.projectName === projectName &&
-          r.status === "pending",
+          r.status === "pending" &&
+          (wsId ? r.projectId === wsId : r.projectName === projectName),
       );
       if (duplicate) {
-        setSentTokens(prev => ({ ...prev, [dev.userId]: duplicate.token }));
-        setHiredDevIds(prev => {
-          const n = new Set(prev);
-          n.add(dev.userId);
-          return n;
-        });
+        setSentTokens((prev) => ({ ...prev, [dev.userId]: duplicate.token }));
+        setHireRequests(existing);
         setHireResult("duplicate");
         setGate3Hired(true);
         logAction(currentUser.uid, "project.updated", {
           action: "hire-invite-duplicate",
           dev: dev.fullName,
+          projectId: savedProjectId,
         }).catch(() => {});
         return;
       }
@@ -998,12 +982,9 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setSentTokens(prev => ({ ...prev, [dev.userId]: token }));
-        setHiredDevIds(prev => {
-          const n = new Set(prev);
-          n.add(dev.userId);
-          return n;
-        });
+        setSentTokens((prev) => ({ ...prev, [dev.userId]: token }));
+        const refreshed = await getHireRequestsByCreator(currentUser.uid);
+        setHireRequests(refreshed);
         setHireResult("sent");
         setGate3Hired(true);
         logAction(currentUser.uid, "project.updated", {
@@ -1388,7 +1369,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                   {getStatusLabel(projExec.status)}
                 </span>
               )}
-              {activeTab === "milestones" && hiredDevIds.size === 0 && (
+              {activeTab === "milestones" && hiringState === "no-hire" && (
                 <button 
                   onClick={regenerateMilestones}
                   disabled={loadingMilestones}
@@ -1677,9 +1658,12 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                               onClick={async () => {
                                 try {
                                   await deleteDoc(doc(db, "hireRequests", r.token));
-                                  setHireRequests(prev => prev.filter(h => h.token !== r.token));
-                                  setSentTokens(prev => { const n = { ...prev }; delete n[r.developerUid]; return n; });
-                                  setHiredDevIds(prev => { const n = new Set(prev); n.delete(r.developerUid); return n; });
+                                  setHireRequests((prev) => prev.filter((h) => h.token !== r.token));
+                                  setSentTokens((prev) => {
+                                    const n = { ...prev };
+                                    delete n[r.developerUid];
+                                    return n;
+                                  });
                                 } catch { /* ignore */ }
                               }}
                               className="px-3 py-2 rounded-xl border border-white/10 text-white/30 hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/5 text-[10px] font-bold uppercase tracking-widest transition-all shrink-0"
@@ -1798,7 +1782,9 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                 {!matchLoading && matchedDevs.length > 0 && (
                   <div className="space-y-4">
                     {matchedDevs.map((dev, i) => {
-                      const isHired    = hiredDevIds.has(dev.userId);
+                      const link = projectHireReqs.find((r) => r.developerUid === dev.userId);
+                      const isHired =
+                        !!link && (link.status === "accepted" || link.status === "pending");
                       const isExpanded = !!expandedDevs[dev.userId];
                       const bandColor  = dev.confidenceBand === "Excellent" ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
                         : dev.confidenceBand === "Strong" ? "text-blue-400 bg-blue-500/10 border-blue-500/30"

@@ -112,3 +112,26 @@ export async function getAcceptedRequestForProject(creatorUid: string, projectNa
   if (snap.empty) return null;
   return snap.docs[0].data() as HireRequest;
 }
+
+/**
+ * Hire/invite rows for a single workspace (one Firestore `projects/{id}` doc).
+ * Always prefer `projectId` when present so assignments never leak across projects.
+ * Rows without `projectId` (legacy) match by display name only as a fallback.
+ */
+export function hireRequestsForProject(
+  reqs: HireRequest[],
+  projectDocId: string | null | undefined,
+  projectDisplayName: string,
+): HireRequest[] {
+  const pid = (projectDocId ?? "").trim();
+  const name = projectDisplayName.trim();
+  if (!pid && !name) return [];
+  if (pid) {
+    return reqs.filter((r) => {
+      if (r.projectId === pid) return true;
+      if (!r.projectId && name && (r.projectName || "").trim() === name) return true;
+      return false;
+    });
+  }
+  return reqs.filter((r) => (r.projectName || "").trim() === name);
+}

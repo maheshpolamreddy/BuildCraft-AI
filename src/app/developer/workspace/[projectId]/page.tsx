@@ -16,7 +16,13 @@ function DeveloperWorkspaceInner() {
       </div>
     );
   }
-  return <ProjectRoomContent initialProjectId={projectId} isDeveloperWorkspace />;
+  return (
+    <ProjectRoomContent
+      key={projectId}
+      initialProjectId={projectId}
+      isDeveloperWorkspace
+    />
+  );
 }
 
 export default function DeveloperWorkspacePage() {

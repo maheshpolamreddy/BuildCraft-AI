@@ -350,15 +350,21 @@ export default function DiscoveryHub() {
         console.warn("AI analysis fallback triggered:", data.error);
         return analyzeIdea(text.trim());
       })();
-      setProject(analysedProject);
+      const isolated: ProjectState = {
+        ...analysedProject,
+        developerUid: undefined,
+        creatorUid: currentUser?.uid,
+        creatorEmail: currentUser?.email ?? undefined,
+      };
+      setProject(isolated);
 
       // Persist to Firestore if user is signed in
       if (currentUser) {
         try {
-          const docId = await saveProject(currentUser.uid, analysedProject, {}, currentUser.email ?? undefined);
+          const docId = await saveProject(currentUser.uid, isolated, {}, currentUser.email ?? undefined);
           setSavedProjectId(docId);
           await logAction(currentUser.uid, "project.created", {
-            projectName: analysedProject.name,
+            projectName: isolated.name,
             docId,
           });
         } catch (saveErr) {
@@ -367,7 +373,13 @@ export default function DiscoveryHub() {
       }
     } catch (err) {
       console.error("Network error calling /api/analyze:", err);
-      const fallback = analyzeIdea(text.trim());
+      const fallbackRaw = analyzeIdea(text.trim());
+      const fallback: ProjectState = {
+        ...fallbackRaw,
+        developerUid: undefined,
+        creatorUid: currentUser?.uid,
+        creatorEmail: currentUser?.email ?? undefined,
+      };
       setProject(fallback);
       if (currentUser) {
         try {

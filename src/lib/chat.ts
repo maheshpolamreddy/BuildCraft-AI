@@ -89,7 +89,17 @@ export function classifyChatBubble(
   return { isMine: false, label: name || "Teammate" };
 }
 
-export function chatStorageKey(role: "creator" | "developer", uid: string): string {
+/**
+ * Session key for “last open chat thread” — include `projectId` so switching workspaces
+ * does not restore another project’s chat token.
+ */
+export function chatStorageKey(
+  role: "creator" | "developer",
+  uid: string,
+  projectId?: string | null,
+): string {
+  const p = (projectId ?? "").trim();
+  if (p) return `buildcraft:activeChat:${role}:${uid}:${p}`;
   return `buildcraft:activeChat:${role}:${uid}`;
 }
 
