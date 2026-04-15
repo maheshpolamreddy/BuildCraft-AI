@@ -15,7 +15,17 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/store/useStore";
-import { updateProject, getUserProjects, deleteProject, restoreProject, firestoreTimestampSeconds, type SavedProject } from "@/lib/firestore";
+import {
+  updateProject,
+  getUserProjects,
+  getProjectsByEmail,
+  deleteProject,
+  restoreProject,
+  firestoreTimestampSeconds,
+  type SavedProject,
+} from "@/lib/firestore";
+import { pastProjectDisplayTitle } from "@/lib/projectName";
+import { hydrateHistoryWithSessionProject } from "@/lib/projectHistory";
 import { logAction } from "@/lib/auditLog";
 import { parseApiJson } from "@/lib/parse-api-json";
 import { getUserFacingError } from "@/lib/user-facing-error";
@@ -28,7 +38,7 @@ import { Timestamp } from "firebase/firestore";
 import type { GeneratedPromptRow, ProjectBlueprint as StoreProjectBlueprint } from "@/lib/plan-orchestration";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { CreatorFlowBreadcrumb } from "@/components/FlowNavigation";
-import { parseToDate, formatDateBadge } from "@/lib/dateDisplay";
+import { formatProjectListDateBadge } from "@/lib/dateDisplay";
 
 type Tab = "architecture" | "tools" | "risks" | "prompts" | "code" | "config";
 
@@ -899,16 +909,44 @@ export default function ArchitectureView() {
   const [searchQuery,    setSearchQuery]    = useState("");
   const [showDeleted,    setShowDeleted]    = useState(false);
 
-  useEffect(() => {
+  const loadProjectHistory = useCallback(async () => {
     if (!currentUser) return;
     setHistoryLoading(true);
-    getUserProjects(currentUser.uid)
-      .then(projects => setHistory(projects.sort((a, b) =>
-        firestoreTimestampSeconds(b.updatedAt) - firestoreTimestampSeconds(a.updatedAt),
-      )))
-      .catch(console.error)
-      .finally(() => setHistoryLoading(false));
-  }, [currentUser, savedProjectId]);
+    try {
+      const [uidProjects, emailProjects] = await Promise.all([
+        getUserProjects(currentUser.uid),
+        currentUser.email ? getProjectsByEmail(currentUser.email) : Promise.resolve([]),
+      ]);
+      const all = [...uidProjects, ...emailProjects];
+      const unique = Array.from(new Map(all.map((p) => [p.id, p])).values());
+      setHistory(
+        unique.sort(
+          (a, b) => firestoreTimestampSeconds(b.updatedAt) - firestoreTimestampSeconds(a.updatedAt),
+        ),
+      );
+    } catch (e) {
+      console.error("[Architecture] Failed to load project history:", e);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    void loadProjectHistory();
+  }, [currentUser, savedProjectId, loadProjectHistory]);
+
+  const historyForPastSection = useMemo(
+    () =>
+      hydrateHistoryWithSessionProject(history, {
+        savedProjectId,
+        project,
+        uid: currentUser?.uid ?? null,
+        email: currentUser?.email,
+        approvedTools,
+      }),
+    [history, savedProjectId, project, approvedTools, currentUser],
+  );
 
   function loadFromHistory(saved: SavedProject) {
     setProject(saved.project);
@@ -942,12 +980,21 @@ export default function ArchitectureView() {
     setDeletingId(null);
   }
 
-  const filteredHistory = history.filter(h => {
-    const isMatch = h.project.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                    (h.project.idea && h.project.idea.toLowerCase().includes(searchQuery.toLowerCase()));
-    const isDeleted = !!h.deletedAt;
-    return isMatch && (showDeleted ? isDeleted : !isDeleted);
-  });
+  const filteredHistory = useMemo(() => {
+    const q = searchQuery.toLowerCase();
+    return historyForPastSection.filter((h) => {
+      const title = pastProjectDisplayTitle(h.project).toLowerCase();
+      const ideaStr = (h.project.idea ?? "").toLowerCase();
+      const legacyName = (h.project.name ?? "").toLowerCase();
+      const isMatch =
+        !q.trim() ||
+        title.includes(q) ||
+        ideaStr.includes(q) ||
+        legacyName.includes(q);
+      const isDeleted = !!h.deletedAt;
+      return isMatch && (showDeleted ? isDeleted : !isDeleted);
+    });
+  }, [historyForPastSection, searchQuery, showDeleted]);
 
   // Code generation state
   const [generatingId, setGeneratingId] = useState<string | null>(null);
@@ -1610,12 +1657,11 @@ export default function ArchitectureView() {
                               : <FolderOpen className="w-3 h-3 text-white/30" />}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-[10px] font-bold text-white/70 truncate leading-tight">{saved.project.name}</p>
+                            <p className="text-[10px] font-bold text-white/70 truncate leading-tight">
+                              {pastProjectDisplayTitle(saved.project)}
+                            </p>
                             <p className="text-[9px] text-white/20 truncate">
-                              {(() => {
-                                const d = parseToDate(saved.createdAt);
-                                return d ? formatDateBadge(d) : "—";
-                              })()}
+                              {formatProjectListDateBadge(saved)}
                             </p>
                           </div>
                           <button

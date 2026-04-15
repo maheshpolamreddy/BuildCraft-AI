@@ -7,12 +7,20 @@ import {
   updateDoc,
   query,
   where,
-  orderBy,
   serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import type { ProjectState } from "@/store/useStore";
+import { extractUploadedFileNameFromIdea, resolveProjectDisplayName } from "@/lib/projectName";
+
+/** Persist a non-empty `project.name` when the model left it blank but `idea` has an upload marker. */
+function withResolvedProjectName(project: ProjectState): ProjectState {
+  return {
+    ...project,
+    name: resolveProjectDisplayName(project.name, extractUploadedFileNameFromIdea(project.idea)),
+  };
+}
 
 /** True only for real Firebase-authenticated UIDs (not demo-guest or empty). */
 function isFirebaseUid(uid: string): boolean {
@@ -36,6 +44,27 @@ export interface SavedProject {
 /** Sort key for project lists (newest first). */
 export function firestoreTimestampSeconds(ts: Timestamp | null | undefined): number {
   return ts?.seconds ?? 0;
+}
+
+/**
+ * Lists and React keys require a stable `id`. Prefer the field on the document; fall back to the
+ * Firestore document id (legacy rows sometimes omitted `id` in the payload).
+ */
+export function savedProjectFromSnapshot(docId: string, data: Record<string, unknown>): SavedProject {
+  const raw = data as Partial<SavedProject>;
+  const id = typeof raw.id === "string" && raw.id.length > 0 ? raw.id : docId;
+  return {
+    ...raw,
+    id,
+    uid: typeof raw.uid === "string" ? raw.uid : "",
+    project: raw.project as ProjectState,
+    approvedTools: raw.approvedTools ?? {},
+    createdAt: raw.createdAt ?? null,
+    updatedAt: raw.updatedAt ?? null,
+    deletedAt: raw.deletedAt,
+    developerUid: raw.developerUid,
+    email: raw.email,
+  } as SavedProject;
 }
 
 // ── User profile ──────────────────────────────────────────────────────────────
@@ -76,7 +105,7 @@ export async function saveProject(
       id,
       uid,
       email,
-      project: { ...project, creatorUid: uid, creatorEmail: email },
+      project: { ...withResolvedProjectName(project), creatorUid: uid, creatorEmail: email },
       approvedTools,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -94,7 +123,7 @@ export async function updateProject(
   if (!docId) return;
   try {
     await updateDoc(doc(db, "projects", docId), {
-      project,
+      project: withResolvedProjectName(project),
       approvedTools,
       updatedAt: serverTimestamp(),
     });
@@ -110,21 +139,17 @@ export async function getUserProjects(uid: string): Promise<SavedProject[]> {
       where("uid", "==", uid)
     );
     const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as SavedProject);
+    return snap.docs.map((d) => savedProjectFromSnapshot(d.id, d.data() as Record<string, unknown>));
   } catch (err) { console.warn("[firestore] getUserProjects failed:", err); return []; }
 }
 
-/** Load all projects belonging to an email address (Recovery Fallback). */
+/** Load all projects belonging to an email address (Recovery Fallback). Client sorts by updatedAt. */
 export async function getProjectsByEmail(email: string): Promise<SavedProject[]> {
   if (!email) return [];
   try {
-    const q = query(
-      collection(db, "projects"),
-      where("email", "==", email),
-      orderBy("updatedAt", "desc")
-    );
+    const q = query(collection(db, "projects"), where("email", "==", email));
     const snap = await getDocs(q);
-    return snap.docs.map((d) => d.data() as SavedProject);
+    return snap.docs.map((d) => savedProjectFromSnapshot(d.id, d.data() as Record<string, unknown>));
   } catch (err) { console.warn("[firestore] getProjectsByEmail failed:", err); return []; }
 }
 
@@ -133,7 +158,8 @@ export async function getProject(docId: string): Promise<SavedProject | null> {
   if (!docId) return null;
   try {
     const snap = await getDoc(doc(db, "projects", docId));
-    return snap.exists() ? (snap.data() as SavedProject) : null;
+    if (!snap.exists()) return null;
+    return savedProjectFromSnapshot(snap.id, snap.data() as Record<string, unknown>);
   } catch { return null; }
 }
 

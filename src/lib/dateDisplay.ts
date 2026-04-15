@@ -122,3 +122,18 @@ export function formatJoinedPrefix(date: Date, now = new Date()): string {
   if (badge === "Today" || badge === "Yesterday") return `Joined ${badge.toLowerCase()}`;
   return `Joined ${badge}`;
 }
+
+/**
+ * Past Projects list: show when the project was created. Prefer `createdAt`; if missing (session
+ * placeholder row or legacy docs), use `updatedAt` so new projects still show a sensible date.
+ */
+export function formatProjectListDateBadge(saved: {
+  createdAt?: unknown;
+  updatedAt?: unknown;
+}): string {
+  const created = parseToDate(saved.createdAt);
+  if (created) return formatDateBadge(created);
+  const updated = parseToDate(saved.updatedAt);
+  if (updated) return formatDateBadge(updated);
+  return "—";
+}

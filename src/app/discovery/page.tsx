@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Sparkles, Layers, Activity, Check, AlertTriangle,
   ArrowRight, ShieldCheck, Zap, Target, AlertCircle,
   Home, Users, History, Trash2, FolderOpen, Lock, Clock, ChevronDown,
   RefreshCw, LogIn, UserCheck, CheckCircle2, Loader2, UserRound,
+  Paperclip,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -25,7 +26,14 @@ import { CreatorFlowGuard } from "@/components/CreatorFlowGuard";
 import { CreatorFlowBreadcrumb } from "@/components/FlowNavigation";
 import { parseJsonResponse } from "@/lib/parse-api-json";
 import { Timestamp } from "firebase/firestore";
-import { parseToDate, formatDateBadge } from "@/lib/dateDisplay";
+import { formatProjectListDateBadge } from "@/lib/dateDisplay";
+import { readUploadedProjectFile } from "@/lib/readUploadedProjectFile";
+import {
+  extractUploadedFileNameFromIdea,
+  pastProjectDisplayTitle,
+  resolveProjectDisplayName,
+} from "@/lib/projectName";
+import { hydrateHistoryWithSessionProject } from "@/lib/projectHistory";
 
 const typeConfig: Record<Requirement["type"], { label: string; color: string; bg: string }> = {
   feature:     { label: "Feature",     color: "text-blue-400",    bg: "border-blue-500/20 bg-blue-500/5"    },
@@ -55,6 +63,7 @@ export default function DiscoveryHub() {
   const {
     authReady,
     project, setProject, toggleAssumption, currentUser, savedProjectId, setSavedProjectId, setToolApproval,
+    approvedTools,
     clearProject,
     developerProfile, userRoles, role,
     projectCreatorHydrated,
@@ -66,6 +75,9 @@ export default function DiscoveryHub() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analyzeMsg, setAnalyzeMsg]   = useState(ANALYZE_MESSAGES[0]);
   const [error, setError]             = useState<string | null>(null);
+  const [attachedDocName, setAttachedDocName] = useState<string | null>(null);
+  const [fileHintError, setFileHintError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Project History state ──────────────────────────────────────────────────
   const [history,        setHistory]        = useState<SavedProject[]>([]);
@@ -101,32 +113,48 @@ export default function DiscoveryHub() {
     }
   }, [authReady, currentUser, developerProfile, userRoles, role, router]);
 
-  // Reload history whenever the logged-in user changes (UID + Email fallback)
-  useEffect(() => {
-    if (!currentUser) { setHistory([]); return; }
+  const loadProjectHistory = useCallback(async () => {
+    if (!currentUser) return;
     setHistoryLoading(true);
-    
-    const fetchHistory = async () => {
-      try {
-        const [uidProjects, emailProjects] = await Promise.all([
-          getUserProjects(currentUser.uid),
-          currentUser.email ? getProjectsByEmail(currentUser.email) : Promise.resolve([])
-        ]);
-        
-        // Merge and deduplicate by project doc ID
-        const all = [...uidProjects, ...emailProjects];
-        const unique = Array.from(new Map(all.map(p => [p.id, p])).values());
-        
-        setHistory(unique.sort((a, b) => firestoreTimestampSeconds(b.updatedAt) - firestoreTimestampSeconds(a.updatedAt)));
-      } catch (err) {
-        console.error("[Discovery] Failed to load project history:", err);
-      } finally {
-        setHistoryLoading(false);
-      }
-    };
+    try {
+      const [uidProjects, emailProjects] = await Promise.all([
+        getUserProjects(currentUser.uid),
+        currentUser.email ? getProjectsByEmail(currentUser.email) : Promise.resolve([]),
+      ]);
+      const all = [...uidProjects, ...emailProjects];
+      const unique = Array.from(new Map(all.map((p) => [p.id, p])).values());
+      setHistory(
+        unique.sort(
+          (a, b) => firestoreTimestampSeconds(b.updatedAt) - firestoreTimestampSeconds(a.updatedAt),
+        ),
+      );
+    } catch (err) {
+      console.error("[Discovery] Failed to load project history:", err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [currentUser]);
 
-    fetchHistory();
-  }, [currentUser, savedProjectId]);
+  // Reload when user or saved doc id changes (new analysis creates a new Firestore id)
+  useEffect(() => {
+    if (!currentUser) {
+      setHistory([]);
+      return;
+    }
+    void loadProjectHistory();
+  }, [currentUser, savedProjectId, loadProjectHistory]);
+
+  const historyForPastSection = useMemo(
+    () =>
+      hydrateHistoryWithSessionProject(history, {
+        savedProjectId,
+        project,
+        uid: currentUser?.uid ?? null,
+        email: currentUser?.email,
+        approvedTools,
+      }),
+    [history, savedProjectId, project, approvedTools, currentUser],
+  );
 
   // Restore history item as the active project and navigate to correct page
   function loadFromHistory(saved: SavedProject) {
@@ -136,6 +164,8 @@ export default function DiscoveryHub() {
       if (val !== undefined) setToolApproval(toolId, val as boolean);
     });
     setIdea(saved.project.idea);
+    setAttachedDocName(null);
+    setFileHintError(null);
 
     // Smart navigate based on project state
     if (saved.project.locked) {
@@ -162,12 +192,21 @@ export default function DiscoveryHub() {
 
   const allAccepted = project?.assumptions?.every((a) => a.accepted) ?? false;
 
-  const filteredHistory = history.filter(h => {
-    const isMatch = h.project.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                    (h.project.idea && h.project.idea.toLowerCase().includes(searchQuery.toLowerCase()));
-    const isDeleted = !!h.deletedAt;
-    return isMatch && (showDeleted ? isDeleted : !isDeleted);
-  });
+  const filteredHistory = useMemo(() => {
+    const q = searchQuery.toLowerCase();
+    return historyForPastSection.filter((h) => {
+      const title = pastProjectDisplayTitle(h.project).toLowerCase();
+      const ideaStr = (h.project.idea ?? "").toLowerCase();
+      const legacyName = (h.project.name ?? "").toLowerCase();
+      const isMatch =
+        !q.trim() ||
+        title.includes(q) ||
+        ideaStr.includes(q) ||
+        legacyName.includes(q);
+      const isDeleted = !!h.deletedAt;
+      return isMatch && (showDeleted ? isDeleted : !isDeleted);
+    });
+  }, [historyForPastSection, searchQuery, showDeleted]);
 
   async function runDiscoveryMatching() {
     if (!project) return;
@@ -241,10 +280,14 @@ export default function DiscoveryHub() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.idea, project?.name, isAnalyzing]);
 
-  async function runAnalysis(text: string) {
+  async function runAnalysis(text: string, opts?: { fileName?: string | null }) {
     if (!text.trim()) return;
     setIsAnalyzing(true);
     setError(null);
+    setFileHintError(null);
+
+    const fileName =
+      opts?.fileName !== undefined ? opts.fileName : attachedDocName;
 
     // Cycle through loading messages while waiting
     let msgIdx = 0;
@@ -257,7 +300,10 @@ export default function DiscoveryHub() {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idea: text.trim() }),
+        body: JSON.stringify({
+          idea: text.trim(),
+          ...(fileName ? { fileName } : {}),
+        }),
       });
 
       const { ok, data } = await parseJsonResponse(res);
@@ -266,8 +312,13 @@ export default function DiscoveryHub() {
         console.warn("AI analysis fallback triggered:", data.error);
         return analyzeIdea(text.trim());
       })();
+      const nameForUi = resolveProjectDisplayName(
+        analysedProject.name,
+        fileName ?? undefined,
+      );
       const isolated: ProjectState = {
         ...analysedProject,
+        name: nameForUi,
         developerUid: undefined,
         creatorUid: currentUser?.uid,
         creatorEmail: currentUser?.email ?? undefined,
@@ -290,8 +341,13 @@ export default function DiscoveryHub() {
     } catch (err) {
       console.error("Network error calling /api/analyze:", err);
       const fallbackRaw = analyzeIdea(text.trim());
+      const fileHint =
+        (typeof attachedDocName === "string" && attachedDocName.trim()
+          ? attachedDocName
+          : undefined) ?? extractUploadedFileNameFromIdea(text.trim());
       const fallback: ProjectState = {
         ...fallbackRaw,
+        name: resolveProjectDisplayName(fallbackRaw.name, fileHint),
         developerUid: undefined,
         creatorUid: currentUser?.uid,
         creatorEmail: currentUser?.email ?? undefined,
@@ -307,6 +363,27 @@ export default function DiscoveryHub() {
     } finally {
       clearInterval(msgTimer);
       setIsAnalyzing(false);
+    }
+  }
+
+  async function handleProjectFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setFileHintError(null);
+    setError(null);
+    try {
+      const { text, name } = await readUploadedProjectFile(file);
+      setIdea((prev) => {
+        const p = prev.trim();
+        return p
+          ? `${p}\n\n--- From file: ${name} ---\n${text}`
+          : text;
+      });
+      setAttachedDocName(name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Could not read file.";
+      setFileHintError(msg);
     }
   }
 
@@ -345,7 +422,9 @@ export default function DiscoveryHub() {
             <span className="text-emerald-500/80 text-[10px] uppercase tracking-[0.2em] font-bold">Discovery Hub</span>
           </div>
           {project && (
-            <div className="mt-1 text-white/30 text-[10px] truncate font-light">{project.name}</div>
+            <div className="mt-1 text-white/30 text-[10px] truncate font-light">
+              {pastProjectDisplayTitle(project)}
+            </div>
           )}
         </div>
 
@@ -439,6 +518,8 @@ export default function DiscoveryHub() {
                     onClick={() => {
                       clearProject();
                       setIdea("");
+                      setAttachedDocName(null);
+                      setFileHintError(null);
                     }}
                     className="w-full flex items-center justify-center gap-2 mb-3 py-2 bg-gradient-to-r from-blue-500/10 to-indigo-500/10 hover:from-blue-500/20 hover:to-indigo-500/20 border border-blue-500/20 rounded-xl text-[10px] font-bold uppercase tracking-widest text-blue-300 transition-all"
                   >
@@ -491,12 +572,11 @@ export default function DiscoveryHub() {
                               : <FolderOpen className="w-3 h-3 text-white/30" />}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-[10px] font-bold text-white/70 truncate leading-tight">{saved.project.name}</p>
+                            <p className="text-[10px] font-bold text-white/70 truncate leading-tight">
+                              {pastProjectDisplayTitle(saved.project)}
+                            </p>
                             <p className="text-[9px] text-white/20 truncate">
-                              {(() => {
-                                const d = parseToDate(saved.createdAt);
-                                return d ? formatDateBadge(d) : "—";
-                              })()}
+                              {formatProjectListDateBadge(saved)}
                             </p>
                           </div>
                           <button
@@ -573,7 +653,7 @@ export default function DiscoveryHub() {
                 <span className="bg-gradient-to-r from-blue-400 via-purple-400 to-emerald-400 bg-clip-text text-transparent">Project</span>
               </h1>
               <p className="text-white/40 text-lg font-light max-w-2xl">
-                Tell us about your app. BuildCraft AI generates real technical requirements, risks, and implementation blueprints.
+                Tell us about your app or attach a text brief or spec. BuildCraft AI turns it into technical requirements, risks, and an implementation-style blueprint.
               </p>
             </motion.div>
 
@@ -587,6 +667,14 @@ export default function DiscoveryHub() {
               {/* Animated outer glow */}
               <div className="absolute -inset-[2px] bg-gradient-to-r from-blue-500/30 via-purple-500/20 to-emerald-500/30 rounded-[1.75rem] blur-md opacity-0 group-focus-within:opacity-100 transition-all duration-700" />
               <div className="relative bg-[#050505] border border-white/10 group-focus-within:border-white/20 rounded-[1.5rem] transition-all duration-500 shadow-[0_8px_40px_rgba(0,0,0,0.6)]">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  accept=".txt,.md,.markdown,.json,.csv,.xml,.html,.htm,.yaml,.yml,.toml,.ts,.tsx,.js,.jsx,.mjs,.cjs,.css,.scss,.less,.log,.rst,.adoc,.svg,text/plain,text/markdown,application/json"
+                  onChange={handleProjectFileChange}
+                  disabled={isAnalyzing}
+                />
                 <div className="flex items-start gap-4 px-6 py-5">
                   <div className={`mt-1 flex-shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all duration-500 ${
                     isAnalyzing ? "bg-purple-500/20 border border-purple-500/40 shadow-[0_0_20px_rgba(168,85,247,0.3)]" 
@@ -597,37 +685,63 @@ export default function DiscoveryHub() {
                       ? <Loader2 className="w-4 h-4 text-purple-400 animate-spin" />
                       : <Sparkles className={`w-4 h-4 transition-colors ${idea.trim() ? "text-blue-400" : "text-white/30"}`} />}
                   </div>
-                  <textarea
-                    value={idea}
-                    onChange={(e) => setIdea(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runAnalysis(idea); } }}
-                    disabled={isAnalyzing}
-                    rows={3}
-                    className="bg-transparent border-none focus:outline-none focus:ring-0 text-lg text-white w-full placeholder:text-white/20 font-light disabled:opacity-50 resize-none leading-relaxed"
-                    placeholder="I want to build a fitness app where users track workouts, set goals, and compete with friends..."
-                  />
+                  <div className="flex-1 min-w-0">
+                    <textarea
+                      value={idea}
+                      onChange={(e) => setIdea(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void runAnalysis(idea); } }}
+                      disabled={isAnalyzing}
+                      rows={3}
+                      className="bg-transparent border-none focus:outline-none focus:ring-0 text-lg text-white w-full placeholder:text-white/20 font-light disabled:opacity-50 resize-none leading-relaxed"
+                      placeholder="I want to build a fitness app where users track workouts, set goals, and compete with friends… Or attach a brief / spec (.txt, .md, .json, code)."
+                    />
+                  </div>
                 </div>
-                <div className="flex items-center justify-between px-6 pb-4 pt-0">
-                  <span className="text-[10px] text-white/20 font-light">
+                <div className="flex items-center justify-between gap-3 px-6 pb-4 pt-0">
+                  <span className="text-[10px] text-white/20 font-light min-w-0">
                     {isAnalyzing ? 
                       <span className="text-purple-400/80 flex items-center gap-1.5"><span className="inline-block w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping" />Analyzing with BuildCraft AI…</span>
-                      : "Press Enter or click Analyze →"}
+                      : "Press Enter or click Analyze — text and uploads are analyzed the same way · text files up to ~512KB"}
                   </span>
-                  <button
-                    onClick={() => runAnalysis(idea)}
-                    disabled={!idea.trim() || isAnalyzing}
-                    className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 flex items-center gap-2 ${
-                      idea.trim() && !isAnalyzing 
-                        ? "silver-gradient text-black shadow-[0_0_20px_rgba(255,255,255,0.15)] hover:shadow-[0_0_30px_rgba(255,255,255,0.3)] hover:scale-105" 
-                        : "bg-white/5 text-white/20 cursor-not-allowed border border-white/5"
-                    }`}
-                  >
-                    {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-                    {isAnalyzing ? "Analyzing" : "Analyze"}
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => void runAnalysis(idea)}
+                      disabled={!idea.trim() || isAnalyzing}
+                      className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 flex items-center gap-2 ${
+                        idea.trim() && !isAnalyzing 
+                          ? "silver-gradient text-black shadow-[0_0_20px_rgba(255,255,255,0.15)] hover:shadow-[0_0_30px_rgba(255,255,255,0.3)] hover:scale-105" 
+                          : "bg-white/5 text-white/20 cursor-not-allowed border border-white/5"
+                      }`}
+                    >
+                      {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                      {isAnalyzing ? "Analyzing" : "Analyze"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isAnalyzing}
+                      title="Attach file"
+                      aria-label="Attach file"
+                      className="p-2.5 rounded-xl border border-white/10 bg-white/[0.04] text-white/55 hover:text-white hover:border-white/20 hover:bg-white/[0.08] transition-all disabled:opacity-40 disabled:pointer-events-none"
+                    >
+                      <Paperclip className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </motion.div>
+
+            {/* File attach hint (recoverable) */}
+            {fileHintError && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-start gap-3 p-4 bg-amber-500/10 border border-amber-500/25 rounded-2xl backdrop-blur-sm"
+              >
+                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-200/90 font-light leading-relaxed">{fileHintError}</p>
+              </motion.div>
+            )}
 
             {/* Error Banner */}
             {error && (
@@ -687,10 +801,7 @@ export default function DiscoveryHub() {
                 <button
                   onClick={() => {
                     if (!currentUser) return;
-                    setHistoryLoading(true);
-                    getUserProjects(currentUser.uid)
-                      .then(setHistory).catch(() => {})
-                      .finally(() => setHistoryLoading(false));
+                    void loadProjectHistory();
                   }}
                   className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/20 hover:text-white transition-colors"
                 >
@@ -724,10 +835,7 @@ export default function DiscoveryHub() {
                     const isLocked = saved.project.locked;
                     const toolCount = Object.values(saved.approvedTools ?? {}).filter(Boolean).length;
                     const reqCount  = saved.project.requirements?.length ?? 0;
-                    const dateStr = (() => {
-                      const d = parseToDate(saved.createdAt);
-                      return d ? formatDateBadge(d) : "—";
-                    })();
+                    const dateStr = formatProjectListDateBadge(saved);
 
                     return (
                       <motion.div
@@ -767,7 +875,7 @@ export default function DiscoveryHub() {
 
                         {/* Project name */}
                         <h3 className="text-white font-bold text-base tracking-tight mb-1 relative z-10 line-clamp-1">
-                          {saved.project.name}
+                          {pastProjectDisplayTitle(saved.project)}
                         </h3>
                         <p className="text-white/30 text-[10px] font-light line-clamp-2 mb-4 relative z-10">
                           {saved.project.idea}
@@ -869,7 +977,7 @@ export default function DiscoveryHub() {
                     AI-Generated Requirements — <span className="text-blue-400">{project.requirements.length} items</span>
                   </h2>
                   <button
-                    onClick={() => runAnalysis(idea)}
+                    onClick={() => void runAnalysis(idea)}
                     disabled={isAnalyzing}
                     className="text-[10px] font-bold uppercase tracking-widest text-white/40 hover:text-white transition-colors flex items-center gap-1 disabled:opacity-30"
                   >
