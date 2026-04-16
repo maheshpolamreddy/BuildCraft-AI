@@ -1,45 +1,45 @@
-import type { Milestone, Task } from "@/lib/workspace";
+import {
+  type Milestone,
+  deriveMilestoneStatus,
+  normalizeTaskStatus,
+  withDerivedMilestoneStatuses,
+} from "@/lib/workspace";
 
-export function isTaskFullyApprovedForCompletion(task: Task): boolean {
-  const s = task.status;
-  return s === "approved_by_both" || s === "approved";
+export function isTaskClientApproved(task: { status: unknown }): boolean {
+  return normalizeTaskStatus(task.status) === "approved";
 }
 
-export function isTaskAwaitingDeveloperSignOff(task: Task): boolean {
-  return task.status === "approved_creator";
-}
-
-export function milestoneFullyApprovedForCompletion(m: Milestone): boolean {
-  if (m.tasks.length === 0) return false;
-  return m.tasks.every(isTaskFullyApprovedForCompletion);
+export function milestoneFullyApproved(m: Milestone): boolean {
+  return deriveMilestoneStatus(m) === "approved";
 }
 
 export function areMilestonesReadyForCompletion(milestones: Milestone[]): boolean {
-  if (!milestones.length) return false;
-  const tasks = milestones.flatMap((m) => m.tasks);
+  const derived = withDerivedMilestoneStatuses(milestones);
+  if (!derived.length) return false;
+  const tasks = derived.flatMap((m) => m.tasks);
   if (!tasks.length) return false;
-  return tasks.every(isTaskFullyApprovedForCompletion);
+  const allTasksOk = tasks.every((t) => isTaskClientApproved(t));
+  const allMilestonesOk = derived.every((m) => m.status === "approved");
+  return allTasksOk && allMilestonesOk;
 }
 
 export function completionProgressPct(milestones: Milestone[]): number {
-  const tasks = milestones.flatMap((m) => m.tasks);
+  const derived = withDerivedMilestoneStatuses(milestones);
+  const tasks = derived.flatMap((m) => m.tasks);
   if (!tasks.length) return 0;
-  const done = tasks.filter(isTaskFullyApprovedForCompletion).length;
+  const done = tasks.filter((t) => isTaskClientApproved(t)).length;
   return Math.round((done / tasks.length) * 100);
 }
 
 export function countTasksByStatus(milestones: Milestone[]) {
-  const tasks = milestones.flatMap((m) => m.tasks);
+  const tasks = withDerivedMilestoneStatuses(milestones).flatMap((m) => m.tasks);
   return {
     total: tasks.length,
-    fullyApproved: tasks.filter(isTaskFullyApprovedForCompletion).length,
-    inReview: tasks.filter((t) => t.status === "review").length,
-    awaitingDevSignOff: tasks.filter(isTaskAwaitingDeveloperSignOff).length,
-    otherTodo: tasks.filter(
-      (t) =>
-        !isTaskFullyApprovedForCompletion(t) &&
-        t.status !== "review" &&
-        !isTaskAwaitingDeveloperSignOff(t),
-    ).length,
+    fullyApproved: tasks.filter((t) => isTaskClientApproved(t)).length,
+    awaitingClientReview: tasks.filter((t) => normalizeTaskStatus(t.status) === "completed_by_developer").length,
+    otherTodo: tasks.filter((t) => {
+      const s = normalizeTaskStatus(t.status);
+      return s !== "approved" && s !== "completed_by_developer";
+    }).length,
   };
 }

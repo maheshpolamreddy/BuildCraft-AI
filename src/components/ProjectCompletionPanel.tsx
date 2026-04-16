@@ -230,7 +230,7 @@ export function ProjectCompletionPanel({
           <Lock className="w-10 h-10 text-amber-400/90" />
           <p className="text-white font-black text-xs uppercase tracking-[0.2em]">Completion locked</p>
           <p className="text-white/55 text-sm max-w-lg leading-relaxed">
-            Completion will be available after all tasks and milestones are approved by both the project creator and the developer. Finish every task in <strong className="text-white/80">Tasks &amp; Milestones</strong> — the client approves first, then the developer confirms dual sign-off.
+            Completion unlocks when every task is marked complete by the developer and <strong className="text-white/80">approved by the project creator</strong>, and every milestone shows as approved. Use <strong className="text-white/80">Tasks &amp; Milestones</strong> to finish the workflow first.
           </p>
           <p className="text-[10px] text-amber-400/70 font-bold uppercase tracking-widest">Deployment and final submission stay disabled until then</p>
         </div>

@@ -8,16 +8,19 @@ import {
 } from "firebase/firestore";
 import type { MatchedDeveloper } from "@/app/api/match-developers/route";
 
-/** `approved_creator` = client approved, awaiting dev sign-off. `approved_by_both` = dual-approved. `approved` = legacy single-step. */
+/**
+ * Task lifecycle: pending → in-progress → completed_by_developer → approved (client).
+ * reopened = client requested changes.
+ */
 export type TaskStatus =
-  | "todo"
+  | "pending"
   | "in-progress"
   | "validating"
-  | "review"
-  | "approved_creator"
-  | "approved_by_both"
+  | "completed_by_developer"
   | "approved"
-  | "rejected";
+  | "reopened";
+
+export type MilestoneStatus = "pending" | "in_progress" | "approved";
 
 export interface ValidationResult {
   passed: boolean;
@@ -52,7 +55,60 @@ export interface Milestone {
   description: string;
   estimatedDays: number;
   color: string;
+  /** Derived from tasks when saving; all tasks approved ⇒ approved */
+  status?: MilestoneStatus;
   tasks: Task[];
+}
+
+/** Map legacy / AI-generated statuses into the current workflow */
+export function normalizeTaskStatus(raw: unknown): TaskStatus {
+  const s = typeof raw === "string" ? raw : "pending";
+  switch (s) {
+    case "todo":
+      return "pending";
+    case "review":
+      return "completed_by_developer";
+    case "rejected":
+      return "reopened";
+    case "approved_creator":
+    case "approved_by_both":
+      return "approved";
+    default:
+      break;
+  }
+  if (
+    s === "pending" ||
+    s === "in-progress" ||
+    s === "validating" ||
+    s === "completed_by_developer" ||
+    s === "approved" ||
+    s === "reopened"
+  ) {
+    return s;
+  }
+  return "pending";
+}
+
+function normalizeTask(t: Task): Task {
+  return { ...t, status: normalizeTaskStatus(t.status) };
+}
+
+/** Milestone approved iff every task is client-approved */
+export function deriveMilestoneStatus(m: Milestone): MilestoneStatus {
+  if (!m.tasks.length) return "pending";
+  const statuses = m.tasks.map((t) => normalizeTaskStatus(t.status));
+  if (statuses.every((st) => st === "approved")) return "approved";
+  if (statuses.every((st) => st === "pending")) return "pending";
+  return "in_progress";
+}
+
+/** Normalize tasks + set milestone.status for Firestore */
+export function withDerivedMilestoneStatuses(milestones: Milestone[]): Milestone[] {
+  return milestones.map((m) => {
+    const tasks = m.tasks.map(normalizeTask);
+    const milestone = { ...m, tasks };
+    return { ...milestone, status: deriveMilestoneStatus(milestone) };
+  });
 }
 
 export interface WorkspaceState {

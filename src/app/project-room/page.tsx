@@ -1,12 +1,20 @@
 "use client";
 
-import { subscribeToWorkspace, getWorkspaceState, setWorkspaceMilestones, setWorkspaceMatchedDevelopers, type Task, type Milestone, type TaskStatus } from "@/lib/workspace";
+import {
+  subscribeToWorkspace,
+  getWorkspaceState,
+  setWorkspaceMilestones,
+  setWorkspaceMatchedDevelopers,
+  withDerivedMilestoneStatuses,
+  type Task,
+  type Milestone,
+  type TaskStatus,
+} from "@/lib/workspace";
 import {
   areMilestonesReadyForCompletion,
   completionProgressPct,
   countTasksByStatus,
-  isTaskAwaitingDeveloperSignOff,
-  isTaskFullyApprovedForCompletion,
+  isTaskClientApproved,
 } from "@/lib/completion-gate";
 import React, { useState, useEffect, useMemo, Suspense, useRef, useCallback, cloneElement } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -121,7 +129,7 @@ const FALLBACK_MILESTONES: Milestone[] = [
   {
     id: "m1", phase: "Phase 1", title: "Foundation & Setup", description: "Project scaffolding, auth, and database schema.", estimatedDays: 7, color: "blue",
     tasks: [
-      { id: "t1", title: "Initialize Next.js project",    description: "Set up Next.js 14 with TypeScript and Tailwind", type: "devops",    estimatedHours: 3, priority: "high",   status: "review",   submission: "Created the project with create-next-app. Added all dependencies.", validationScore: 91, assignee: "Dev" },
+      { id: "t1", title: "Initialize Next.js project",    description: "Set up Next.js 14 with TypeScript and Tailwind", type: "devops",    estimatedHours: 3, priority: "high",   status: "completed_by_developer",   submission: "Created the project with create-next-app. Added all dependencies.", validationScore: 91, assignee: "Dev" },
       { id: "t2", title: "Database schema & migrations",  description: "Design all tables with RLS policies",             type: "database",  estimatedHours: 5, priority: "high",   status: "approved", validationScore: 95, assignee: "Dev" },
       { id: "t3", title: "Authentication flow",           description: "Email+Password and Google OAuth",                 type: "auth",      estimatedHours: 6, priority: "high",   status: "in-progress", assignee: "Dev" },
     ],
@@ -129,25 +137,25 @@ const FALLBACK_MILESTONES: Milestone[] = [
   {
     id: "m2", phase: "Phase 2", title: "Core Features", description: "Main application features and API routes.", estimatedDays: 14, color: "purple",
     tasks: [
-      { id: "t4", title: "Build primary API routes",        description: "CRUD routes with Zod validation",              type: "backend",   estimatedHours: 8, priority: "high",   status: "todo" },
-      { id: "t5", title: "Dashboard UI components",         description: "Main dashboard with stats and tables",          type: "frontend",  estimatedHours: 10, priority: "high",   status: "todo" },
-      { id: "t6", title: "State management",               description: "Zustand + TanStack Query setup",                type: "frontend",  estimatedHours: 5, priority: "medium", status: "todo" },
+      { id: "t4", title: "Build primary API routes",        description: "CRUD routes with Zod validation",              type: "backend",   estimatedHours: 8, priority: "high",   status: "pending" },
+      { id: "t5", title: "Dashboard UI components",         description: "Main dashboard with stats and tables",          type: "frontend",  estimatedHours: 10, priority: "high",   status: "pending" },
+      { id: "t6", title: "State management",               description: "Zustand + TanStack Query setup",                type: "frontend",  estimatedHours: 5, priority: "medium", status: "pending" },
     ],
   },
   {
     id: "m3", phase: "Phase 3", title: "UI/UX Polish", description: "Animations, responsiveness, accessibility.", estimatedDays: 7, color: "emerald",
     tasks: [
-      { id: "t7", title: "Responsive design",     description: "Mobile, tablet, and desktop",          type: "frontend", estimatedHours: 6, priority: "medium", status: "todo" },
-      { id: "t8", title: "Animations",            description: "Framer Motion transitions",            type: "frontend", estimatedHours: 4, priority: "low",    status: "todo" },
-      { id: "t9", title: "Performance & SEO",     description: "Image opt, code split, meta tags",     type: "devops",   estimatedHours: 4, priority: "medium", status: "todo" },
+      { id: "t7", title: "Responsive design",     description: "Mobile, tablet, and desktop",          type: "frontend", estimatedHours: 6, priority: "medium", status: "pending" },
+      { id: "t8", title: "Animations",            description: "Framer Motion transitions",            type: "frontend", estimatedHours: 4, priority: "low",    status: "pending" },
+      { id: "t9", title: "Performance & SEO",     description: "Image opt, code split, meta tags",     type: "devops",   estimatedHours: 4, priority: "medium", status: "pending" },
     ],
   },
   {
     id: "m4", phase: "Phase 4", title: "Testing & Deployment", description: "Tests, CI/CD, and production launch.", estimatedDays: 7, color: "orange",
     tasks: [
-      { id: "t10", title: "Unit & integration tests",    description: "Vitest + React Testing Library",   type: "testing", estimatedHours: 8, priority: "high",   status: "todo", aiPrompt: "", version: 1, validationResult: null, submission: "" },
-      { id: "t11", title: "CI/CD pipeline",             description: "GitHub Actions for auto-deploy",   type: "devops",  estimatedHours: 4, priority: "medium", status: "todo", aiPrompt: "", version: 1, validationResult: null, submission: "" },
-      { id: "t12", title: "Production deployment",      description: "Vercel + Sentry monitoring",       type: "devops",  estimatedHours: 3, priority: "high",   status: "todo", aiPrompt: "", version: 1, validationResult: null, submission: "" },
+      { id: "t10", title: "Unit & integration tests",    description: "Vitest + React Testing Library",   type: "testing", estimatedHours: 8, priority: "high",   status: "pending", aiPrompt: "", version: 1, validationResult: null, submission: "" },
+      { id: "t11", title: "CI/CD pipeline",             description: "GitHub Actions for auto-deploy",   type: "devops",  estimatedHours: 4, priority: "medium", status: "pending", aiPrompt: "", version: 1, validationResult: null, submission: "" },
+      { id: "t12", title: "Production deployment",      description: "Vercel + Sentry monitoring",       type: "devops",  estimatedHours: 3, priority: "high",   status: "pending", aiPrompt: "", version: 1, validationResult: null, submission: "" },
     ],
   },
 ];
@@ -236,7 +244,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   const [projectLoadFailed, setProjectLoadFailed] = useState(false);
   const [loadRetry, setLoadRetry] = useState(0);
   const [activeTab, setActiveTab] = useState<Tab>("milestones");
-  const [milestones, setMilestones] = useState<Milestone[]>(FALLBACK_MILESTONES);
+  const [milestones, setMilestones] = useState<Milestone[]>(() => withDerivedMilestoneStatuses(FALLBACK_MILESTONES));
   const [loadingMilestones, setLoadingMilestones] = useState(false);
   const [expandedMilestone, setExpandedMilestone] = useState<string | null>("m1");
   const [reviewTask, setReviewTask] = useState<Task | null>(null);
@@ -473,7 +481,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   const allTasks   = milestones.flatMap(m => m.tasks);
   const taskCounts = useMemo(() => countTasksByStatus(milestones), [milestones]);
   const doneTasks  = taskCounts.fullyApproved;
-  const inReview   = taskCounts.inReview;
+  const inReview   = taskCounts.awaitingClientReview;
   const progress   = completionProgressPct(milestones);
   const completionSectionUnlocked = areMilestonesReadyForCompletion(milestones);
 
@@ -511,7 +519,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     return subscribeToWorkspace(savedProjectId, (state) => {
        if (state) {
          if (state.milestones && state.milestones.length > 0) {
-           setMilestones(state.milestones);
+           setMilestones(withDerivedMilestoneStatuses(state.milestones));
          }
          if (state.matchedDevelopers && state.matchedDevelopers.length > 0 && matchedDevs.length === 0) {
            setMatchedDevs(state.matchedDevelopers);
@@ -568,7 +576,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     // Deterministic Catch: Verify if workspace already has milestones before triggering AI!
     getWorkspaceState(savedProjectId).then((state) => {
        if (state && state.milestones && state.milestones.length > 0) {
-          setMilestones(state.milestones);
+          setMilestones(withDerivedMilestoneStatuses(state.milestones));
           generatedRef.current = true;
           return;
        }
@@ -590,7 +598,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                const fb = FALLBACK_MILESTONES[mi]?.tasks[ti];
                return { 
                  ...t, 
-                 status: fb?.status ?? "todo", 
+                 status: fb?.status ?? "pending", 
                  submission: fb?.submission ?? "", 
                  validationScore: fb?.validationScore ?? 0, 
                  assignee: fb?.assignee ?? "",
@@ -600,9 +608,10 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                } as Task;
              }),
            }));
-           setMilestones(withState);
+           const derived = withDerivedMilestoneStatuses(withState);
+           setMilestones(derived);
            if (savedProjectId) {
-             await setWorkspaceMilestones(savedProjectId, withState);
+             await setWorkspaceMilestones(savedProjectId, derived);
            }
          })
          .catch(() => {})
@@ -632,7 +641,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                const fb = FALLBACK_MILESTONES[mi]?.tasks[ti];
                return { 
                  ...t, 
-                 status: fb?.status ?? "todo", 
+                 status: fb?.status ?? "pending", 
                  submission: fb?.submission ?? "", 
                  validationScore: fb?.validationScore ?? 0, 
                  assignee: fb?.assignee ?? "",
@@ -642,8 +651,9 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                } as Task;
              }),
         }));
-        setMilestones(withState);
-        await setWorkspaceMilestones(savedProjectId, withState, currentUser?.uid);
+        const derivedRegen = withDerivedMilestoneStatuses(withState);
+        setMilestones(derivedRegen);
+        await setWorkspaceMilestones(savedProjectId, derivedRegen, currentUser?.uid);
         if (currentUser) {
           logAction(currentUser.uid, "project.updated", { 
             action: "milestones_regenerated",
@@ -1117,15 +1127,20 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   }, [activeTab, currentUser, savedProjectId]);
 
   // ── Task actions ────────────────────────────────────────────────────────────
-  async function approveTask(task: Task) {
+  async function approveTask(task: Task, milestoneId: string) {
     if (!project || !savedProjectId || !currentUser) return;
-    const nextMilestones = milestones.map(m => ({
-      ...m,
-      tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "approved_creator" as TaskStatus } : t)
-    }));
-    setMilestones(nextMilestones);
-    await setWorkspaceMilestones(savedProjectId, nextMilestones, currentUser?.uid);
+    const nextMilestones = milestones.map(m => {
+      if (m.id !== milestoneId) return m;
+      return {
+        ...m,
+        tasks: m.tasks.map(t => (t.id === task.id ? { ...t, status: "approved" as TaskStatus } : t)),
+      };
+    });
+    const derived = withDerivedMilestoneStatuses(nextMilestones);
+    setMilestones(derived);
+    await setWorkspaceMilestones(savedProjectId, derived, currentUser?.uid);
     setReviewTask(null);
+    void postTaskWorkflowNotify("approved", task.title);
     logAction(currentUser.uid, "milestone.approved", {
       taskId: task.id,
       taskTitle: task.title,
@@ -1133,32 +1148,22 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     }).catch(() => {});
   }
 
-  async function developerConfirmDualApproval(task: Task) {
+  async function rejectTask(task: Task, milestoneId: string) {
     if (!project || !savedProjectId || !currentUser) return;
-    const nextMilestones = milestones.map(m => ({
-      ...m,
-      tasks: m.tasks.map(t =>
-        t.id === task.id ? { ...t, status: "approved_by_both" as TaskStatus } : t,
-      ),
-    }));
-    setMilestones(nextMilestones);
-    await setWorkspaceMilestones(savedProjectId, nextMilestones, currentUser?.uid);
-    logAction(currentUser.uid, "milestone.dual_approved", {
-      taskId: task.id,
-      taskTitle: task.title,
-      projectId: savedProjectId,
-    }).catch(() => {});
-  }
-
-  async function rejectTask(task: Task) {
-    if (!project || !savedProjectId || !currentUser) return;
-    const nextMilestones = milestones.map(m => ({
-      ...m,
-      tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "rejected" as TaskStatus } : t)
-    }));
-    setMilestones(nextMilestones);
-    await setWorkspaceMilestones(savedProjectId, nextMilestones, currentUser?.uid);
+    const nextMilestones = milestones.map(m => {
+      if (m.id !== milestoneId) return m;
+      return {
+        ...m,
+        tasks: m.tasks.map(t =>
+          t.id === task.id ? { ...t, status: "reopened" as TaskStatus, submission: t.submission ?? "" } : t,
+        ),
+      };
+    });
+    const derived = withDerivedMilestoneStatuses(nextMilestones);
+    setMilestones(derived);
+    await setWorkspaceMilestones(savedProjectId, derived, currentUser?.uid);
     setReviewTask(null);
+    void postTaskWorkflowNotify("reopened", task.title);
     logAction(currentUser.uid, "milestone.rejected", {
       taskId: task.id,
       taskTitle: task.title,
@@ -1166,14 +1171,23 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     }).catch(() => {});
   }
 
-  async function submitTaskForReview(task: Task, submission: string) {
+  async function markTaskCompleted(milestoneId: string, task: Task, submission: string) {
     if (!project || !savedProjectId || !currentUser) return;
-    const nextMilestones = milestones.map(m => ({
-      ...m,
-      tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "review" as TaskStatus, submission } : t)
-    }));
-    setMilestones(nextMilestones);
-    await setWorkspaceMilestones(savedProjectId, nextMilestones, currentUser?.uid);
+    const nextMilestones = milestones.map(m => {
+      if (m.id !== milestoneId) return m;
+      return {
+        ...m,
+        tasks: m.tasks.map(t =>
+          t.id === task.id
+            ? { ...t, status: "completed_by_developer" as TaskStatus, submission }
+            : t,
+        ),
+      };
+    });
+    const derived = withDerivedMilestoneStatuses(nextMilestones);
+    setMilestones(derived);
+    await setWorkspaceMilestones(savedProjectId, derived, currentUser?.uid);
+    void postTaskWorkflowNotify("completed_by_developer", task.title);
     logAction(currentUser.uid, "milestone.submitted", {
       taskId: task.id,
       taskTitle: task.title,
@@ -1231,8 +1245,36 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
   // ── Milestone completion check ─────────────────────────────────────────────
   function milestoneProgress(m: Milestone) {
-    const done = m.tasks.filter(t => isTaskFullyApprovedForCompletion(t)).length;
+    const done = m.tasks.filter(t => isTaskClientApproved(t)).length;
     return { done, total: m.tasks.length, pct: m.tasks.length ? Math.round((done / m.tasks.length) * 100) : 0 };
+  }
+
+  function milestoneIdForTask(taskId: string): string | null {
+    for (const m of milestones) {
+      if (m.tasks.some(t => t.id === taskId)) return m.id;
+    }
+    return null;
+  }
+
+  async function postTaskWorkflowNotify(
+    kind: "completed_by_developer" | "approved" | "reopened",
+    taskTitle: string,
+  ) {
+    if (!savedProjectId) return;
+    try {
+      await fetch("/api/notify-task-workflow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: savedProjectId,
+          projectName,
+          kind,
+          taskTitle,
+        }),
+      });
+    } catch {
+      /* optional */
+    }
   }
 
   const AUDIT_ICONS: Record<string, { icon: React.ReactNode; color: string }> = {
@@ -1363,8 +1405,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
           </div>
           <div className="flex justify-between mt-2 text-[9px] text-[#888]">
             <span>{doneTasks} approved</span>
-            <span>{inReview + taskCounts.awaitingDevSignOff} action needed</span>
-            <span>{taskCounts.otherTodo} todo</span>
+            <span>{inReview ? `${inReview} client review` : "0 client review"}</span>
+            <span>{taskCounts.otherTodo} open</span>
           </div>
         </div>
 
@@ -1553,20 +1595,18 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                     <div className="space-y-3">
                       {m.tasks.map(task => {
                         const sc: Record<TaskStatus, { label: string; color: string; bg: string }> = {
-                          "todo":        { label: "To Do",       color: "text-white/40",    bg: "bg-white/5 border-white/5" },
+                          "pending":     { label: "Pending",       color: "text-white/40",    bg: "bg-white/5 border-white/5" },
                           "in-progress": { label: "In Progress", color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.15)]" },
                           "validating":  { label: "Validating",  color: "text-yellow-400",  bg: "bg-yellow-500/10 border-yellow-500/30 shadow-[0_0_15px_rgba(234,179,8,0.15)]" },
-                          "review":      { label: "In Review",   color: "text-purple-400",  bg: "bg-purple-500/10 border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.15)]" },
-                          "approved_creator": { label: "Client OK — your sign-off", color: "text-cyan-400", bg: "bg-cyan-500/10 border-cyan-500/30 shadow-[0_0_15px_rgba(34,211,238,0.12)]" },
-                          "approved_by_both": { label: "Approved (both)", color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.15)]" },
+                          "completed_by_developer": { label: "Awaiting client", color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.15)]" },
                           "approved":    { label: "Approved",    color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.15)]" },
-                          "rejected":    { label: "Rejected",    color: "text-red-400",     bg: "bg-red-500/10 border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.15)]" },
+                          "reopened":    { label: "Reopened",    color: "text-amber-400",   bg: "bg-amber-500/10 border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.15)]" },
                         };
                         const s = sc[task.status];
                         return (
                           <div key={task.id}
-                            className={`group relative p-5 rounded-3xl border transition-all duration-300 transform ${task.status === "review" ? "hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(168,85,247,0.2)] bg-gradient-to-br from-[#160f24] to-[#0A0A0A] border-purple-500/30 cursor-pointer" : "hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(0,0,0,0.4)] bg-gradient-to-br from-[#111] to-[#050505] border-white/5 hover:border-white/15"}`}
-                            onClick={() => task.status === "review" && setReviewTask(task)}>
+                            className={`group relative p-5 rounded-3xl border transition-all duration-300 transform ${task.status === "completed_by_developer" ? "hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(168,85,247,0.2)] bg-gradient-to-br from-[#160f24] to-[#0A0A0A] border-purple-500/30 cursor-pointer" : "hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(0,0,0,0.4)] bg-gradient-to-br from-[#111] to-[#050505] border-white/5 hover:border-white/15"}`}
+                            onClick={() => task.status === "completed_by_developer" && isCreator && setReviewTask(task)}>
                             <div className="flex items-start justify-between gap-4 flex-wrap">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-3 mb-1 flex-wrap">
@@ -1595,55 +1635,37 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                                     <div className="text-[9px] text-[#888]">AI Score</div>
                                   </div>
                                 )}
-                                {task.status === "review" && isCreator && (
+                                {task.status === "completed_by_developer" && isCreator && (
                                   <div className="flex flex-col gap-2">
-                                    <button onClick={e => { e.stopPropagation(); approveTask(task); }}
+                                    <button type="button" onClick={e => { e.stopPropagation(); void approveTask(task, m.id); }}
                                       className="px-3 py-1.5 bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-black text-[10px] uppercase tracking-widest rounded-lg hover:bg-emerald-500/30 transition-all flex items-center gap-1">
                                       <CheckCircle className="w-3 h-3" /> Approve
                                     </button>
-                                    <button onClick={e => { e.stopPropagation(); rejectTask(task); }}
+                                    <button type="button" onClick={e => { e.stopPropagation(); void rejectTask(task, m.id); }}
                                       className="px-3 py-1.5 bg-red-500/10 border border-red-500/30 text-red-400 font-black text-[10px] uppercase tracking-widest rounded-lg hover:bg-red-500/20 transition-all flex items-center gap-1">
-                                      <XCircle className="w-3 h-3" /> Reject
+                                      <XCircle className="w-3 h-3" /> Request changes
                                     </button>
                                   </div>
                                 )}
-                                {task.status === "todo" && isDeveloper && (
-                                  <button onClick={e => { e.stopPropagation(); submitTaskForReview(task, "Self-declared completion via unified workspace."); }}
+                                {(task.status === "pending" || task.status === "in-progress" || task.status === "validating" || task.status === "reopened") && isDeveloper && (
+                                  <button type="button" onClick={e => { e.stopPropagation(); void markTaskCompleted(m.id, task, task.status === "reopened" ? "Addressed feedback and re-completed work." : "Marked complete by developer in workspace."); }}
                                     className="px-4 py-2 border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-emerald-500/20 transition-all flex items-center gap-2">
-                                    <Play className="w-3 h-3" /> Submit for Review
+                                    <Play className="w-3 h-3" /> Mark as completed
                                   </button>
                                 )}
-                                {task.status === "rejected" && isDeveloper && (
-                                  <button onClick={e => { e.stopPropagation(); submitTaskForReview(task, "Re-submitted after changes."); }}
-                                    className="px-4 py-2 border border-yellow-500/30 bg-yellow-500/10 text-yellow-400 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-yellow-500/20 transition-all flex items-center gap-2">
-                                    <RotateCcw className="w-3 h-3" /> Re-submit Task
-                                  </button>
-                                )}
-                                {(task.status === "approved" || task.status === "approved_by_both") && (
+                                {task.status === "approved" && (
                                   <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-                                )}
-                                {task.status === "approved_creator" && isCreator && (
-                                  <span className="text-[9px] text-cyan-400/80 font-bold uppercase">Awaiting developer</span>
-                                )}
-                                {task.status === "approved_creator" && isDeveloper && (
-                                  <button
-                                    onClick={e => {
-                                      e.stopPropagation();
-                                      void developerConfirmDualApproval(task);
-                                    }}
-                                    className="px-3 py-1.5 bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-black text-[10px] uppercase tracking-widest rounded-lg hover:bg-cyan-500/30 transition-all flex items-center gap-1"
-                                  >
-                                    <CheckCircle className="w-3 h-3" /> Confirm sign-off
-                                  </button>
                                 )}
                               </div>
                             </div>
 
-                            {task.submission && task.status === "review" && (
+                            {task.submission && (task.status === "completed_by_developer" || task.status === "reopened") && (
                               <div className="mt-3 pt-3 border-t border-white/5">
-                                <p className="text-[10px] text-purple-400 font-bold uppercase tracking-widest mb-1">Submitted Work</p>
+                                <p className="text-[10px] text-purple-400 font-bold uppercase tracking-widest mb-1">Developer notes</p>
                                 <p className="text-xs text-white/50 font-mono line-clamp-2">{task.submission}</p>
-                                <p className="text-[10px] text-white/30 mt-1">Click to open full review</p>
+                                {task.status === "completed_by_developer" && isCreator && (
+                                  <p className="text-[10px] text-white/30 mt-1">Click card to open full review</p>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1662,8 +1684,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                   <div className="grid grid-cols-3 gap-5 relative z-10">
                     {[
                       { label: "Approved", count: doneTasks, color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20 shadow-[0_0_20px_rgba(16,185,129,0.1)]" },
-                      { label: "In Review", count: inReview, color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.1)]" },
-                      { label: "Remaining", count: taskCounts.otherTodo + taskCounts.awaitingDevSignOff, color: "text-white/60", bg: "bg-[#111] border-white/5" },
+                      { label: "Awaiting client", count: inReview, color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.1)]" },
+                      { label: "Remaining", count: taskCounts.otherTodo, color: "text-white/60", bg: "bg-[#111] border-white/5" },
                     ].map(s => (
                       <div key={s.label} className={`p-5 rounded-2xl border text-center transition-transform hover:-translate-y-1 ${s.bg}`}>
                         <div className={`text-4xl font-black ${s.color}`}>{s.count}</div>
@@ -2928,7 +2950,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
               <div className="flex items-center justify-between p-5 border-b border-white/10">
                 <div>
                   <h3 className="text-white font-bold">{reviewTask.title}</h3>
-                  <p className="text-[10px] text-purple-400 font-bold uppercase tracking-widest">Developer Submission — Pending Your Review</p>
+                  <p className="text-[10px] text-purple-400 font-bold uppercase tracking-widest">Completed by developer — pending your approval</p>
                 </div>
                 <button onClick={() => setReviewTask(null)} className="w-8 h-8 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 transition-colors text-white/60">
                   <X className="w-4 h-4" />
@@ -2954,11 +2976,17 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                 </div>
               </div>
               <div className="p-5 border-t border-white/10 flex gap-3">
-                <button onClick={() => rejectTask(reviewTask)} className="flex-1 py-3 bg-red-500/10 border border-red-500/30 text-red-400 font-black uppercase tracking-widest text-xs rounded-xl hover:bg-red-500/20 transition-all flex items-center justify-center gap-2">
-                  <XCircle className="w-4 h-4" /> Request Changes
+                <button type="button" onClick={() => {
+                  const mid = milestoneIdForTask(reviewTask.id);
+                  if (mid) void rejectTask(reviewTask, mid);
+                }} className="flex-1 py-3 bg-red-500/10 border border-red-500/30 text-red-400 font-black uppercase tracking-widest text-xs rounded-xl hover:bg-red-500/20 transition-all flex items-center justify-center gap-2">
+                  <XCircle className="w-4 h-4" /> Request changes
                 </button>
-                <button onClick={() => approveTask(reviewTask)} className="flex-1 py-3 bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-black uppercase tracking-widest text-xs rounded-xl hover:bg-emerald-500/30 transition-all flex items-center justify-center gap-2">
-                  <CheckCircle className="w-4 h-4" /> Approve & Merge
+                <button type="button" onClick={() => {
+                  const mid = milestoneIdForTask(reviewTask.id);
+                  if (mid) void approveTask(reviewTask, mid);
+                }} className="flex-1 py-3 bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-black uppercase tracking-widest text-xs rounded-xl hover:bg-emerald-500/30 transition-all flex items-center justify-center gap-2">
+                  <CheckCircle className="w-4 h-4" /> Approve
                 </button>
               </div>
             </motion.div>

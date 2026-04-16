@@ -502,6 +502,57 @@ export async function sendChatNotification(opts: {
   });
 }
 
+/** Task workflow: notify creator when dev completes; notify dev on approve / reopen */
+export async function sendTaskWorkflowEmails(opts: {
+  projectName: string;
+  taskTitle: string;
+  kind: "completed_by_developer" | "approved" | "reopened";
+  creatorEmail: string | null | undefined;
+  developerEmail: string | null | undefined;
+  workspaceUrl: string;
+}): Promise<void> {
+  const ce = typeof opts.creatorEmail === "string" && opts.creatorEmail.includes("@") ? opts.creatorEmail : null;
+  const de = typeof opts.developerEmail === "string" && opts.developerEmail.includes("@") ? opts.developerEmail : null;
+  const box = (title: string, body: string) => `
+      <div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;background:#09090b;color:#fff;padding:32px;border-radius:16px;">
+        <h2 style="font-size:18px;font-weight:800;">${title}</h2>
+        <p style="color:#aaa;line-height:1.6;">${body}</p>
+        <a href="${opts.workspaceUrl}" style="display:inline-block;margin-top:20px;background:#fff;color:#000;font-weight:800;font-size:11px;text-transform:uppercase;letter-spacing:.15em;padding:12px 20px;border-radius:10px;text-decoration:none;">Open Tasks &amp; Milestones</a>
+        <p style="color:#555;font-size:11px;margin-top:24px;">BuildCraft AI</p>
+      </div>`;
+
+  if (opts.kind === "completed_by_developer" && ce) {
+    await send({
+      to: ce,
+      subject: `Task ready for review — ${opts.projectName}`,
+      html: box(
+        "Developer completed a task",
+        `In <strong style="color:#fff">${opts.projectName}</strong>, the developer marked <strong style="color:#fff">${opts.taskTitle}</strong> as completed. Please review and approve or request changes.`,
+      ),
+    });
+  }
+  if (opts.kind === "approved" && de) {
+    await send({
+      to: de,
+      subject: `Task approved — ${opts.projectName}`,
+      html: box(
+        "Client approved your task",
+        `Your work on <strong style="color:#fff">${opts.taskTitle}</strong> for <strong style="color:#fff">${opts.projectName}</strong> was approved.`,
+      ),
+    });
+  }
+  if (opts.kind === "reopened" && de) {
+    await send({
+      to: de,
+      subject: `Changes requested — ${opts.projectName}`,
+      html: box(
+        "Client requested changes",
+        `The client asked for revisions on <strong style="color:#fff">${opts.taskTitle}</strong> in <strong style="color:#fff">${opts.projectName}</strong>. Open the workspace to see feedback and resubmit.`,
+      ),
+    });
+  }
+}
+
 /** Optional: notify both parties when a project is marked completed in the app */
 export async function sendProjectCompletionBroadcast(opts: {
   creatorEmail: string | null | undefined;
