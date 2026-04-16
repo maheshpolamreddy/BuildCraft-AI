@@ -41,6 +41,10 @@ interface Props {
   /** Developer assigned / hire accepted */
   hasAssignedDeveloper: boolean;
   projectName: string;
+  /** Firestore subscription or init failed (e.g. rules) — show retry instead of endless spinner */
+  executionLoadError?: string | null;
+  /** Create or heal projectExecution doc (creator or hired developer) */
+  onEnsureExecution?: () => Promise<void>;
   onRefresh?: () => void;
 }
 
@@ -55,6 +59,8 @@ export function ProjectCompletionPanel({
   completionUnlocked,
   hasAssignedDeveloper,
   projectName,
+  executionLoadError,
+  onEnsureExecution,
   onRefresh,
 }: Props) {
   const [view, setView] = useState<PanelView>("status");
@@ -80,10 +86,21 @@ export function ProjectCompletionPanel({
     developerAcknowledgesDone: false,
   });
   const [clientAcceptsDeliverables, setClientAcceptsDeliverables] = useState(false);
+  const [slowExecutionLoad, setSlowExecutionLoad] = useState(false);
+  const [ensuringExecution, setEnsuringExecution] = useState(false);
 
   useEffect(() => {
     setDeployUrl(pe?.deploymentUrl || "");
   }, [pe?.deploymentUrl]);
+
+  useEffect(() => {
+    if (pe) {
+      setSlowExecutionLoad(false);
+      return;
+    }
+    const t = window.setTimeout(() => setSlowExecutionLoad(true), 6000);
+    return () => window.clearTimeout(t);
+  }, [pe]);
 
   if (!hasAssignedDeveloper) {
     return (
@@ -96,9 +113,42 @@ export function ProjectCompletionPanel({
 
   if (!pe) {
     return (
-      <div className="p-6 rounded-2xl border border-white/10 bg-white/[0.02] text-center">
-        <Loader2 className="w-8 h-8 text-indigo-400 animate-spin mx-auto mb-3" />
-        <p className="text-white/40 text-sm">Loading project execution…</p>
+      <div className="p-6 rounded-2xl border border-white/10 bg-white/[0.02] text-center space-y-4">
+        {executionLoadError ? (
+          <>
+            <AlertTriangle className="w-8 h-8 text-amber-400 mx-auto" />
+            <p className="text-white/70 text-sm font-medium">Could not load completion state</p>
+            <p className="text-white/40 text-xs max-w-md mx-auto">{executionLoadError}</p>
+          </>
+        ) : (
+          <>
+            <Loader2 className="w-8 h-8 text-indigo-400 animate-spin mx-auto" />
+            <p className="text-white/40 text-sm">Loading project execution…</p>
+            {slowExecutionLoad && (
+              <p className="text-white/35 text-xs max-w-md mx-auto">
+                This is taking longer than usual. If it stays empty, your project may still be setting up the completion record.
+              </p>
+            )}
+          </>
+        )}
+        {onEnsureExecution && (
+          <button
+            type="button"
+            disabled={ensuringExecution}
+            onClick={async () => {
+              setEnsuringExecution(true);
+              try {
+                await onEnsureExecution();
+                onRefresh?.();
+              } finally {
+                setEnsuringExecution(false);
+              }
+            }}
+            className="text-xs font-black uppercase tracking-widest px-4 py-2 rounded-xl border border-indigo-500/40 text-indigo-200 hover:bg-indigo-500/10 disabled:opacity-50"
+          >
+            {ensuringExecution ? "Working…" : "Retry / create execution record"}
+          </button>
+        )}
       </div>
     );
   }

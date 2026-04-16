@@ -118,6 +118,33 @@ service cloud.firestore {
       allow delete: if signedIn() && get(/databases/$(database)/documents/projects/$(projectId)).data.uid == request.auth.uid;
     }
 
+    // ── Project execution (completion workflow: projectExecution/{savedProjectId}) ──
+    // Must align with projects/{projectId}: creator uid + optional developerUid.
+    match /projectExecution/{projectId} {
+      function projectPartyData() {
+        return get(/databases/$(database)/documents/projects/$(projectId)).data;
+      }
+      function isProjectExecutionParty() {
+        return signedIn()
+          && exists(/databases/$(database)/documents/projects/$(projectId))
+          && (
+            projectPartyData().uid == request.auth.uid
+            || projectPartyData().developerUid == request.auth.uid
+          );
+      }
+      allow read: if isProjectExecutionParty();
+      // First write: creatorUid must match projects.uid; developerUid must be null or match project
+      allow create: if isProjectExecutionParty()
+        && request.resource.data.projectId == projectId
+        && request.resource.data.savedProjectId == projectId
+        && request.resource.data.creatorUid == projectPartyData().uid
+        && (
+          request.resource.data.developerUid == null
+          || request.resource.data.developerUid == projectPartyData().developerUid
+        );
+      allow update, delete: if isProjectExecutionParty();
+    }
+
     // ── Audit log ───────────────────────────────────────────────────────────
     match /auditLog/{entryId} {
       allow create: if signedIn();

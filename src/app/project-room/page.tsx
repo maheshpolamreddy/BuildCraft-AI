@@ -292,6 +292,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
   // ── Project Execution state ──────────────────────────────────────────────
   const [projExec, setProjExec] = useState<ProjectExecution | null>(null);
+  const [projExecSubError, setProjExecSubError] = useState<string | null>(null);
 
   /** Reset when switching Firestore project doc so milestone AI does not skip for the new id. */
   const generatedRef = useRef(false);
@@ -531,25 +532,63 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   // ── Subscribe to Project Execution state ──────────────────────────────────
   useEffect(() => {
     if (!savedProjectId || !currentUser?.uid) return;
+    setProjExecSubError(null);
     return subscribeToProjectExecution(
       savedProjectId,
       setProjExec,
-      (err) => console.warn("[ProjectRoom] projExec subscription:", err),
+      (err) => {
+        console.warn("[ProjectRoom] projExec subscription:", err);
+        setProjExecSubError(err);
+      },
     );
   }, [savedProjectId, currentUser?.uid]);
 
-  // ── Initialize Project Execution record when workspace opens ────────────
+  // ── Initialize Project Execution record (creator OR hired developer — both need the doc) ──
+  const hasExecutionContext =
+    !!savedProjectId &&
+    !!currentUser?.uid &&
+    !!project &&
+    (!!project.developerUid || hiringState === "accepted");
+
   useEffect(() => {
-    if (!savedProjectId || !currentUser?.uid || !project) return;
-    if (!isCreator) return;
+    if (!hasExecutionContext) return;
+    if (!isCreator && !isDeveloper) return;
     initProjectExecution({
+      projectId: savedProjectId!,
+      savedProjectId: savedProjectId!,
+      projectName: project!.name,
+      creatorUid: project!.creatorUid || currentUser.uid,
+      developerUid: project!.developerUid || null,
+    }).catch((e) => console.warn("[ProjectRoom] initProjectExecution:", e));
+  }, [
+    hasExecutionContext,
+    savedProjectId,
+    currentUser?.uid,
+    project?.name,
+    project?.creatorUid,
+    project?.developerUid,
+    isCreator,
+    isDeveloper,
+    hiringState,
+  ]);
+
+  const ensureProjectExecutionDoc = useCallback(() => {
+    if (!savedProjectId || !currentUser?.uid || !project) return Promise.resolve();
+    if (!isCreator && !isDeveloper) return Promise.resolve();
+    setProjExecSubError(null);
+    return initProjectExecution({
       projectId: savedProjectId,
       savedProjectId,
       projectName: project.name,
       creatorUid: project.creatorUid || currentUser.uid,
       developerUid: project.developerUid || null,
-    }).catch((e) => console.warn("[ProjectRoom] initProjectExecution:", e));
-  }, [savedProjectId, currentUser?.uid, project?.name, project?.creatorUid, project?.developerUid, isCreator]);
+    })
+      .then(() => getProjectExecution(savedProjectId).then(setProjExec))
+      .catch((e: unknown) => {
+        console.warn("[ProjectRoom] ensureProjectExecutionDoc:", e);
+        setProjExecSubError(e instanceof Error ? e.message : String(e));
+      });
+  }, [savedProjectId, currentUser?.uid, project, isCreator, isDeveloper]);
 
   useEffect(() => {
     if (!isDeveloperWorkspace || !authReady || !currentUser?.uid || !savedProjectId || !project) return;
@@ -2672,6 +2711,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                   completionUnlocked={completionSectionUnlocked}
                   hasAssignedDeveloper={Boolean(project?.developerUid) || hiringState === "accepted"}
                   projectName={projectName}
+                  executionLoadError={projExecSubError}
+                  onEnsureExecution={ensureProjectExecutionDoc}
                   onRefresh={() => {
                     if (savedProjectId) {
                       getProjectExecution(savedProjectId).then(setProjExec);
