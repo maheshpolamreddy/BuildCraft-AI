@@ -15,6 +15,7 @@ import { logAction } from "@/lib/auditLog";
 import { parseJsonResponse } from "@/lib/parse-api-json";
 import {
   getDeveloperProfile,
+  subscribeToDeveloperProfile,
   updateDeveloperProfileField,
   isDeveloperRegistrationComplete,
   type DeveloperProfile as DevProfileType,
@@ -25,6 +26,8 @@ import { useRouter } from "next/navigation";
 import { signOutUser } from "@/lib/auth";
 import { getHireRequestsByDeveloper, type HireRequest } from "@/lib/hireRequests";
 import { getProject, claimProjectAsDeveloper } from "@/lib/firestore";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 import { DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 import { formatDateTimeSmart } from "@/lib/dateDisplay";
 
@@ -296,30 +299,29 @@ export default function EmployeeDashboard() {
       setWorkspaceCompletion({});
       return;
     }
-    let cancelled = false;
-    void (async () => {
-      const next: Record<string, { completed: boolean; completedAt?: number; deployUrl?: string }> = {};
-      await Promise.all(
-        ids.map(async (id) => {
-          try {
-            const saved = await getProject(id);
-            const st = saved?.project?.lifecycleStatus;
-            const completed = st === "completed";
-            next[id] = {
-              completed,
-              completedAt: saved?.project?.completedAt,
-              deployUrl: saved?.project?.completionDeploymentUrl,
-            };
-          } catch {
-            next[id] = { completed: false };
-          }
-        }),
-      );
-      if (!cancelled) setWorkspaceCompletion(next);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    const unsubs = ids.map((id) =>
+      onSnapshot(doc(db, "projects", id), (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data() as Record<string, unknown>;
+        const proj = data.project as Record<string, unknown> | undefined;
+        const nestedDone = proj?.lifecycleStatus === "completed";
+        const rootDone = data.completionStatus === "completed";
+        const completed = Boolean(nestedDone || rootDone);
+        setWorkspaceCompletion((prev) => ({
+          ...prev,
+          [id]: {
+            completed,
+            completedAt:
+              (typeof proj?.completedAt === "number" ? proj.completedAt : undefined) ??
+              (typeof data.completionRecordedAtMs === "number" ? data.completionRecordedAtMs : undefined),
+            deployUrl:
+              (typeof proj?.completionDeploymentUrl === "string" ? proj.completionDeploymentUrl : undefined) ??
+              (typeof data.completionDeploymentUrlRoot === "string" ? data.completionDeploymentUrlRoot : undefined),
+          },
+        }));
+      }),
+    );
+    return () => unsubs.forEach((u) => u());
   }, [activeAssignmentProjectIdsKey]);
 
   const closedHireCount = useMemo(
@@ -406,21 +408,27 @@ export default function EmployeeDashboard() {
     }));
   }
 
-  // ── Refresh profile from Firestore; require completed registration ─────────
+  // ── Profile: load once for gate, then real-time sync (tier, badges, counts) ─
   const firebaseUid = currentUser?.uid ?? null;
   useEffect(() => {
     if (!firebaseUid || firebaseUid === "demo-guest") return;
     let cancelled = false;
+    let unsub: (() => void) | null = null;
     void (async () => {
       const fresh = await getDeveloperProfile(firebaseUid);
       if (cancelled) return;
       if (fresh) setDeveloperProfile(fresh);
       if (!isDeveloperRegistrationComplete(fresh)) {
         router.replace("/developer");
+        return;
       }
+      unsub = subscribeToDeveloperProfile(firebaseUid, (live) => {
+        if (live) setDeveloperProfile(live);
+      });
     })();
     return () => {
       cancelled = true;
+      unsub?.();
     };
   }, [firebaseUid, router, setDeveloperProfile]);
 

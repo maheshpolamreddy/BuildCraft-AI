@@ -14,6 +14,7 @@ import {
 import { useStore } from "@/store/useStore";
 import {
   getDeveloperProfile,
+  subscribeToDeveloperProfile,
   saveDeveloperProfile,
   type DeveloperProfile,
   type PrimaryRole,
@@ -111,7 +112,7 @@ export default function DeveloperProfilePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Load profile ─────────────────────────────────────────────────────────
+  // ── Load profile + live updates (badges / tier after project completion) ───
   useEffect(() => {
     async function load() {
       setLoading(true);
@@ -123,9 +124,17 @@ export default function DeveloperProfilePage() {
       setProfile(p);
       setLoading(false);
     }
-    load();
+    void load();
+    if (!currentUser?.uid || currentUser.uid === "demo-guest") return;
+    const unsub = subscribeToDeveloperProfile(currentUser.uid, (live) => {
+      if (live) {
+        setDeveloperProfile(live);
+        setProfile(live);
+      }
+    });
+    return () => unsub();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [currentUser?.uid]);
 
   // ── Debounced auto-save ───────────────────────────────────────────────────
   const autoSave = useCallback((updated: DeveloperProfile) => {

@@ -1,6 +1,6 @@
 import {
   doc, setDoc, getDoc, updateDoc, serverTimestamp, Timestamp,
-  collection, getDocs, query, where, limit,
+  collection, getDocs, query, where, limit, onSnapshot,
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { db } from "./firebase";
@@ -208,6 +208,21 @@ export async function getDeveloperProfile(uid: string): Promise<DeveloperProfile
     console.warn("[developerProfile] load failed:", err);
     return null;
   }
+}
+
+/** Live profile updates (tier, badges, completed counts after project completion). */
+export function subscribeToDeveloperProfile(
+  uid: string,
+  onUpdate: (profile: DeveloperProfile | null) => void,
+): () => void {
+  if (!isFirebaseUid(uid)) return () => {};
+  return onSnapshot(
+    doc(db, "developerProfiles", uid),
+    (snap) => {
+      onUpdate(snap.exists() ? (snap.data() as DeveloperProfile) : null);
+    },
+    (err) => console.warn("[developerProfile] snapshot:", err),
+  );
 }
 
 /** True if this profile should appear in employer matching lists. */

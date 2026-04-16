@@ -91,6 +91,10 @@ export interface SavedProject {
   createdAt:    Timestamp | null;
   updatedAt:    Timestamp | null;
   deletedAt?:   Timestamp | null;
+  /** Denormalized dual-approval completion (mirrors nested `project` for list/dashboard reads). */
+  completionStatus?: "completed" | string;
+  completionRecordedAtMs?: number;
+  completionDeploymentUrlRoot?: string;
 }
 
 /** Sort key for project lists (newest first). */
@@ -116,6 +120,10 @@ export function savedProjectFromSnapshot(docId: string, data: Record<string, unk
     deletedAt: raw.deletedAt,
     developerUid: raw.developerUid,
     email: raw.email,
+    completionStatus: raw.completionStatus as string | undefined,
+    completionRecordedAtMs: typeof raw.completionRecordedAtMs === "number" ? raw.completionRecordedAtMs : undefined,
+    completionDeploymentUrlRoot:
+      typeof raw.completionDeploymentUrlRoot === "string" ? raw.completionDeploymentUrlRoot : undefined,
   } as SavedProject;
 }
 
@@ -228,8 +236,12 @@ export async function markProjectCompleted(
       merged.creatorEmail ?? (typeof data.email === "string" ? data.email : undefined),
     );
     const projectPayload = sanitizeProjectForWrite(merged, { uid: ownerUid, email: emailNorm });
+    const deploy = opts.completionDeploymentUrl.trim();
     await updateDoc(doc(db, "projects", docId), {
       project: projectPayload,
+      completionStatus: "completed",
+      completionRecordedAtMs: opts.completedAt,
+      completionDeploymentUrlRoot: deploy,
       updatedAt: serverTimestamp(),
     });
     return true;

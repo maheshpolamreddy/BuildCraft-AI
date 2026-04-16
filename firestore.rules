@@ -30,6 +30,25 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // Creator or hired developer on projects/{pid} (top-level uid / developerUid)
+    function projectDocData(pid) {
+      return get(/databases/$(database)/documents/projects/$(pid)).data;
+    }
+    function isProjectPartyForId(pid) {
+      return signedIn()
+        && pid is string
+        && pid.size() > 0
+        && exists(/databases/$(database)/documents/projects/$(pid))
+        && (
+          projectDocData(pid).uid == request.auth.uid
+          || (
+            projectDocData(pid).developerUid is string
+            && projectDocData(pid).developerUid.size() > 0
+            && projectDocData(pid).developerUid == request.auth.uid
+          )
+        );
+    }
+
     // hire token documents are 24 random bytes as hex = 48 chars
     function isHireTokenId(id) {
       return id is string && id.matches('^[a-f0-9]{48}$');
@@ -108,6 +127,14 @@ service cloud.firestore {
         )
       );
       allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+
+      // Immutable project-scoped audit trail (both parties can read; actor creates)
+      match /audit_logs/{logId} {
+        allow read: if isProjectPartyForId(projectId);
+        allow create: if isProjectPartyForId(projectId)
+          && request.resource.data.performedByUid == request.auth.uid;
+        allow update, delete: if false;
+      }
     }
 
     // ── Project Workspaces (milestones + talent sync) ─────────────────────
@@ -170,7 +197,12 @@ service cloud.firestore {
       allow read: if signedIn() && (
         resource.data.uid == request.auth.uid ||
         resource.data.creatorUid == request.auth.uid ||
-        resource.data.developerUid == request.auth.uid
+        resource.data.developerUid == request.auth.uid ||
+        (
+          resource.data.projectId is string
+          && resource.data.projectId.size() > 0
+          && isProjectPartyForId(resource.data.projectId)
+        )
       );
     }
 

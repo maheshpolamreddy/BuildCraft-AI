@@ -33,7 +33,7 @@ const _unused = { Download, ChevronRight, Play, Star, Scale };
 import Link from "next/link";
 import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useStore } from "@/store/useStore";
-import { logAction, getProjectAuditLog, type AuditEntry } from "@/lib/auditLog";
+import { logAction, subscribeProjectAuditLog, type AuditEntry } from "@/lib/auditLog";
 import { parseJsonResponse } from "@/lib/parse-api-json";
 import { getAllDeveloperProfiles, isDeveloperRegistrationComplete, shouldDefaultToDeveloperDashboard } from "@/lib/developerProfile";
 import { type MatchedDeveloper } from "@/app/api/match-developers/route";
@@ -59,7 +59,7 @@ import {
   type ChatRoom,
 } from "@/lib/chat";
 import { useFirebaseUid } from "@/hooks/useFirebaseUid";
-import { deleteDoc, doc } from "firebase/firestore";
+import { deleteDoc, doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { getProject, claimProjectAsDeveloper, syncDeveloperUidToProjectRoot, type SavedProject } from "@/lib/firestore";
 import { CreatorFlowBreadcrumb, DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
@@ -401,6 +401,44 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeProjectId, project, savedProjectId, setProject, setSavedProjectId, authReady, loadRetry]);
+
+  /** Keep completion + deployment fields in sync when the saved project doc updates (e.g. client approves elsewhere). */
+  useEffect(() => {
+    if (!savedProjectId || !authReady) return;
+    const r = doc(db, "projects", savedProjectId);
+    return onSnapshot(r, (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data() as Record<string, unknown>;
+      const nested = data.project as Record<string, unknown> | undefined;
+      const pState = useStore.getState().project;
+      if (!pState) return;
+      const rootComplete = data.completionStatus === "completed";
+      const nextLife =
+        (typeof nested?.lifecycleStatus === "string" ? nested.lifecycleStatus : undefined) ||
+        (rootComplete ? "completed" : pState.lifecycleStatus);
+      const nextAt =
+        (typeof nested?.completedAt === "number" ? nested.completedAt : undefined) ??
+        (typeof data.completionRecordedAtMs === "number" ? data.completionRecordedAtMs : undefined) ??
+        pState.completedAt;
+      const nextDep =
+        (typeof nested?.completionDeploymentUrl === "string" ? nested.completionDeploymentUrl : undefined) ??
+        (typeof data.completionDeploymentUrlRoot === "string" ? data.completionDeploymentUrlRoot : undefined) ??
+        pState.completionDeploymentUrl;
+      if (
+        nextLife === pState.lifecycleStatus &&
+        nextAt === pState.completedAt &&
+        nextDep === pState.completionDeploymentUrl
+      ) {
+        return;
+      }
+      setProject({
+        ...pState,
+        lifecycleStatus: nextLife as typeof pState.lifecycleStatus,
+        completedAt: nextAt,
+        completionDeploymentUrl: nextDep,
+      });
+    });
+  }, [savedProjectId, authReady, setProject]);
 
   // Deep-link from Discovery / Architecture / hire emails (e.g. ?tab=chat&chat=…)
   useEffect(() => {
@@ -1180,15 +1218,20 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     }
   }
 
-  // ── Load shared Project Audit Log ──────────────────────────────────────────
+  // ── Project audit log (subcollection + legacy, real-time) ───────────────────
   useEffect(() => {
-    if (activeTab !== "audit" || !currentUser || !savedProjectId) return;
+    if (activeTab !== "audit" || !savedProjectId) return;
     setLoadingAudit(true);
-    getProjectAuditLog(savedProjectId, 30)
-      .then(entries => setAuditEntries(entries))
-      .catch(() => {})
-      .finally(() => setLoadingAudit(false));
-  }, [activeTab, currentUser, savedProjectId]);
+    const unsub = subscribeProjectAuditLog(
+      savedProjectId,
+      (entries) => {
+        setAuditEntries(entries);
+        setLoadingAudit(false);
+      },
+      40,
+    );
+    return () => unsub();
+  }, [activeTab, savedProjectId]);
 
   // ── Task actions ────────────────────────────────────────────────────────────
   async function approveTask(task: Task, milestoneId: string) {
@@ -1350,6 +1393,9 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     "tool.rejected":            { icon: <XCircle className="w-4 h-4" />,      color: "red"    },
     "milestone.approved":       { icon: <CheckSquare className="w-4 h-4" />,  color: "green"  },
     "milestone.rejected":       { icon: <Trash2 className="w-4 h-4" />,       color: "red"    },
+    "milestone.submitted":      { icon: <Package className="w-4 h-4" />,      color: "blue"   },
+    "project.completion_submitted": { icon: <Rocket className="w-4 h-4" />,   color: "yellow" },
+    "project.completed":        { icon: <CheckCircle2 className="w-4 h-4" />, color: "green"  },
     "auth.sign_in":             { icon: <Shield className="w-4 h-4" />,       color: "white"  },
     "auth.sign_up":             { icon: <Shield className="w-4 h-4" />,       color: "white"  },
     "code.generated":           { icon: <Terminal className="w-4 h-4" />,     color: "purple" },

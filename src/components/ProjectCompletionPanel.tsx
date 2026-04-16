@@ -173,13 +173,15 @@ export function ProjectCompletionPanel({
   const deployUrlValid = isValidDeploymentUrl(deployUrl);
 
   async function handleDevSubmit() {
-    if (!deployUrl.trim() || !deployUrlValid || !checklistComplete) return;
+    if (!pe || !deployUrl.trim() || !deployUrlValid || !checklistComplete) return;
     setSubmitting(true);
     try {
       await developerSubmitCompletion(projectId, devNotes, deployUrl.trim(), devChecklist);
-      await logAction(currentUid, "project.updated", {
+      await logAction(currentUid, "project.completion_submitted", {
         action: "developer_submitted_completion",
         projectId,
+        developerUid: pe.developerUid ?? undefined,
+        creatorUid: pe.creatorUid,
       });
       onRefresh?.();
     } catch (e) {
@@ -204,9 +206,11 @@ export function ProjectCompletionPanel({
         const result = await processCompletionRewards(pe.developerUid, projectName, projectId);
         setRewardResult(result);
       }
-      await logAction(currentUid, "project.updated", {
+      await logAction(currentUid, "project.completed", {
         action: "creator_approved_completion",
         projectId,
+        developerUid: pe.developerUid ?? undefined,
+        creatorUid: pe.creatorUid,
       });
       onRefresh?.();
       fetch("/api/notify-project-completed", {
@@ -222,13 +226,15 @@ export function ProjectCompletionPanel({
   }
 
   async function handleCreatorReject() {
-    if (!rejectReason.trim()) return;
+    if (!pe || !rejectReason.trim()) return;
     setSubmitting(true);
     try {
       await creatorRejectCompletion(projectId, rejectReason.trim());
       await logAction(currentUid, "project.updated", {
         action: "creator_rejected_completion",
         projectId,
+        developerUid: pe.developerUid ?? undefined,
+        creatorUid: pe.creatorUid,
         reason: rejectReason.trim(),
       });
       setShowRejectForm(false);
