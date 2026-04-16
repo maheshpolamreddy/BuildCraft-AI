@@ -292,3 +292,25 @@ export async function claimProjectAsDeveloper(docId: string, developerUid: strin
     return false;
   }
 }
+
+/**
+ * Mirror nested `project.developerUid` to top-level `developerUid` when missing.
+ * Firestore security rules and some APIs rely on the top-level field.
+ */
+export async function syncDeveloperUidToProjectRoot(docId: string): Promise<void> {
+  if (!docId) return;
+  try {
+    const saved = await getProject(docId);
+    if (!saved) return;
+    const nested = saved.project?.developerUid?.trim();
+    const top = typeof saved.developerUid === "string" ? saved.developerUid.trim() : "";
+    if (nested && !top) {
+      await updateDoc(doc(db, "projects", docId), {
+        developerUid: nested,
+        updatedAt: serverTimestamp(),
+      });
+    }
+  } catch (err) {
+    console.warn("[firestore] syncDeveloperUidToProjectRoot:", err);
+  }
+}

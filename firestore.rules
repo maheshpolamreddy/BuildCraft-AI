@@ -119,28 +119,47 @@ service cloud.firestore {
     }
 
     // ── Project execution (completion workflow: projectExecution/{savedProjectId}) ──
-    // Must align with projects/{projectId}: creator uid + optional developerUid.
+    // Party = projects/{projectId} owner (uid or nested project.creatorUid) or hired dev (top or nested).
     match /projectExecution/{projectId} {
-      function projectPartyData() {
-        return get(/databases/$(database)/documents/projects/$(projectId)).data;
+      function projectDocPath() {
+        return /databases/$(database)/documents/projects/$(projectId);
+      }
+      function projectRow() {
+        return get(projectDocPath()).data;
+      }
+      function projectNested() {
+        return projectRow().project;
+      }
+      function projectCreatorUidEffective() {
+        return projectRow().uid is string && projectRow().uid.size() > 0
+          ? projectRow().uid
+          : (projectNested() != null && projectNested().creatorUid is string
+            ? projectNested().creatorUid
+            : '');
+      }
+      function projectDeveloperUidEffective() {
+        return projectRow().developerUid is string && projectRow().developerUid.size() > 0
+          ? projectRow().developerUid
+          : (projectNested() != null && projectNested().developerUid is string
+            ? projectNested().developerUid
+            : '');
       }
       function isProjectExecutionParty() {
         return signedIn()
-          && exists(/databases/$(database)/documents/projects/$(projectId))
+          && exists(projectDocPath())
           && (
-            projectPartyData().uid == request.auth.uid
-            || projectPartyData().developerUid == request.auth.uid
+            projectCreatorUidEffective() == request.auth.uid
+            || projectDeveloperUidEffective() == request.auth.uid
           );
       }
       allow read: if isProjectExecutionParty();
-      // First write: creatorUid must match projects.uid; developerUid must be null or match project
       allow create: if isProjectExecutionParty()
         && request.resource.data.projectId == projectId
         && request.resource.data.savedProjectId == projectId
-        && request.resource.data.creatorUid == projectPartyData().uid
+        && request.resource.data.creatorUid == projectCreatorUidEffective()
         && (
-          request.resource.data.developerUid == null
-          || request.resource.data.developerUid == projectPartyData().developerUid
+          (request.resource.data.developerUid == null && projectDeveloperUidEffective() == '')
+          || (projectDeveloperUidEffective() != '' && request.resource.data.developerUid == projectDeveloperUidEffective())
         );
       allow update, delete: if isProjectExecutionParty();
     }

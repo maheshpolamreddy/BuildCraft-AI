@@ -61,7 +61,7 @@ import {
 import { useFirebaseUid } from "@/hooks/useFirebaseUid";
 import { deleteDoc, doc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
-import { getProject, claimProjectAsDeveloper, type SavedProject } from "@/lib/firestore";
+import { getProject, claimProjectAsDeveloper, syncDeveloperUidToProjectRoot, type SavedProject } from "@/lib/firestore";
 import { CreatorFlowBreadcrumb, DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 import { CreatorFlowGuard } from "@/components/CreatorFlowGuard";
 import { ProjectCompletionPanel } from "@/components/ProjectCompletionPanel";
@@ -385,6 +385,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
           };
           setProject(merged);
           setSavedProjectId(pId);
+          void syncDeveloperUidToProjectRoot(pId);
           setProjectLoadFailed(false);
         } else {
           setProjectLoadFailed(true);
@@ -542,6 +543,12 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       },
     );
   }, [savedProjectId, currentUser?.uid]);
+
+  // Heal top-level developerUid when legacy rows only stored it under project.* (Firestore rules use both)
+  useEffect(() => {
+    if (!savedProjectId || !authReady) return;
+    void syncDeveloperUidToProjectRoot(savedProjectId);
+  }, [savedProjectId, authReady]);
 
   // ── Initialize Project Execution record (creator OR hired developer — both need the doc) ──
   const hasExecutionContext =
