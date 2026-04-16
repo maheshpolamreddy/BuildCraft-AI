@@ -385,7 +385,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
           };
           setProject(merged);
           setSavedProjectId(pId);
-          void syncDeveloperUidToProjectRoot(pId);
+          void syncDeveloperUidToProjectRoot(pId as string);
           setProjectLoadFailed(false);
         } else {
           setProjectLoadFailed(true);
