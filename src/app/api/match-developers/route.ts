@@ -1,42 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getNimClient } from "@/lib/nim-client";
-import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
 import { readJsonBody } from "@/lib/read-json-body";
 import { messageForAiRouteFailure } from "@/lib/map-ai-route-error";
 import { normalizeSkillsFromFirestore } from "@/lib/developerProfile";
+import {
+  explainDeveloperMatch,
+  rankDevelopersForProject,
+  type RankableDeveloper,
+} from "@/lib/ml-matching/rank-developers";
 
-export const maxDuration = 180;
+export const maxDuration = 30;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface DevCandidate {
-  userId:       string;
-  fullName:     string;
-  email:        string;
-  photoURL:     string;
-  primaryRole:  string;
-  yearsExp:     number;
-  skills:       string[];
-  tools:        string[];
-  githubUrl:    string;
+  userId: string;
+  fullName: string;
+  email: string;
+  photoURL: string;
+  primaryRole: string;
+  yearsExp: number;
+  skills: string[];
+  tools: string[];
+  githubUrl: string;
   portfolioUrl: string;
   verificationStatus: string;
   availability: string;
-  payMin:       number;
-  payMax:       number;
-  payCurrency:  string;
+  payMin: number;
+  payMax: number;
+  payCurrency: string;
   profileStatus: string;
 }
 
 export interface MatchedDeveloper extends DevCandidate {
-  matchScore:      number;   // 0–100
-  confidenceBand:  "Excellent" | "Strong" | "Good" | "Fair";
-  skillOverlap:    string[];
-  missingSkills:   string[];
-  matchReasons:    string[];
-  strengthsNote:   string;
-  caution:         string | null;
-  rank:            number;
+  matchScore: number;
+  confidenceBand: "Excellent" | "Strong" | "Good" | "Fair";
+  skillOverlap: string[];
+  missingSkills: string[];
+  matchReasons: string[];
+  strengthsNote: string;
+  caution: string | null;
+  rank: number;
 }
 
 /** Coerce Firestore / client payloads so scoring never throws on missing arrays. */
@@ -46,7 +49,7 @@ function toDevCandidate(raw: unknown): DevCandidate | null {
   const userId = String(o.userId ?? "").trim();
   if (!userId) return null;
   const strArr = (v: unknown): string[] =>
-    Array.isArray(v) ? v.map(x => String(x)) : [];
+    Array.isArray(v) ? v.map((x) => String(x)) : [];
   const skillsNorm = normalizeSkillsFromFirestore(
     o.skills ?? (o as { skillList?: unknown }).skillList ?? (o as { techStack?: unknown }).techStack,
   );
@@ -75,30 +78,6 @@ function toDevCandidate(raw: unknown): DevCandidate | null {
   };
 }
 
-// ── Scoring formula (deterministic baseline) ─────────────────────────────────
-// Applied before AI enhancement so AI only needs to generate reasoning text
-
-function scoreCandidate(
-  dev: DevCandidate,
-  requiredSkills: string[],
-): { score: number; overlap: string[]; missing: string[] } {
-  const devSkillsLower = dev.skills.map(s => s.toLowerCase());
-  const requiredLower  = requiredSkills.map(s => s.toLowerCase());
-
-  const overlap  = requiredSkills.filter(rs => devSkillsLower.some(ds => ds.includes(rs.toLowerCase()) || rs.toLowerCase().includes(ds)));
-  const missing  = requiredSkills.filter(rs => !devSkillsLower.some(ds => ds.includes(rs.toLowerCase()) || rs.toLowerCase().includes(ds)));
-
-  const overlapRatio  = requiredLower.length > 0 ? overlap.length / requiredLower.length : 0.5;
-  const expScore      = Math.min(dev.yearsExp / 7, 1);
-  const tierScore     = dev.verificationStatus === "project-verified" ? 1 : dev.verificationStatus === "assessment-passed" ? 0.65 : 0.35;
-  const availScore    = dev.profileStatus === "active" ? 1 : 0.4;
-  const portfolioScore = (dev.githubUrl || dev.portfolioUrl) ? 1 : 0.5;
-
-  const raw = overlapRatio * 40 + expScore * 20 + tierScore * 20 + availScore * 10 + portfolioScore * 10;
-  return { score: Math.min(100, Math.round(raw)), overlap, missing };
-}
-
-// ── Confidence band ───────────────────────────────────────────────────────────
 function band(score: number): MatchedDeveloper["confidenceBand"] {
   if (score >= 85) return "Excellent";
   if (score >= 70) return "Strong";
@@ -106,57 +85,20 @@ function band(score: number): MatchedDeveloper["confidenceBand"] {
   return "Fair";
 }
 
-// ── System prompt ─────────────────────────────────────────────────────────────
-
-const SYSTEM = `You are a senior technical recruiter and AI matching engine for BuildCraft AI.
-
-Given a list of pre-scored developer candidates and a project description, generate AI reasoning for each candidate:
-- matchReasons: 2–3 specific bullet points explaining WHY this developer fits this project (name their actual skills)
-- strengthsNote: 1 sentence about their strongest signal (tier, specific skill, experience)
-- caution: 1 short sentence about the biggest risk or gap, or null if no significant concern
-
-Return ONLY a single valid JSON array — no markdown, no explanation.
-
-Format:
-[
-  {
-    "userId": "exact_user_id_from_input",
-    "matchReasons": ["reason1 mentioning their skill", "reason2", "reason3"],
-    "strengthsNote": "Their strongest signal is...",
-    "caution": "One concern or null"
-  }
-]
-
-CRITICAL: Return reasoning for EVERY candidate in the input, in the same order. userId must exactly match the input.`;
-
-type ScoredForReasoning = {
-  dev: DevCandidate;
-  score: number;
-  overlap: string[];
-  missing: string[];
-};
-
-function buildFallbackReasoning(top: ScoredForReasoning[]): {
-  userId: string;
-  matchReasons: string[];
-  strengthsNote: string;
-  caution: string | null;
-}[] {
-  return top.map((c) => ({
-    userId: c.dev.userId,
-    matchReasons: [
-      `Strong skill overlap with ${c.overlap.slice(0, 2).join(" and ") || "listed skills"}`,
-      `${c.dev.yearsExp} years of experience in ${c.dev.primaryRole} development`,
-      `Available as ${c.dev.availability}`,
-    ],
-    strengthsNote:
-      c.dev.verificationStatus === "project-verified"
-        ? "Project-verified tier confirms real-world delivery capability."
-        : c.dev.verificationStatus === "assessment-passed"
-          ? "Assessment-passed tier with demonstrated technical knowledge."
-          : "Self-declared profile; verify fit in interview.",
-    caution: c.missing.length > 0 ? `May need to pick up ${c.missing[0]} during the project.` : null,
-  }));
+function toRankable(dev: DevCandidate): RankableDeveloper {
+  return {
+    userId: dev.userId,
+    fullName: dev.fullName,
+    primaryRole: dev.primaryRole,
+    yearsExp: dev.yearsExp,
+    skills: dev.skills,
+    tools: dev.tools,
+    githubUrl: dev.githubUrl,
+    portfolioUrl: dev.portfolioUrl,
+    verificationStatus: dev.verificationStatus,
+    availability: dev.availability,
+    profileStatus: dev.profileStatus,
+  };
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -166,116 +108,72 @@ export async function POST(req: NextRequest) {
   if (!parsed.ok) return parsed.response;
 
   try {
-  const body = parsed.body as Record<string, unknown>;
-  const projectName = typeof body.projectName === "string" ? body.projectName : "My Project";
-  const projectIdea = typeof body.projectIdea === "string" ? body.projectIdea : "";
-  const requiredSkills = Array.isArray(body.requiredSkills)
-    ? body.requiredSkills.map(s => String(s))
-    : [];
-  const candidates = Array.isArray(body.candidates) ? body.candidates : [];
+    const body = parsed.body as Record<string, unknown>;
+    const projectName = typeof body.projectName === "string" ? body.projectName : "My Project";
+    const projectIdea = typeof body.projectIdea === "string" ? body.projectIdea : "";
+    const requiredSkills = Array.isArray(body.requiredSkills)
+      ? body.requiredSkills.map((s) => String(s))
+      : [];
+    const candidates = Array.isArray(body.candidates) ? body.candidates : [];
 
-  const normalized = (candidates as unknown[])
-    .map(toDevCandidate)
-    .filter((c: DevCandidate | null): c is DevCandidate => c !== null);
+    const normalized = (candidates as unknown[])
+      .map(toDevCandidate)
+      .filter((c: DevCandidate | null): c is DevCandidate => c !== null);
 
-  if (!normalized.length) {
-    return NextResponse.json({ developers: [] });
-  }
-
-  const skillsList = Array.isArray(requiredSkills)
-    ? requiredSkills.map(s => String(s))
-    : [];
-
-  // Step 1: Score all candidates deterministically
-  const scored: ScoredForReasoning[] = normalized.map((dev: DevCandidate) => {
-    const { score, overlap, missing } = scoreCandidate(dev, skillsList);
-    return { dev, score, overlap, missing };
-  });
-
-  // Step 2: Sort by score, deduplicate by role+experience bucket
-  const sorted: ScoredForReasoning[] = scored.sort((a, b) => b.score - a.score);
-  const seenRoleBuckets = new Set<string>();
-  const topCandidates: ScoredForReasoning[] = sorted.filter(c => {
-    const bucket = `${c.dev.primaryRole}-${Math.floor(c.dev.yearsExp / 3)}`;
-    if (seenRoleBuckets.size >= 6) return false;
-    seenRoleBuckets.add(bucket);
-    return true;
-  }).slice(0, 6);
-
-  // Step 3: Ask AI to generate reasoning for each
-  const candidateSummaries = topCandidates.map((c, i: number) => ({
-    rank: i + 1,
-    userId: c.dev.userId,
-    name: c.dev.fullName || "Developer",
-    role: c.dev.primaryRole,
-    yearsExp: c.dev.yearsExp,
-    skills: c.dev.skills.slice(0, 12).join(", "),
-    tier: c.dev.verificationStatus,
-    availability: c.dev.availability,
-    hasPortfolio: !!(c.dev.githubUrl || c.dev.portfolioUrl),
-    matchScore: c.score,
-    skillOverlap: c.overlap.join(", "),
-    missingSkills: c.missing.slice(0, 3).join(", "),
-  }));
-
-  const userMsg = `Project: "${projectName}"
-Description: ${projectIdea || `A modern web application called ${projectName}`}
-Required Skills: ${skillsList.join(", ") || "JavaScript, React, Node.js"}
-
-Candidates (already scored — just write reasoning):
-${JSON.stringify(candidateSummaries, null, 2)}
-
-Write matchReasons, strengthsNote, and caution for each candidate. Return only the JSON array.`;
-
-  let aiReasoning: { userId: string; matchReasons: string[]; strengthsNote: string; caution: string | null }[] = [];
-
-  if (getNimClient()) {
-    try {
-      let raw = await orchestrateChatCompletion(
-        "matching",
-        {
-          messages: [
-            { role: "system", content: SYSTEM },
-            { role: "user", content: userMsg },
-          ],
-          temperature: 0.4,
-          max_tokens: 1800,
-        },
-        { minContentLength: 60 },
-      );
-      raw = raw.replace(/^```[\w]*\n?/gm, "").replace(/\n?```$/gm, "").trim();
-
-      const arrStart = raw.indexOf("[");
-      const arrEnd   = raw.lastIndexOf("]");
-      if (arrStart !== -1 && arrEnd !== -1) {
-        aiReasoning = JSON.parse(raw.slice(arrStart, arrEnd + 1));
-      }
-    } catch {
-      aiReasoning = buildFallbackReasoning(topCandidates);
+    if (!normalized.length) {
+      return NextResponse.json({ developers: [] });
     }
-  } else {
-    // No LLM configured — still return ranked developers with deterministic scores + template copy
-    aiReasoning = buildFallbackReasoning(topCandidates);
-  }
 
-  // Step 4: Merge deterministic scores with AI reasoning
-  const reasoningMap = new Map(aiReasoning.map(r => [r.userId, r]));
-  const developers: MatchedDeveloper[] = topCandidates.map((c, i: number) => {
-    const reasoning = reasoningMap.get(c.dev.userId);
-    return {
-      ...c.dev,
-      matchScore:     c.score,
-      confidenceBand: band(c.score),
-      skillOverlap:   c.overlap,
-      missingSkills:  c.missing.slice(0, 2),
-      matchReasons:   reasoning?.matchReasons ?? [`Matched ${c.overlap.length} required skills`],
-      strengthsNote:  reasoning?.strengthsNote ?? "Strong technical profile.",
-      caution:        reasoning?.caution ?? null,
-      rank:           i + 1,
-    };
-  });
+    const skillsList = requiredSkills.map((s) => String(s));
 
-  return NextResponse.json({ developers });
+    const ranked = rankDevelopersForProject(
+      normalized.map(toRankable),
+      projectName,
+      projectIdea,
+      skillsList,
+    );
+
+    const seenIds = new Set<string>();
+    const bucketSeen = new Set<string>();
+    const topCandidates: (typeof ranked)[number][] = [];
+    for (const c of ranked) {
+      if (topCandidates.length >= 6) break;
+      const bucket = `${c.dev.primaryRole}-${Math.floor(c.dev.yearsExp / 3)}`;
+      if (bucketSeen.has(bucket)) continue;
+      bucketSeen.add(bucket);
+      seenIds.add(c.dev.userId);
+      topCandidates.push(c);
+    }
+    for (const c of ranked) {
+      if (topCandidates.length >= 6) break;
+      if (seenIds.has(c.dev.userId)) continue;
+      seenIds.add(c.dev.userId);
+      topCandidates.push(c);
+    }
+
+    const developers: MatchedDeveloper[] = topCandidates.map((c, i) => {
+      const full = normalized.find((d) => d.userId === c.dev.userId);
+      if (!full) throw new Error("Candidate mapping lost");
+      const { matchReasons, strengthsNote, caution } = explainDeveloperMatch(
+        c.dev,
+        c.overlap,
+        c.missing,
+        c.features,
+      );
+      return {
+        ...full,
+        matchScore: c.score,
+        confidenceBand: band(c.score),
+        skillOverlap: c.overlap,
+        missingSkills: c.missing.slice(0, 2),
+        matchReasons,
+        strengthsNote,
+        caution,
+        rank: i + 1,
+      };
+    });
+
+    return NextResponse.json({ developers });
   } catch (err) {
     console.error("[match-developers]", err);
     return NextResponse.json(
