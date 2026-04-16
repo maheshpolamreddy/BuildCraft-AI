@@ -14,8 +14,8 @@ import Link from "next/link";
 import { useStore, analyzeIdea, type ProjectState } from "@/store/useStore";
 import type { Requirement } from "@/store/useStore";
 import { 
-  saveProject, getUserProjects, getProjectsByEmail, deleteProject, restoreProject, 
-  firestoreTimestampSeconds, type SavedProject 
+  saveProject, getUserProjects, getProjectsByEmail, deleteProject, restoreProject,
+  type SavedProject,
 } from "@/lib/firestore";
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { logAction } from "@/lib/auditLog";
@@ -33,7 +33,7 @@ import {
   pastProjectDisplayTitle,
   resolveProjectDisplayName,
 } from "@/lib/projectName";
-import { hydrateHistoryWithSessionProject } from "@/lib/projectHistory";
+import { hydrateHistoryWithSessionProject, mergeProjectListsFromQueries } from "@/lib/projectHistory";
 
 const typeConfig: Record<Requirement["type"], { label: string; color: string; bg: string }> = {
   feature:     { label: "Feature",     color: "text-blue-400",    bg: "border-blue-500/20 bg-blue-500/5"    },
@@ -86,6 +86,8 @@ export default function DiscoveryHub() {
   const [deletingId,     setDeletingId]     = useState<string | null>(null);
   const [searchQuery,    setSearchQuery]    = useState("");
   const [showDeleted,    setShowDeleted]    = useState(false);
+  /** Ignores stale responses when several history loads overlap (e.g. save + effect). */
+  const historyFetchSeq = useRef(0);
 
   // ── Hire a developer — AI matching (same engine as Project Workspace) ─────
   const [matchedDevs,   setMatchedDevs]   = useState<MatchedDeveloper[]>([]);
@@ -115,23 +117,21 @@ export default function DiscoveryHub() {
 
   const loadProjectHistory = useCallback(async () => {
     if (!currentUser) return;
+    const seq = ++historyFetchSeq.current;
     setHistoryLoading(true);
     try {
       const [uidProjects, emailProjects] = await Promise.all([
         getUserProjects(currentUser.uid),
         currentUser.email ? getProjectsByEmail(currentUser.email) : Promise.resolve([]),
       ]);
-      const all = [...uidProjects, ...emailProjects];
-      const unique = Array.from(new Map(all.map((p) => [p.id, p])).values());
-      setHistory(
-        unique.sort(
-          (a, b) => firestoreTimestampSeconds(b.updatedAt) - firestoreTimestampSeconds(a.updatedAt),
-        ),
-      );
+      if (seq !== historyFetchSeq.current) return;
+      setHistory(mergeProjectListsFromQueries(uidProjects, emailProjects));
     } catch (err) {
       console.error("[Discovery] Failed to load project history:", err);
     } finally {
-      setHistoryLoading(false);
+      if (seq === historyFetchSeq.current) {
+        setHistoryLoading(false);
+      }
     }
   }, [currentUser]);
 
@@ -329,13 +329,23 @@ export default function DiscoveryHub() {
       if (currentUser) {
         try {
           const docId = await saveProject(currentUser.uid, isolated, {}, currentUser.email ?? undefined);
-          setSavedProjectId(docId);
-          await logAction(currentUser.uid, "project.created", {
-            projectName: isolated.name,
-            docId,
-          });
+          if (docId) {
+            setSavedProjectId(docId);
+            await loadProjectHistory();
+            await logAction(currentUser.uid, "project.created", {
+              projectName: isolated.name,
+              docId,
+            });
+          } else {
+            setSavedProjectId(null);
+            setError(
+              "Could not save your project to the cloud (Firebase). Check your connection and rules. It may not appear after sign-out until save succeeds.",
+            );
+          }
         } catch (saveErr) {
           console.warn("[Firestore] project save failed:", saveErr);
+          setSavedProjectId(null);
+          setError("Could not save your project to the cloud. Try again.");
         }
       }
     } catch (err) {
@@ -356,9 +366,24 @@ export default function DiscoveryHub() {
       if (currentUser) {
         try {
           const docId = await saveProject(currentUser.uid, fallback, {}, currentUser.email ?? undefined);
-          setSavedProjectId(docId);
-          await logAction(currentUser.uid, "project.created", { projectName: fallback.name, docId, source: "fallback" });
-        } catch { /* non-blocking */ }
+          if (docId) {
+            setSavedProjectId(docId);
+            await loadProjectHistory();
+            await logAction(currentUser.uid, "project.created", {
+              projectName: fallback.name,
+              docId,
+              source: "fallback",
+            });
+          } else {
+            setSavedProjectId(null);
+            setError(
+              "Could not save your project to the cloud (Firebase). Check your connection and rules.",
+            );
+          }
+        } catch {
+          setSavedProjectId(null);
+          setError("Could not save your project to the cloud. Try again.");
+        }
       }
     } finally {
       clearInterval(msgTimer);

@@ -11,6 +11,25 @@ import {
   resolveProjectCreatorProfileCompletedFromFirestore,
 } from "@/lib/projectCreatorProfile";
 
+/**
+ * Drop persisted workspace if it belongs to another Firebase user (same browser, different login).
+ * Doc ids are `${uid}_${timestamp}` so we can validate without hitting Firestore.
+ */
+function clearProjectStateIfWrongUser(uid: string) {
+  if (!uid || uid === "demo-guest") return;
+  const { savedProjectId, project } = useStore.getState();
+  const prefix = `${uid}_`;
+  const idMismatch =
+    typeof savedProjectId === "string" &&
+    savedProjectId.length > 0 &&
+    !savedProjectId.startsWith(prefix);
+  const creatorMismatch =
+    project?.creatorUid != null && project.creatorUid !== uid;
+  if (idMismatch || creatorMismatch) {
+    useStore.getState().clearProject();
+  }
+}
+
 function clearStaleDeveloperStateForUid(uid: string | undefined) {
   const { developerProfile, userRoles } = useStore.getState();
   if (!uid) return;
@@ -63,6 +82,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         previousUid = user.uid;
 
         useStore.setState({ currentUser: user, authReady: true });
+        clearProjectStateIfWrongUser(user.uid);
 
         if (user.uid !== "demo-guest") {
           useStore.setState({ projectCreatorHydrated: false });

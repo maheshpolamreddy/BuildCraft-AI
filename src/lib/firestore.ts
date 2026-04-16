@@ -27,6 +27,58 @@ function isFirebaseUid(uid: string): boolean {
   return !!uid && uid !== "demo-guest";
 }
 
+/** Normalize so `where("email", "==", …)` matches how we store and how Auth returns emails. */
+function normalizeAuthEmail(email: string | undefined | null): string | undefined {
+  const t = typeof email === "string" ? email.trim().toLowerCase() : "";
+  return t.length > 0 ? t : undefined;
+}
+
+/** Firestore rejects `undefined` anywhere in document data. JSON round-trip removes undefined keys. */
+function cloneJson<T>(value: T): T {
+  try {
+    return JSON.parse(JSON.stringify(value)) as T;
+  } catch {
+    return value;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Stay under Firestore's ~1 MiB document limit when Stitch / preview HTML is huge. */
+const MAX_LANDING_HTML_CHARS = 450_000;
+
+function truncateLargeProjectFields(project: ProjectState): ProjectState {
+  const lp = project.landingPage;
+  if (!lp?.html || lp.html.length <= MAX_LANDING_HTML_CHARS) return project;
+  return {
+    ...project,
+    landingPage: {
+      ...lp,
+      html: `${lp.html.slice(0, MAX_LANDING_HTML_CHARS)}\n<!-- truncated for Firestore storage -->`,
+    },
+  };
+}
+
+/**
+ * Produces JSON-safe project data: no undefined (nested), bounded size, stable creator fields.
+ */
+function sanitizeProjectForWrite(
+  project: ProjectState,
+  defaults: { uid: string; email?: string },
+): ProjectState {
+  const trimmed = truncateLargeProjectFields(project);
+  const named = withResolvedProjectName(trimmed);
+  const emailNorm = normalizeAuthEmail(defaults.email ?? named.creatorEmail);
+  const merged: ProjectState = {
+    ...named,
+    creatorUid: named.creatorUid || defaults.uid,
+    ...(emailNorm ? { creatorEmail: emailNorm } : {}),
+  };
+  return cloneJson(merged);
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface SavedProject {
@@ -90,7 +142,10 @@ export async function updateUserProfile(uid: string, data: Record<string, unknow
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
-/** Save a project for the signed-in user. No-ops silently for demo users. */
+/**
+ * Save a new project document. Returns the doc id only after Firestore accepts the write.
+ * Sanitizes nested `undefined` values (Firestore rejects them) and retries transient failures.
+ */
 export async function saveProject(
   uid: string,
   project: ProjectState,
@@ -98,20 +153,35 @@ export async function saveProject(
   email?: string,
 ): Promise<string> {
   if (!isFirebaseUid(uid)) return "";
-  const id  = `${uid}_${Date.now()}`;
+  const id = `${uid}_${Date.now()}`;
   const ref = doc(db, "projects", id);
-  try {
-    await setDoc(ref, {
-      id,
-      uid,
-      email,
-      project: { ...withResolvedProjectName(project), creatorUid: uid, creatorEmail: email },
-      approvedTools,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    });
-  } catch (err) { console.warn("[firestore] saveProject failed:", err); }
-  return id;
+  const emailNorm = normalizeAuthEmail(email);
+  const projectPayload = sanitizeProjectForWrite(project, { uid, email: emailNorm });
+  const toolsPayload = cloneJson(approvedTools ?? {});
+
+  const data: Record<string, unknown> = {
+    id,
+    uid,
+    project: projectPayload,
+    approvedTools: toolsPayload,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  if (emailNorm) data.email = emailNorm;
+
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await setDoc(ref, data);
+      return id;
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[firestore] saveProject attempt ${attempt + 1}/3 failed:`, err);
+      if (attempt < 2) await sleep(250 * (attempt + 1));
+    }
+  }
+  console.warn("[firestore] saveProject failed after retries:", lastErr);
+  return "";
 }
 
 /** Update an existing saved project. No-ops silently on error. */
@@ -121,13 +191,18 @@ export async function updateProject(
   approvedTools: Record<string, boolean | undefined>,
 ) {
   if (!docId) return;
+  const ownerUid = project.creatorUid ?? "";
+  const emailNorm = normalizeAuthEmail(project.creatorEmail);
+  const projectPayload = sanitizeProjectForWrite(project, { uid: ownerUid, email: emailNorm });
   try {
     await updateDoc(doc(db, "projects", docId), {
-      project: withResolvedProjectName(project),
-      approvedTools,
+      project: projectPayload,
+      approvedTools: cloneJson(approvedTools ?? {}),
       updatedAt: serverTimestamp(),
     });
-  } catch (err) { console.warn("[firestore] updateProject failed:", err); }
+  } catch (err) {
+    console.warn("[firestore] updateProject failed:", err);
+  }
 }
 
 /** Load all projects belonging to a user, newest first. Returns [] for demo users. */
@@ -143,14 +218,35 @@ export async function getUserProjects(uid: string): Promise<SavedProject[]> {
   } catch (err) { console.warn("[firestore] getUserProjects failed:", err); return []; }
 }
 
-/** Load all projects belonging to an email address (Recovery Fallback). Client sorts by updatedAt. */
+/**
+ * Load projects by creator email (recovery / multi-device). Queries lowercase and exact trimmed
+ * variants so older rows stored with mixed-case email still match.
+ */
 export async function getProjectsByEmail(email: string): Promise<SavedProject[]> {
-  if (!email) return [];
-  try {
-    const q = query(collection(db, "projects"), where("email", "==", email));
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => savedProjectFromSnapshot(d.id, d.data() as Record<string, unknown>));
-  } catch (err) { console.warn("[firestore] getProjectsByEmail failed:", err); return []; }
+  const trimmed = typeof email === "string" ? email.trim() : "";
+  if (!trimmed) return [];
+  const lower = trimmed.toLowerCase();
+  const variants = lower === trimmed ? [lower] : [lower, trimmed];
+  const merged = new Map<string, SavedProject>();
+  for (const v of variants) {
+    try {
+      const q = query(collection(db, "projects"), where("email", "==", v));
+      const snap = await getDocs(q);
+      for (const d of snap.docs) {
+        const sp = savedProjectFromSnapshot(d.id, d.data() as Record<string, unknown>);
+        const prev = merged.get(sp.id);
+        if (
+          !prev ||
+          firestoreTimestampSeconds(sp.updatedAt) >= firestoreTimestampSeconds(prev.updatedAt)
+        ) {
+          merged.set(sp.id, sp);
+        }
+      }
+    } catch (err) {
+      console.warn("[firestore] getProjectsByEmail failed for variant:", v, err);
+    }
+  }
+  return Array.from(merged.values());
 }
 
 /** Load a single saved project by doc ID. */

@@ -34,6 +34,15 @@ export interface CompletionApproval {
   notes: string;
 }
 
+/** Stored when developer submits for final completion review */
+export interface DevCompletionChecklist {
+  featuresComplete: boolean;
+  codeDelivered: boolean;
+  documentationProvided: boolean;
+  termsAccepted: boolean;
+  developerAcknowledgesDone: boolean;
+}
+
 export interface ProjectExecution {
   projectId: string;
   savedProjectId: string;
@@ -47,6 +56,10 @@ export interface ProjectExecution {
   deliverables: Deliverable[];
   developerApproval: CompletionApproval;
   creatorApproval: CompletionApproval;
+  /** Developer submission checklist (set on submit for review) */
+  devCompletionChecklist?: DevCompletionChecklist | null;
+  /** Client must confirm before final approve */
+  clientAcceptanceConfirmed?: boolean;
   completedAt: unknown;
   rating: {
     creator: number | null;
@@ -148,11 +161,13 @@ export async function developerSubmitCompletion(
   projectId: string,
   notes: string,
   deploymentUrl: string,
+  checklist: DevCompletionChecklist,
 ): Promise<void> {
   await updateDoc(doc(db, COL, projectId), {
     status: "review",
     deploymentUrl,
     developerApproval: { approved: true, approvedAt: Date.now(), notes },
+    devCompletionChecklist: checklist,
     updatedAt: serverTimestamp(),
   });
 }
@@ -160,10 +175,12 @@ export async function developerSubmitCompletion(
 export async function creatorApproveCompletion(
   projectId: string,
   notes: string,
+  clientAcceptanceConfirmed: boolean,
 ): Promise<void> {
   await updateDoc(doc(db, COL, projectId), {
     status: "completed",
     creatorApproval: { approved: true, approvedAt: Date.now(), notes },
+    clientAcceptanceConfirmed: clientAcceptanceConfirmed === true,
     completedAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -177,6 +194,8 @@ export async function creatorRejectCompletion(
     status: "in_progress",
     creatorApproval: { approved: false, approvedAt: Date.now(), notes },
     developerApproval: emptyApproval(),
+    devCompletionChecklist: null,
+    clientAcceptanceConfirmed: false,
     updatedAt: serverTimestamp(),
   });
 }
@@ -202,19 +221,41 @@ export async function submitRating(
 
 export function canSubmitForCompletion(
   pe: ProjectExecution,
-  allTasksDone: boolean,
+  milestonesReadyForCompletion: boolean,
 ): { ok: boolean; reason: string } {
   if (pe.status === "completed") return { ok: false, reason: "Project already completed" };
   if (pe.status === "review") return { ok: false, reason: "Already submitted for review" };
   if (!pe.developerUid) return { ok: false, reason: "No developer assigned" };
-  if (!allTasksDone) return { ok: false, reason: "All tasks must be approved before submission" };
+  if (!milestonesReadyForCompletion) {
+    return {
+      ok: false,
+      reason: "All tasks and milestones must be approved by both parties before completion",
+    };
+  }
   return { ok: true, reason: "" };
 }
 
-export function canCreatorApprove(pe: ProjectExecution): { ok: boolean; reason: string } {
+export function isValidDeploymentUrl(url: string): boolean {
+  const t = url.trim();
+  if (!t) return false;
+  try {
+    const u = new URL(t.startsWith("http://") || t.startsWith("https://") ? t : `https://${t}`);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+export function canCreatorApprove(
+  pe: ProjectExecution,
+  clientAcceptanceConfirmed: boolean,
+): { ok: boolean; reason: string } {
   if (pe.status !== "review") return { ok: false, reason: "Project must be in review status" };
   if (!pe.developerApproval.approved) return { ok: false, reason: "Developer has not submitted yet" };
-  if (!pe.deploymentUrl) return { ok: false, reason: "Deployment URL is required" };
+  if (!pe.deploymentUrl || !isValidDeploymentUrl(pe.deploymentUrl)) {
+    return { ok: false, reason: "A valid deployment URL (https://…) is required" };
+  }
+  if (!clientAcceptanceConfirmed) return { ok: false, reason: "Confirm acceptance of deliverables to approve" };
   return { ok: true, reason: "" };
 }
 

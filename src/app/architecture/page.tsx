@@ -21,11 +21,10 @@ import {
   getProjectsByEmail,
   deleteProject,
   restoreProject,
-  firestoreTimestampSeconds,
   type SavedProject,
 } from "@/lib/firestore";
 import { pastProjectDisplayTitle } from "@/lib/projectName";
-import { hydrateHistoryWithSessionProject } from "@/lib/projectHistory";
+import { hydrateHistoryWithSessionProject, mergeProjectListsFromQueries } from "@/lib/projectHistory";
 import { logAction } from "@/lib/auditLog";
 import { parseApiJson } from "@/lib/parse-api-json";
 import { getUserFacingError } from "@/lib/user-facing-error";
@@ -908,26 +907,25 @@ export default function ArchitectureView() {
   const [deletingId,     setDeletingId]     = useState<string | null>(null);
   const [searchQuery,    setSearchQuery]    = useState("");
   const [showDeleted,    setShowDeleted]    = useState(false);
+  const historyFetchSeq = useRef(0);
 
   const loadProjectHistory = useCallback(async () => {
     if (!currentUser) return;
+    const seq = ++historyFetchSeq.current;
     setHistoryLoading(true);
     try {
       const [uidProjects, emailProjects] = await Promise.all([
         getUserProjects(currentUser.uid),
         currentUser.email ? getProjectsByEmail(currentUser.email) : Promise.resolve([]),
       ]);
-      const all = [...uidProjects, ...emailProjects];
-      const unique = Array.from(new Map(all.map((p) => [p.id, p])).values());
-      setHistory(
-        unique.sort(
-          (a, b) => firestoreTimestampSeconds(b.updatedAt) - firestoreTimestampSeconds(a.updatedAt),
-        ),
-      );
+      if (seq !== historyFetchSeq.current) return;
+      setHistory(mergeProjectListsFromQueries(uidProjects, emailProjects));
     } catch (e) {
       console.error("[Architecture] Failed to load project history:", e);
     } finally {
-      setHistoryLoading(false);
+      if (seq === historyFetchSeq.current) {
+        setHistoryLoading(false);
+      }
     }
   }, [currentUser]);
 

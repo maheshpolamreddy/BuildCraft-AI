@@ -4,6 +4,30 @@ import type { SavedProject } from "@/lib/firestore";
 import { firestoreTimestampSeconds } from "@/lib/firestore";
 
 /**
+ * Dedupe by document id. When both `getUserProjects` and `getProjectsByEmail` return the same
+ * id, keep the snapshot with the newer `updatedAt` (stale reads / race-safe).
+ */
+export function mergeProjectListsFromQueries(
+  uidProjects: SavedProject[],
+  emailProjects: SavedProject[],
+): SavedProject[] {
+  const merged = new Map<string, SavedProject>();
+  for (const p of [...uidProjects, ...emailProjects]) {
+    const prev = merged.get(p.id);
+    if (!prev) {
+      merged.set(p.id, p);
+      continue;
+    }
+    const tNew = firestoreTimestampSeconds(p.updatedAt);
+    const tOld = firestoreTimestampSeconds(prev.updatedAt);
+    merged.set(p.id, tNew >= tOld ? p : prev);
+  }
+  return Array.from(merged.values()).sort(
+    (a, b) => firestoreTimestampSeconds(b.updatedAt) - firestoreTimestampSeconds(a.updatedAt),
+  );
+}
+
+/**
  * Merge the in-memory workspace project into the fetched list so:
  * - The current project always appears (fixes missing rows / id bugs / eventual consistency).
  * - Sidebar shows latest locked state without waiting for another Firestore round-trip.

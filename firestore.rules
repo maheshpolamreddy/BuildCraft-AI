@@ -55,8 +55,23 @@ service cloud.firestore {
         );
     }
 
+    // Project doc owner for this hire (covers creatorUid drift on hireRequests vs Auth uid / email-only recovery)
+    function isAcceptedHireProjectOwner(chatId) {
+      return isHireTokenId(chatId)
+        && exists(/databases/$(database)/documents/hireRequests/$(chatId))
+        && get(/databases/$(database)/documents/hireRequests/$(chatId)).data.status == 'accepted'
+        && get(/databases/$(database)/documents/hireRequests/$(chatId)).data.projectId is string
+        && get(/databases/$(database)/documents/hireRequests/$(chatId)).data.projectId != ''
+        && exists(/databases/$(database)/documents/projects/$(get(/databases/$(database)/documents/hireRequests/$(chatId)).data.projectId))
+        && get(/databases/$(database)/documents/projects/$(get(/databases/$(database)/documents/hireRequests/$(chatId)).data.projectId)).data.uid == request.auth.uid;
+    }
+
     function canAccessChatThread(chatId) {
-      return signedIn() && (isChatDocParticipant(chatId) || isAcceptedHireParty(chatId));
+      return signedIn() && (
+        isChatDocParticipant(chatId)
+        || isAcceptedHireParty(chatId)
+        || isAcceptedHireProjectOwner(chatId)
+      );
     }
 
     // ── User app profile (auth onboarding) ─────────────────────────────────
@@ -163,6 +178,7 @@ service cloud.firestore {
           resource.data.creatorUid == request.auth.uid
           || resource.data.developerUid == request.auth.uid
           || isAcceptedHireParty(chatId)
+          || isAcceptedHireProjectOwner(chatId)
         ));
       // Client: signed-in party. Server (no auth): hireRequests/{chatId} must be accepted and party fields must match
       allow create: if (signedIn() && (
@@ -188,6 +204,7 @@ service cloud.firestore {
           resource.data.creatorUid == request.auth.uid
           || resource.data.developerUid == request.auth.uid
           || isAcceptedHireParty(chatId)
+          || isAcceptedHireProjectOwner(chatId)
         )
         && request.resource.data.creatorUid == resource.data.creatorUid
         && request.resource.data.developerUid == resource.data.developerUid;

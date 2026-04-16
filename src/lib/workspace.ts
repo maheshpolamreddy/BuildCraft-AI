@@ -8,7 +8,16 @@ import {
 } from "firebase/firestore";
 import type { MatchedDeveloper } from "@/app/api/match-developers/route";
 
-export type TaskStatus = "todo" | "in-progress" | "validating" | "review" | "approved" | "rejected";
+/** `approved_creator` = client approved, awaiting dev sign-off. `approved_by_both` = dual-approved. `approved` = legacy single-step. */
+export type TaskStatus =
+  | "todo"
+  | "in-progress"
+  | "validating"
+  | "review"
+  | "approved_creator"
+  | "approved_by_both"
+  | "approved"
+  | "rejected";
 
 export interface ValidationResult {
   passed: boolean;

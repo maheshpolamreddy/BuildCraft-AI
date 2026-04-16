@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   CheckCircle2, XCircle, Rocket, Shield, Star, Send,
@@ -11,6 +11,7 @@ import type {
   ProjectExecution,
   Deliverable,
   ProjectStatus,
+  DevCompletionChecklist,
 } from "@/lib/project-execution";
 import {
   developerSubmitCompletion,
@@ -22,6 +23,7 @@ import {
   submitRating,
   canSubmitForCompletion,
   canCreatorApprove,
+  isValidDeploymentUrl,
   getStatusLabel,
   getStatusColor,
 } from "@/lib/project-execution";
@@ -34,7 +36,10 @@ interface Props {
   currentUid: string;
   isCreator: boolean;
   isDeveloper: boolean;
-  allTasksDone: boolean;
+  /** All tasks/milestones dual-approved (or legacy approved) — unlocks completion workflow */
+  completionUnlocked: boolean;
+  /** Developer assigned / hire accepted */
+  hasAssignedDeveloper: boolean;
   projectName: string;
   onRefresh?: () => void;
 }
@@ -47,14 +52,15 @@ export function ProjectCompletionPanel({
   currentUid,
   isCreator,
   isDeveloper,
-  allTasksDone,
+  completionUnlocked,
+  hasAssignedDeveloper,
   projectName,
   onRefresh,
 }: Props) {
   const [view, setView] = useState<PanelView>("status");
   const [submitting, setSubmitting] = useState(false);
   const [devNotes, setDevNotes] = useState("");
-  const [deployUrl, setDeployUrl] = useState(pe?.deploymentUrl || "");
+  const [deployUrl, setDeployUrl] = useState("");
   const [creatorNotes, setCreatorNotes] = useState("");
   const [rejectReason, setRejectReason] = useState("");
   const [showRejectForm, setShowRejectForm] = useState(false);
@@ -66,8 +72,20 @@ export function ProjectCompletionPanel({
   const [newDelUrl, setNewDelUrl] = useState("");
   const [addingDeliverable, setAddingDeliverable] = useState(false);
   const [rewardResult, setRewardResult] = useState<{ badgeUpgraded: boolean; portfolioUpdated: boolean } | null>(null);
+  const [devChecklist, setDevChecklist] = useState<DevCompletionChecklist>({
+    featuresComplete: false,
+    codeDelivered: false,
+    documentationProvided: false,
+    termsAccepted: false,
+    developerAcknowledgesDone: false,
+  });
+  const [clientAcceptsDeliverables, setClientAcceptsDeliverables] = useState(false);
 
-  if (!pe) {
+  useEffect(() => {
+    setDeployUrl(pe?.deploymentUrl || "");
+  }, [pe?.deploymentUrl]);
+
+  if (!hasAssignedDeveloper) {
     return (
       <div className="p-6 rounded-2xl border border-white/10 bg-white/[0.02] text-center">
         <Shield className="w-8 h-8 text-white/20 mx-auto mb-3" />
@@ -76,17 +94,29 @@ export function ProjectCompletionPanel({
     );
   }
 
+  if (!pe) {
+    return (
+      <div className="p-6 rounded-2xl border border-white/10 bg-white/[0.02] text-center">
+        <Loader2 className="w-8 h-8 text-indigo-400 animate-spin mx-auto mb-3" />
+        <p className="text-white/40 text-sm">Loading project execution…</p>
+      </div>
+    );
+  }
+
   const status = pe.status;
   const statusLabel = getStatusLabel(status);
   const statusColor = getStatusColor(status);
-  const submitCheck = canSubmitForCompletion(pe, allTasksDone);
-  const approveCheck = canCreatorApprove(pe);
+  const workflowLocked = !completionUnlocked && status !== "review" && status !== "completed";
+  const submitCheck = canSubmitForCompletion(pe, completionUnlocked);
+  const approveCheck = canCreatorApprove(pe, clientAcceptsDeliverables);
+  const checklistComplete = Object.values(devChecklist).every(Boolean);
+  const deployUrlValid = isValidDeploymentUrl(deployUrl);
 
   async function handleDevSubmit() {
-    if (!deployUrl.trim()) return;
+    if (!deployUrl.trim() || !deployUrlValid || !checklistComplete) return;
     setSubmitting(true);
     try {
-      await developerSubmitCompletion(projectId, devNotes, deployUrl.trim());
+      await developerSubmitCompletion(projectId, devNotes, deployUrl.trim(), devChecklist);
       await logAction(currentUid, "project.updated", {
         action: "developer_submitted_completion",
         projectId,
@@ -103,7 +133,7 @@ export function ProjectCompletionPanel({
     if (!pe) return;
     setSubmitting(true);
     try {
-      await creatorApproveCompletion(projectId, creatorNotes);
+      await creatorApproveCompletion(projectId, creatorNotes, clientAcceptsDeliverables);
       if (pe.developerUid) {
         const result = await processCompletionRewards(pe.developerUid, projectName);
         setRewardResult(result);
@@ -113,6 +143,11 @@ export function ProjectCompletionPanel({
         projectId,
       });
       onRefresh?.();
+      fetch("/api/notify-project-completed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, projectName }),
+      }).catch(() => {});
     } catch (e) {
       console.error("Approve failed:", e);
     } finally {
@@ -168,7 +203,7 @@ export function ProjectCompletionPanel({
   }
 
   async function handleDeployUrlSave() {
-    if (!deployUrl.trim()) return;
+    if (!deployUrl.trim() || !isValidDeploymentUrl(deployUrl)) return;
     await setDeploymentUrl(projectId, deployUrl.trim());
     onRefresh?.();
   }
@@ -190,6 +225,17 @@ export function ProjectCompletionPanel({
 
   return (
     <div className="space-y-6">
+      {workflowLocked && (
+        <div className="p-6 rounded-2xl border border-amber-500/25 bg-gradient-to-br from-amber-500/10 to-transparent flex flex-col items-center text-center gap-3">
+          <Lock className="w-10 h-10 text-amber-400/90" />
+          <p className="text-white font-black text-xs uppercase tracking-[0.2em]">Completion locked</p>
+          <p className="text-white/55 text-sm max-w-lg leading-relaxed">
+            Completion will be available after all tasks and milestones are approved by both the project creator and the developer. Finish every task in <strong className="text-white/80">Tasks &amp; Milestones</strong> — the client approves first, then the developer confirms dual sign-off.
+          </p>
+          <p className="text-[10px] text-amber-400/70 font-bold uppercase tracking-widest">Deployment and final submission stay disabled until then</p>
+        </div>
+      )}
+
       {/* Status Banner */}
       <div className={`p-5 rounded-2xl border ${statusColor} flex items-center justify-between gap-4`}>
         <div className="flex items-center gap-3">
@@ -246,7 +292,7 @@ export function ProjectCompletionPanel({
           <h3 className="text-xs font-black uppercase tracking-widest text-white/60 flex items-center gap-2">
             <FileText className="w-4 h-4" /> Deliverables ({pe.deliverables.length})
           </h3>
-          {(isDeveloper && status === "in_progress") && (
+          {(isDeveloper && status === "in_progress" && completionUnlocked) && (
             <button
               onClick={() => setView(view === "submit" ? "status" : "submit")}
               className="text-[10px] font-bold uppercase tracking-widest px-3 py-1 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:text-white hover:border-white/20 transition-colors"
@@ -271,7 +317,7 @@ export function ProjectCompletionPanel({
                     </a>
                   )}
                 </div>
-                {isDeveloper && status === "in_progress" && (
+                {isDeveloper && status === "in_progress" && completionUnlocked && (
                   <button onClick={() => handleRemoveDeliverable(d.id)} className="text-red-400/50 hover:text-red-400 transition-colors shrink-0">
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -283,7 +329,7 @@ export function ProjectCompletionPanel({
 
         {/* Add deliverable form */}
         <AnimatePresence>
-          {view === "submit" && isDeveloper && (
+          {view === "submit" && isDeveloper && completionUnlocked && (
             <motion.div
               initial={{ height: 0, opacity: 0 }}
               animate={{ height: "auto", opacity: 1 }}
@@ -327,33 +373,41 @@ export function ProjectCompletionPanel({
         <h3 className="text-xs font-black uppercase tracking-widest text-white/60 flex items-center gap-2 mb-3">
           <Rocket className="w-4 h-4" /> Deployment URL
         </h3>
-        {isDeveloper && status !== "completed" ? (
-          <div className="flex gap-2">
-            <input
-              value={deployUrl}
-              onChange={(e) => setDeployUrl(e.target.value)}
-              placeholder="https://your-project.vercel.app"
-              className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm placeholder-white/20 focus:outline-none focus:border-indigo-500/50"
-            />
-            <button
-              onClick={handleDeployUrlSave}
-              disabled={!deployUrl.trim()}
-              className="px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white/60 hover:text-white font-bold text-xs uppercase tracking-widest transition-colors disabled:opacity-40"
-            >
-              Save
-            </button>
+        {isDeveloper && status !== "completed" && completionUnlocked ? (
+          <div className="space-y-2">
+            <div className="flex gap-2">
+              <input
+                value={deployUrl}
+                onChange={(e) => setDeployUrl(e.target.value)}
+                placeholder="https://your-project.vercel.app"
+                className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm placeholder-white/20 focus:outline-none focus:border-indigo-500/50"
+              />
+              <button
+                type="button"
+                onClick={() => void handleDeployUrlSave()}
+                disabled={!deployUrl.trim() || !isValidDeploymentUrl(deployUrl)}
+                className="px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white/60 hover:text-white font-bold text-xs uppercase tracking-widest transition-colors disabled:opacity-40"
+              >
+                Save
+              </button>
+            </div>
+            {deployUrl.trim() && !isValidDeploymentUrl(deployUrl) && (
+              <p className="text-xs text-red-400/90">Enter a valid URL (https://…)</p>
+            )}
           </div>
         ) : pe.deploymentUrl ? (
           <a href={pe.deploymentUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm font-medium">
             <ExternalLink className="w-4 h-4" /> {pe.deploymentUrl}
           </a>
+        ) : !completionUnlocked && isDeveloper ? (
+          <p className="text-white/35 text-sm">Deployment URL unlocks when all tasks are fully approved.</p>
         ) : (
           <p className="text-white/30 text-sm">No deployment URL submitted yet.</p>
         )}
       </div>
 
       {/* Developer Submit Completion */}
-      {isDeveloper && status === "in_progress" && (
+      {isDeveloper && status === "in_progress" && completionUnlocked && (
         <div className="rounded-2xl border border-indigo-500/20 bg-indigo-500/5 p-5 space-y-4">
           <h3 className="text-sm font-black text-white flex items-center gap-2">
             <Send className="w-4 h-4 text-indigo-400" /> Submit for Completion
@@ -365,6 +419,28 @@ export function ProjectCompletionPanel({
             </div>
           ) : (
             <>
+              <div className="rounded-xl border border-white/10 bg-black/20 p-4 space-y-3">
+                <p className="text-[10px] font-black uppercase tracking-widest text-white/40">Deliverables checklist</p>
+                {(
+                  [
+                    ["featuresComplete", "All features completed"],
+                    ["codeDelivered", "Code delivered"],
+                    ["documentationProvided", "Documentation provided"],
+                    ["termsAccepted", "Terms & conditions understood"],
+                    ["developerAcknowledgesDone", "I confirm completion is ready for client review"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <label key={key} className="flex items-start gap-3 cursor-pointer text-sm text-white/80">
+                    <input
+                      type="checkbox"
+                      className="mt-1 rounded border-white/20 bg-white/5"
+                      checked={devChecklist[key]}
+                      onChange={(e) => setDevChecklist((prev) => ({ ...prev, [key]: e.target.checked }))}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
               <textarea
                 value={devNotes}
                 onChange={(e) => setDevNotes(e.target.value)}
@@ -373,8 +449,9 @@ export function ProjectCompletionPanel({
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-white/20 focus:outline-none focus:border-indigo-500/50 resize-none"
               />
               <button
-                onClick={handleDevSubmit}
-                disabled={!deployUrl.trim() || submitting}
+                type="button"
+                onClick={() => void handleDevSubmit()}
+                disabled={!deployUrl.trim() || !deployUrlValid || !checklistComplete || submitting}
                 className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-black text-sm uppercase tracking-widest hover:from-indigo-500 hover:to-purple-500 transition-all disabled:opacity-40 flex items-center justify-center gap-2"
               >
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
@@ -420,9 +497,20 @@ export function ProjectCompletionPanel({
             className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-white/20 focus:outline-none focus:border-emerald-500/50 resize-none"
           />
 
+          <label className="flex items-start gap-3 cursor-pointer text-sm text-white/85">
+            <input
+              type="checkbox"
+              className="mt-1 rounded border-white/20 bg-white/5"
+              checked={clientAcceptsDeliverables}
+              onChange={(e) => setClientAcceptsDeliverables(e.target.checked)}
+            />
+            <span>I confirm acceptance of deliverables, deployment, and completion criteria.</span>
+          </label>
+
           <div className="flex gap-3">
             <button
-              onClick={handleCreatorApprove}
+              type="button"
+              onClick={() => void handleCreatorApprove()}
               disabled={!approveCheck.ok || submitting}
               className="flex-1 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 text-white font-black text-sm uppercase tracking-widest hover:from-emerald-500 hover:to-green-500 transition-all disabled:opacity-40 flex items-center justify-center gap-2"
             >
@@ -430,6 +518,7 @@ export function ProjectCompletionPanel({
               Approve & Complete
             </button>
             <button
+              type="button"
               onClick={() => setShowRejectForm(!showRejectForm)}
               className="px-4 py-3 rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 font-bold text-xs uppercase tracking-widest hover:bg-red-500/20 transition-colors"
             >
@@ -454,7 +543,8 @@ export function ProjectCompletionPanel({
                     className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-white/20 focus:outline-none focus:border-red-500/50 resize-none"
                   />
                   <button
-                    onClick={handleCreatorReject}
+                    type="button"
+                    onClick={() => void handleCreatorReject()}
                     disabled={!rejectReason.trim() || submitting}
                     className="w-full py-2.5 rounded-xl bg-red-500/20 border border-red-500/30 text-red-300 font-bold text-xs uppercase tracking-widest hover:bg-red-500/30 transition-colors disabled:opacity-40"
                   >

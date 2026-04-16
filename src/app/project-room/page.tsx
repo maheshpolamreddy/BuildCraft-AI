@@ -1,6 +1,13 @@
 "use client";
 
 import { subscribeToWorkspace, getWorkspaceState, setWorkspaceMilestones, setWorkspaceMatchedDevelopers, type Task, type Milestone, type TaskStatus } from "@/lib/workspace";
+import {
+  areMilestonesReadyForCompletion,
+  completionProgressPct,
+  countTasksByStatus,
+  isTaskAwaitingDeveloperSignOff,
+  isTaskFullyApprovedForCompletion,
+} from "@/lib/completion-gate";
 import React, { useState, useEffect, useMemo, Suspense, useRef, useCallback, cloneElement } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -152,6 +159,13 @@ function firestoreAccessHint(msg: string): string {
   return msg;
 }
 
+/** Case-insensitive match — Auth and stored project emails can differ in casing. */
+function creatorEmailsMatch(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = (a ?? "").trim().toLowerCase();
+  const y = (b ?? "").trim().toLowerCase();
+  return x.length > 0 && x === y;
+}
+
 const INITIAL_MESSAGES: ChatMessage[] = [
   { id: 1, from: "Alex M.", text: "Hi! I reviewed the technical plan. The architecture looks solid — I've worked on 3 similar projects.", time: "2h ago", isMe: false },
   { id: 2, from: "You",    text: "Great! Can you start next Monday? The timeline is 4 months.", time: "1h ago", isMe: true },
@@ -191,9 +205,14 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   const isCreator = !!currentUser && !!project && !isDeveloper && (
     currentUser.uid === project.creatorUid ||
     (!!legacyProjectUid && legacyProjectUid === currentUser.uid) ||
-    (!!currentUser.email && !!project.creatorEmail && currentUser.email === project.creatorEmail) ||
+    creatorEmailsMatch(currentUser.email, project.creatorEmail) ||
     (!project.creatorUid && !project.developerUid)
   );
+  /** Until Firestore project loads, still query hire requests as creator (avoids empty list + wrong chat ACL wiring). */
+  const hireQueriesAsCreator =
+    isCreator ||
+    (!!currentUser && !project && !!routeProjectId && !isDeveloperWorkspace);
+  const chatParticipantRole: "creator" | "developer" = hireQueriesAsCreator ? "creator" : "developer";
   const userRole    = isCreator ? "creator" : "developer";
 
   // Auto-heal logic: If email matches but UID is different, update the project UID
@@ -391,7 +410,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   // ── All hire requests — load for BOTH creators and developers (full list; scope per workspace below) ──
   useEffect(() => {
     if (!authReady || !currentUser?.uid) return;
-    const fetcher = isCreator ? getHireRequestsByCreator : getHireRequestsByDeveloper;
+    const fetcher = hireQueriesAsCreator ? getHireRequestsByCreator : getHireRequestsByDeveloper;
     fetcher(currentUser.uid)
       .then((reqs) => {
         setHireRequests(reqs);
@@ -402,7 +421,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
         setSentTokens(tokens);
       })
       .catch(() => {});
-  }, [authReady, currentUser?.uid, isCreator]);
+  }, [authReady, currentUser?.uid, hireQueriesAsCreator]);
 
   // ── Hiring state derivation (state machine for talent tab UI) — project-scoped ─────────────
   const projectHireReqs = useMemo(() => {
@@ -450,11 +469,13 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     );
   }, [viewerIsDeveloperRole, activeChatHire, chatRoom?.creatorName, chatRoom?.developerName]);
 
-  // ── Derived stats ──────────────────────────────────────────────────────────
+  // ── Derived stats (completion gate = all tasks dual-approved or legacy approved) ──
   const allTasks   = milestones.flatMap(m => m.tasks);
-  const doneTasks  = allTasks.filter(t => t.status === "approved").length;
-  const inReview   = allTasks.filter(t => t.status === "review").length;
-  const progress   = allTasks.length ? Math.round((doneTasks / allTasks.length) * 100) : 0;
+  const taskCounts = useMemo(() => countTasksByStatus(milestones), [milestones]);
+  const doneTasks  = taskCounts.fullyApproved;
+  const inReview   = taskCounts.inReview;
+  const progress   = completionProgressPct(milestones);
+  const completionSectionUnlocked = areMilestonesReadyForCompletion(milestones);
 
   // ── Strict Tab Guard ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -796,7 +817,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     if (activeTab !== "chat" || !currentUser) return;
     let cancelled = false;
 
-    const fetcher = isCreator ? getHireRequestsByCreator : getHireRequestsByDeveloper;
+    const fetcher = hireQueriesAsCreator ? getHireRequestsByCreator : getHireRequestsByDeveloper;
 
     fetcher(currentUser.uid)
       .then((reqs) => {
@@ -815,7 +836,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
         let stored: string | null = null;
         try {
           stored = sessionStorage.getItem(
-            chatStorageKey(userRole, currentUser.uid, chatScopeProjectId),
+            chatStorageKey(chatParticipantRole, currentUser.uid, chatScopeProjectId),
           );
         } catch {
           /* private mode */
@@ -837,8 +858,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     activeTab,
     currentUser?.uid,
     chatQueryParam,
-    isCreator,
-    userRole,
+    hireQueriesAsCreator,
+    chatParticipantRole,
     workspaceProjectId,
     projectName,
     chatScopeProjectId,
@@ -866,7 +887,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     if (!currentUser?.uid || !activeChatId || activeTab !== "chat") return;
     try {
       sessionStorage.setItem(
-        chatStorageKey(userRole, currentUser.uid, chatScopeProjectId),
+        chatStorageKey(chatParticipantRole, currentUser.uid, chatScopeProjectId),
         activeChatId,
       );
     } catch {
@@ -877,7 +898,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     params.set("tab", "chat");
     params.set("chat", activeChatId);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [activeChatId, activeTab, currentUser?.uid, pathname, router, searchParams, userRole, chatScopeProjectId]);
+  }, [activeChatId, activeTab, currentUser?.uid, pathname, router, searchParams, chatParticipantRole, chatScopeProjectId]);
 
   // ── Presence on chat tab (so offline pings work) ────────────────────────────
   useEffect(() => {
@@ -1100,7 +1121,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     if (!project || !savedProjectId || !currentUser) return;
     const nextMilestones = milestones.map(m => ({
       ...m,
-      tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "approved" as TaskStatus } : t)
+      tasks: m.tasks.map(t => t.id === task.id ? { ...t, status: "approved_creator" as TaskStatus } : t)
     }));
     setMilestones(nextMilestones);
     await setWorkspaceMilestones(savedProjectId, nextMilestones, currentUser?.uid);
@@ -1109,6 +1130,23 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       taskId: task.id,
       taskTitle: task.title,
       projectId: savedProjectId
+    }).catch(() => {});
+  }
+
+  async function developerConfirmDualApproval(task: Task) {
+    if (!project || !savedProjectId || !currentUser) return;
+    const nextMilestones = milestones.map(m => ({
+      ...m,
+      tasks: m.tasks.map(t =>
+        t.id === task.id ? { ...t, status: "approved_by_both" as TaskStatus } : t,
+      ),
+    }));
+    setMilestones(nextMilestones);
+    await setWorkspaceMilestones(savedProjectId, nextMilestones, currentUser?.uid);
+    logAction(currentUser.uid, "milestone.dual_approved", {
+      taskId: task.id,
+      taskTitle: task.title,
+      projectId: savedProjectId,
     }).catch(() => {});
   }
 
@@ -1193,8 +1231,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
   // ── Milestone completion check ─────────────────────────────────────────────
   function milestoneProgress(m: Milestone) {
-    const done = m.tasks.filter(t => t.status === "approved").length;
-    return { done, total: m.tasks.length, pct: Math.round((done / m.tasks.length) * 100) };
+    const done = m.tasks.filter(t => isTaskFullyApprovedForCompletion(t)).length;
+    return { done, total: m.tasks.length, pct: m.tasks.length ? Math.round((done / m.tasks.length) * 100) : 0 };
   }
 
   const AUDIT_ICONS: Record<string, { icon: React.ReactNode; color: string }> = {
@@ -1325,8 +1363,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
           </div>
           <div className="flex justify-between mt-2 text-[9px] text-[#888]">
             <span>{doneTasks} approved</span>
-            <span>{inReview} in review</span>
-            <span>{allTasks.length - doneTasks - inReview} todo</span>
+            <span>{inReview + taskCounts.awaitingDevSignOff} action needed</span>
+            <span>{taskCounts.otherTodo} todo</span>
           </div>
         </div>
 
@@ -1380,8 +1418,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
             { id: "prd",        label: "PRD Document",    icon: <FileText className="w-5 h-5" />,     badge: prds.length > 0 ? "New" : null },
             { id: "chat",       label: (isDeveloper || isDeveloperWorkspace) ? "Chat with Client" : "Chat with Developer",   icon: <MessageSquare className="w-5 h-5" />, badge: activeChatId ? "Live" : null },
             { id: "history",    label: "Hiring History",  icon: <FolderOpen className="w-5 h-5" />,   badge: hireRequests.length > 0 ? String(hireRequests.length) : null },
-            { id: "completion",  label: "Completion",      icon: <Flag className="w-5 h-5" />,         badge: projExec?.status === "review" ? "Review" : projExec?.status === "completed" ? "Done" : null },
-            { id: "deploy",     label: "CI/CD Deploy",    icon: <Rocket className="w-5 h-5" />,       badge: progress === 100 ? "Ready" : null },
+            { id: "completion",  label: "Completion",      icon: <Flag className="w-5 h-5" />,         badge: !completionSectionUnlocked ? "Locked" : projExec?.status === "review" ? "Review" : projExec?.status === "completed" ? "Done" : completionSectionUnlocked ? "Ready" : null },
+            { id: "deploy",     label: "CI/CD Deploy",    icon: <Rocket className="w-5 h-5" />,       badge: completionSectionUnlocked ? "Ready" : null },
             { id: "audit",      label: "Audit Log",       icon: <History className="w-5 h-5" /> },
           ] as const).filter(t => visibleTabs.includes(t.id)).map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id as Tab)}
@@ -1444,7 +1482,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
               </p>
             </div>
             <div className="flex gap-2 text-xs font-bold uppercase tracking-widest flex-wrap">
-              <span className="px-3 py-1.5 rounded-md border border-white/10 bg-black text-[#888]">{userRole === "creator" ? "Employer" : "Developer"}</span>
+              <span className="px-3 py-1.5 rounded-md border border-white/10 bg-black text-[#888]">{chatParticipantRole === "creator" ? "Employer" : "Developer"}</span>
               <span className="px-3 py-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/10 text-emerald-500">Plan Locked</span>
               {projExec && (
                 <span className={`px-3 py-1.5 rounded-md border ${getStatusColor(projExec.status)}`}>
@@ -1519,6 +1557,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                           "in-progress": { label: "In Progress", color: "text-blue-400",    bg: "bg-blue-500/10 border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.15)]" },
                           "validating":  { label: "Validating",  color: "text-yellow-400",  bg: "bg-yellow-500/10 border-yellow-500/30 shadow-[0_0_15px_rgba(234,179,8,0.15)]" },
                           "review":      { label: "In Review",   color: "text-purple-400",  bg: "bg-purple-500/10 border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.15)]" },
+                          "approved_creator": { label: "Client OK — your sign-off", color: "text-cyan-400", bg: "bg-cyan-500/10 border-cyan-500/30 shadow-[0_0_15px_rgba(34,211,238,0.12)]" },
+                          "approved_by_both": { label: "Approved (both)", color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.15)]" },
                           "approved":    { label: "Approved",    color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30 shadow-[0_0_15px_rgba(16,185,129,0.15)]" },
                           "rejected":    { label: "Rejected",    color: "text-red-400",     bg: "bg-red-500/10 border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.15)]" },
                         };
@@ -1579,7 +1619,23 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                                     <RotateCcw className="w-3 h-3" /> Re-submit Task
                                   </button>
                                 )}
-                                {task.status === "approved" && <CheckCircle2 className="w-6 h-6 text-emerald-400" />}
+                                {(task.status === "approved" || task.status === "approved_by_both") && (
+                                  <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+                                )}
+                                {task.status === "approved_creator" && isCreator && (
+                                  <span className="text-[9px] text-cyan-400/80 font-bold uppercase">Awaiting developer</span>
+                                )}
+                                {task.status === "approved_creator" && isDeveloper && (
+                                  <button
+                                    onClick={e => {
+                                      e.stopPropagation();
+                                      void developerConfirmDualApproval(task);
+                                    }}
+                                    className="px-3 py-1.5 bg-cyan-500/20 border border-cyan-500/40 text-cyan-300 font-black text-[10px] uppercase tracking-widest rounded-lg hover:bg-cyan-500/30 transition-all flex items-center gap-1"
+                                  >
+                                    <CheckCircle className="w-3 h-3" /> Confirm sign-off
+                                  </button>
+                                )}
                               </div>
                             </div>
 
@@ -1607,7 +1663,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                     {[
                       { label: "Approved", count: doneTasks, color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/20 shadow-[0_0_20px_rgba(16,185,129,0.1)]" },
                       { label: "In Review", count: inReview, color: "text-purple-400", bg: "bg-purple-500/10 border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.1)]" },
-                      { label: "Remaining", count: allTasks.length - doneTasks - inReview, color: "text-white/60", bg: "bg-[#111] border-white/5" },
+                      { label: "Remaining", count: taskCounts.otherTodo + taskCounts.awaitingDevSignOff, color: "text-white/60", bg: "bg-[#111] border-white/5" },
                     ].map(s => (
                       <div key={s.label} className={`p-5 rounded-2xl border text-center transition-transform hover:-translate-y-1 ${s.bg}`}>
                         <div className={`text-4xl font-black ${s.color}`}>{s.count}</div>
@@ -2591,7 +2647,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                   currentUid={currentUser?.uid ?? ""}
                   isCreator={isCreator}
                   isDeveloper={isDeveloper}
-                  allTasksDone={allTasks.length > 0 && allTasks.every(t => t.status === "approved")}
+                  completionUnlocked={completionSectionUnlocked}
+                  hasAssignedDeveloper={Boolean(project?.developerUid) || hiringState === "accepted"}
                   projectName={projectName}
                   onRefresh={() => {
                     if (savedProjectId) {

@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Building2, User, Lock, ArrowRight, Mail, CheckCircle2,
   ChevronRight, Fingerprint,
-  Eye, EyeOff, Loader2, AlertCircle, Chrome, Zap, Phone, Globe, Briefcase,
+  Eye, EyeOff, Loader2, AlertCircle, Chrome, Phone, Globe, Briefcase,
 } from "lucide-react";
 import Logo from "@/components/Logo";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -96,12 +96,6 @@ function PlatformEntryInner() {
     } finally {
       setAuthLoading(false);
     }
-  }
-
-  function handleSkipDemo() {
-    // Set a guest user so the rest of the app works without Firebase auth
-    setCurrentUser({ uid: "demo-guest", email: "demo@buildcraft.ai", displayName: "Demo User", photoURL: null });
-    handleNext();
   }
 
   // Prefill project creator fields when entering step 3 (do not overwrite existing input)
@@ -354,20 +348,6 @@ function PlatformEntryInner() {
                       ? "Don't have an account? Sign up"
                       : "Already have an account? Sign in"}
                   </button>
-
-                  {/* Demo skip */}
-                  <div className="pt-2 border-t border-white/5">
-                    <button
-                      onClick={handleSkipDemo}
-                      className="w-full py-3.5 flex items-center justify-center gap-2.5 rounded-2xl border border-dashed border-white/15 text-white/40 hover:text-white hover:border-white/30 hover:bg-white/5 transition-all text-xs font-bold uppercase tracking-widest group"
-                    >
-                      <Zap className="w-3.5 h-3.5 group-hover:text-yellow-400 transition-colors" />
-                      Skip — Try Demo
-                    </button>
-                    <p className="text-center text-[10px] text-white/20 mt-2 font-light">
-                      No account needed · Data not saved
-                    </p>
-                  </div>
                 </div>
               </div>
             )}

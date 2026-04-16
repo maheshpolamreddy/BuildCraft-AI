@@ -502,4 +502,36 @@ export async function sendChatNotification(opts: {
   });
 }
 
+/** Optional: notify both parties when a project is marked completed in the app */
+export async function sendProjectCompletionBroadcast(opts: {
+  creatorEmail: string | null | undefined;
+  developerEmail: string | null | undefined;
+  projectName: string;
+  projectUrl: string;
+}): Promise<{ creatorSent: boolean; developerSent: boolean }> {
+  const subject = `Project completed — ${opts.projectName}`;
+  const html = (greeting: string) => `
+      <div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;background:#09090b;color:#fff;padding:32px;border-radius:16px;">
+        <h2 style="font-size:20px;font-weight:800;">${greeting}</h2>
+        <p style="color:#aaa;line-height:1.6;">The project <strong style="color:#fff;">${opts.projectName}</strong> has been marked <strong style="color:#86efac;">completed</strong> with dual approval.</p>
+        <a href="${opts.projectUrl}" style="display:inline-block;margin-top:20px;background:#fff;color:#000;font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.15em;padding:12px 20px;border-radius:10px;text-decoration:none;">Open workspace</a>
+        <p style="color:#555;font-size:11px;margin-top:28px;">BuildCraft AI</p>
+      </div>`;
+
+  let creatorSent = false;
+  let developerSent = false;
+  const ce = typeof opts.creatorEmail === "string" && opts.creatorEmail.includes("@") ? opts.creatorEmail : null;
+  const de = typeof opts.developerEmail === "string" && opts.developerEmail.includes("@") ? opts.developerEmail : null;
+
+  if (ce) {
+    const r = await send({ to: ce, subject, html: html("Project update") });
+    creatorSent = r.ok;
+  }
+  if (de && de !== ce) {
+    const r = await send({ to: de, subject, html: html("Project update") });
+    developerSent = r.ok;
+  }
+  return { creatorSent, developerSent };
+}
+
 export { APP_URL };

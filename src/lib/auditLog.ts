@@ -33,6 +33,7 @@ export type AuditAction =
   | "code.generated"
   | "prompts.generated"
   | "milestone.approved"
+  | "milestone.dual_approved"
   | "milestone.rejected"
   | "milestone.submitted";
 
