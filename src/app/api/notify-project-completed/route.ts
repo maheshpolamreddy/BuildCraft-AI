@@ -16,6 +16,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const projectId = typeof body.projectId === "string" ? body.projectId : "";
     const projectName = typeof body.projectName === "string" ? body.projectName : "Project";
+    const developerTierUpgrade = body.developerTierUpgrade === true;
     if (!projectId) {
       return NextResponse.json({ error: "Missing projectId" }, { status: 400 });
     }
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest) {
       developerEmail,
       projectName,
       projectUrl,
+      developerTierUpgrade,
     });
 
     return NextResponse.json({ ok: true, ...result });

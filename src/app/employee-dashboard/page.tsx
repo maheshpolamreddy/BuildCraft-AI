@@ -8,7 +8,7 @@ import {
   Shield, Lock, Edit3, BarChart2,
   Play, Loader2, Code2, LogOut,
   ArrowRight, Sparkles, Flag, AlertCircle,
-  GitBranch, RotateCcw,
+  GitBranch, RotateCcw, ExternalLink,
 } from "lucide-react";
 import { useStore } from "@/store/useStore";
 import { logAction } from "@/lib/auditLog";
@@ -240,6 +240,10 @@ export default function EmployeeDashboard() {
   const [invitedProjects, setInvitedProjects]   = useState<Set<string>>(new Set());
   const [respondLoading,   setRespondLoading]    = useState<string | null>(null);
   const [respondError,     setRespondError]      = useState<string | null>(null);
+  /** projectId → completion info from saved project doc */
+  const [workspaceCompletion, setWorkspaceCompletion] = useState<
+    Record<string, { completed: boolean; completedAt?: number; deployUrl?: string }>
+  >({});
 
   const userName = developerProfile?.fullName || currentUser?.displayName || "Developer";
   const userSkills = developerProfile?.skills ?? [];
@@ -275,6 +279,48 @@ export default function EmployeeDashboard() {
     () => hireReqs.filter(r => r.status === "accepted"),
     [hireReqs]
   );
+
+  const activeAssignmentProjectIdsKey = useMemo(
+    () =>
+      activeAssignments
+        .map((a) => a.projectId)
+        .filter(Boolean)
+        .sort()
+        .join("|"),
+    [activeAssignments],
+  );
+
+  useEffect(() => {
+    const ids = activeAssignments.map((a) => a.projectId).filter((id): id is string => Boolean(id?.trim()));
+    if (!ids.length) {
+      setWorkspaceCompletion({});
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const next: Record<string, { completed: boolean; completedAt?: number; deployUrl?: string }> = {};
+      await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const saved = await getProject(id);
+            const st = saved?.project?.lifecycleStatus;
+            const completed = st === "completed";
+            next[id] = {
+              completed,
+              completedAt: saved?.project?.completedAt,
+              deployUrl: saved?.project?.completionDeploymentUrl,
+            };
+          } catch {
+            next[id] = { completed: false };
+          }
+        }),
+      );
+      if (!cancelled) setWorkspaceCompletion(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeAssignmentProjectIdsKey]);
 
   const closedHireCount = useMemo(
     () => hireReqs.filter(r => r.status === "rejected" || r.status === "expired").length,
@@ -743,30 +789,79 @@ export default function EmployeeDashboard() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {activeAssignments?.map((assignment) => {
                         const enterWorkspace = () => openDeveloperWorkspace(assignment.projectId);
+                        const pid = assignment.projectId?.trim() ?? "";
+                        const wc = pid ? workspaceCompletion[pid] : undefined;
+                        const isDone = wc?.completed === true;
                         return (
-                        <div key={assignment?.token} className="glass-panel p-6 rounded-2xl border border-blue-500/20 bg-blue-500/5 hover:border-blue-500/40 transition-all">
+                        <div
+                          key={assignment?.token}
+                          className={`glass-panel p-6 rounded-2xl border transition-all ${
+                            isDone
+                              ? "border-emerald-500/35 bg-emerald-500/[0.07] hover:border-emerald-500/50"
+                              : "border-blue-500/20 bg-blue-500/5 hover:border-blue-500/40"
+                          }`}
+                        >
                           <div className="flex justify-between items-start mb-4">
                             <div>
-                              <div className="flex items-center gap-2 mb-1.5">
-                                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                                <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-widest">Active Workspace</span>
+                              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                                {isDone ? (
+                                  <>
+                                    <span className="text-[9px] text-emerald-400 font-black uppercase tracking-widest px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10">
+                                      ✓ Completed project
+                                    </span>
+                                    <span className="text-[9px] text-amber-400 font-black uppercase tracking-widest px-2 py-0.5 rounded-full border border-amber-500/25 bg-amber-500/10">
+                                      Tier 3 · Verified
+                                    </span>
+                                    <span className="text-[9px] text-indigo-300 font-bold uppercase tracking-widest">Verified project</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                    <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-widest">Active Workspace</span>
+                                  </>
+                                )}
                               </div>
                               <h3 className="text-white font-black">{assignment.projectName}</h3>
                               <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest mt-1">Client: {assignment.creatorName}</p>
+                              {isDone && wc?.completedAt != null && (
+                                <p className="text-[10px] text-white/35 mt-1">
+                                  Completed {new Date(wc.completedAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
+                                </p>
+                              )}
+                              {isDone && wc?.deployUrl ? (
+                                <a
+                                  href={wc.deployUrl.startsWith("http") ? wc.deployUrl : `https://${wc.deployUrl}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-[10px] text-emerald-400/90 hover:text-emerald-300 mt-2 font-bold"
+                                >
+                                  <ExternalLink className="w-3 h-3" /> Deployment
+                                </a>
+                              ) : null}
                             </div>
                             <button
+                              type="button"
                               onClick={enterWorkspace}
-                              className="p-2.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 rounded-xl transition-all"
+                              className={`p-2.5 rounded-xl transition-all ${
+                                isDone
+                                  ? "bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 hover:bg-emerald-500/25"
+                                  : "bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20"
+                              }`}
                             >
                               <ArrowRight className="w-4 h-4" />
                             </button>
                           </div>
-                          <button 
+                          <button
+                            type="button"
                             onClick={enterWorkspace}
                             disabled={!assignment.projectId}
-                            className="w-full py-2.5 flex items-center justify-center gap-2 bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                            className={`w-full py-2.5 flex items-center justify-center gap-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                              isDone
+                                ? "bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25"
+                                : "bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10"
+                            }`}
                           >
-                            <Play className="w-3.5 h-3.5" /> Open workspace
+                            <Play className="w-3.5 h-3.5" /> {isDone ? "View workspace (read-only)" : "Open workspace"}
                           </button>
                         </div>
                         );
@@ -964,28 +1059,56 @@ export default function EmployeeDashboard() {
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {activeAssignments.map(a => {
+                    {activeAssignments.map((a) => {
                       const lastMs = a.respondedAt?.toMillis?.() ?? null;
                       const last = lastMs != null ? new Date(lastMs) : null;
                       const lastLabel = last
                         ? `Last update ${formatDateTimeSmart(last)}`
                         : "Activity timestamp not recorded";
                       const hasId = Boolean(a.projectId?.trim());
+                      const pid = a.projectId?.trim() ?? "";
+                      const wc = pid ? workspaceCompletion[pid] : undefined;
+                      const isDone = wc?.completed === true;
                       return (
                         <div
                           key={a.token}
-                          className="glass-panel p-6 rounded-2xl border border-blue-500/20 bg-blue-500/[0.03] flex flex-col gap-4"
+                          className={`glass-panel p-6 rounded-2xl border flex flex-col gap-4 ${
+                            isDone
+                              ? "border-emerald-500/35 bg-emerald-500/[0.06]"
+                              : "border-blue-500/20 bg-blue-500/[0.03]"
+                          }`}
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0 flex-1">
-                              <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-full">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" aria-hidden />
-                                In progress
-                              </span>
+                              {isDone ? (
+                                <div className="flex flex-wrap gap-2">
+                                  <span className="text-[9px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                                    ✓ Completed
+                                  </span>
+                                  <span className="text-[9px] font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/25 px-2 py-0.5 rounded-full">
+                                    Tier 3 Verified
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-full">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" aria-hidden />
+                                  In progress
+                                </span>
+                              )}
                               <h3 className="text-white font-black text-lg mt-2 truncate">{a.projectName}</h3>
                               <p className="text-[10px] text-white/35 font-bold uppercase tracking-widest mt-1">
                                 Client · {a.creatorName}
                               </p>
+                              {isDone && wc?.deployUrl ? (
+                                <a
+                                  href={wc.deployUrl.startsWith("http") ? wc.deployUrl : `https://${wc.deployUrl}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-[10px] text-emerald-400 mt-2 font-bold"
+                                >
+                                  <ExternalLink className="w-3 h-3" /> Deployment
+                                </a>
+                              ) : null}
                             </div>
                           </div>
                           <p className="text-[10px] text-white/30 font-light">{lastLabel}</p>
@@ -998,10 +1121,14 @@ export default function EmployeeDashboard() {
                             type="button"
                             disabled={!hasId}
                             onClick={() => openDeveloperWorkspace(a.projectId)}
-                            className="w-full py-3 silver-gradient text-black font-black uppercase tracking-widest text-[10px] rounded-xl flex items-center justify-center gap-2 transition-all hover:scale-[1.01] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                            className={`w-full py-3 font-black uppercase tracking-widest text-[10px] rounded-xl flex items-center justify-center gap-2 transition-all hover:scale-[1.01] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 ${
+                              isDone
+                                ? "border border-emerald-500/35 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
+                                : "silver-gradient text-black"
+                            }`}
                           >
                             <Play className="w-3.5 h-3.5 shrink-0" aria-hidden />
-                            Open workspace
+                            {isDone ? "View workspace" : "Open workspace"}
                           </button>
                         </div>
                       );

@@ -131,7 +131,10 @@ export function rankDevelopersForProject(
 
     const linear = linearScore(f);
     const s01 = toMatchScore01(linear);
-    const score = Math.max(0, Math.min(100, Math.round(s01 * 100)));
+    let score = Math.max(0, Math.min(100, Math.round(s01 * 100)));
+    if (dev.verificationStatus === "project-verified") {
+      score = Math.min(100, Math.round(score * 1.2));
+    }
 
     return { dev, score, overlap, missing, features: f, linear };
   });

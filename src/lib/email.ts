@@ -559,12 +559,18 @@ export async function sendProjectCompletionBroadcast(opts: {
   developerEmail: string | null | undefined;
   projectName: string;
   projectUrl: string;
+  /** Extra copy for developer email when they earn Tier 3 from this completion */
+  developerTierUpgrade?: boolean;
 }): Promise<{ creatorSent: boolean; developerSent: boolean }> {
   const subject = `Project completed — ${opts.projectName}`;
-  const html = (greeting: string) => `
+  const devTierNote = opts.developerTierUpgrade
+    ? `<p style="color:#a7f3d0;line-height:1.6;margin-top:16px;border-left:3px solid #34d399;padding-left:12px;">You’ve been upgraded to <strong style="color:#fff;">Tier 3 · Project Verified</strong> — your profile, badges, and match ranking are updated.</p>`
+    : "";
+  const html = (greeting: string, isDeveloper: boolean) => `
       <div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;background:#09090b;color:#fff;padding:32px;border-radius:16px;">
         <h2 style="font-size:20px;font-weight:800;">${greeting}</h2>
         <p style="color:#aaa;line-height:1.6;">The project <strong style="color:#fff;">${opts.projectName}</strong> has been marked <strong style="color:#86efac;">completed</strong> with dual approval.</p>
+        ${isDeveloper ? devTierNote : ""}
         <a href="${opts.projectUrl}" style="display:inline-block;margin-top:20px;background:#fff;color:#000;font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.15em;padding:12px 20px;border-radius:10px;text-decoration:none;">Open workspace</a>
         <p style="color:#555;font-size:11px;margin-top:28px;">BuildCraft AI</p>
       </div>`;
@@ -575,11 +581,15 @@ export async function sendProjectCompletionBroadcast(opts: {
   const de = typeof opts.developerEmail === "string" && opts.developerEmail.includes("@") ? opts.developerEmail : null;
 
   if (ce) {
-    const r = await send({ to: ce, subject, html: html("Project update") });
+    const r = await send({ to: ce, subject, html: html("Project update", false) });
     creatorSent = r.ok;
   }
   if (de && de !== ce) {
-    const r = await send({ to: de, subject, html: html("Project update") });
+    const r = await send({
+      to: de,
+      subject,
+      html: html("Project update", true),
+    });
     developerSent = r.ok;
   }
   return { creatorSent, developerSent };

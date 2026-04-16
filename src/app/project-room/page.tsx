@@ -486,6 +486,9 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   const inReview   = taskCounts.awaitingClientReview;
   const progress   = completionProgressPct(milestones);
   const completionSectionUnlocked = areMilestonesReadyForCompletion(milestones);
+  /** Final dual-approved closure — milestones/tasks become view-only */
+  const workspaceProjectCompleted =
+    projExec?.status === "completed" || project?.lifecycleStatus === "completed";
 
   // ── Strict Tab Guard ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -597,6 +600,20 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       });
   }, [savedProjectId, currentUser?.uid, project, isCreator, isDeveloper]);
 
+  const onProjectDocCompleted = useCallback(
+    (payload: { deploymentUrl: string }) => {
+      const p = useStore.getState().project;
+      if (!p) return;
+      setProject({
+        ...p,
+        lifecycleStatus: "completed",
+        completedAt: Date.now(),
+        completionDeploymentUrl: payload.deploymentUrl,
+      });
+    },
+    [setProject],
+  );
+
   useEffect(() => {
     if (!isDeveloperWorkspace || !authReady || !currentUser?.uid || !savedProjectId || !project) return;
     if (project.developerUid) return;
@@ -669,6 +686,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
   const regenerateMilestones = useCallback(() => {
     if (!project || hiringState !== "no-hire" || !savedProjectId) return;
+    if (workspaceProjectCompleted) return;
     if (!confirm("Are you sure you want to regenerate all milestones? Any unsaved manual modifications will be lost.")) return;
     
     setLoadingMilestones(true);
@@ -711,7 +729,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       })
       .catch((err) => console.error("Regeneration failed", err))
       .finally(() => setLoadingMilestones(false));
-  }, [project, savedProjectId, hiringState]);
+  }, [project, savedProjectId, hiringState, workspaceProjectCompleted]);
 
   // ── Automatic Matching Trigger ─────────────────────────────────────────────
   const matchTriggeredRef = useRef(false);
@@ -1174,7 +1192,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
   // ── Task actions ────────────────────────────────────────────────────────────
   async function approveTask(task: Task, milestoneId: string) {
-    if (!project || !savedProjectId || !currentUser) return;
+    if (!project || !savedProjectId || !currentUser || workspaceProjectCompleted) return;
     const nextMilestones = milestones.map(m => {
       if (m.id !== milestoneId) return m;
       return {
@@ -1195,7 +1213,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   }
 
   async function rejectTask(task: Task, milestoneId: string) {
-    if (!project || !savedProjectId || !currentUser) return;
+    if (!project || !savedProjectId || !currentUser || workspaceProjectCompleted) return;
     const nextMilestones = milestones.map(m => {
       if (m.id !== milestoneId) return m;
       return {
@@ -1218,7 +1236,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   }
 
   async function markTaskCompleted(milestoneId: string, task: Task, submission: string) {
-    if (!project || !savedProjectId || !currentUser) return;
+    if (!project || !savedProjectId || !currentUser || workspaceProjectCompleted) return;
     const nextMilestones = milestones.map(m => {
       if (m.id !== milestoneId) return m;
       return {
@@ -1580,7 +1598,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
               {activeTab === "milestones" && hiringState === "no-hire" && (
                 <button 
                   onClick={regenerateMilestones}
-                  disabled={loadingMilestones}
+                  disabled={loadingMilestones || workspaceProjectCompleted}
                   className="px-3 py-1.5 rounded-lg border border-white/20 bg-gradient-to-r from-white/10 to-white/5 text-white/90 hover:text-white hover:border-white/40 hover:shadow-[0_0_15px_rgba(255,255,255,0.15)] transition-all disabled:opacity-50 flex items-center gap-1.5 group overflow-hidden relative"
                 >
                   <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -1597,6 +1615,26 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
             <div className="flex items-center gap-3 p-4 bg-indigo-500/5 border border-indigo-500/20 rounded-2xl">
               <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
               <p className="text-sm text-white/70 font-light">AI is generating project milestones for <strong>{projectName}</strong>…</p>
+            </div>
+          )}
+
+          {workspaceProjectCompleted && (
+            <div className="flex flex-col sm:flex-row sm:items-center gap-3 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl">
+              <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-black text-emerald-300 uppercase tracking-widest">Project completed</p>
+                <p className="text-xs text-white/60 mt-1">
+                  This engagement is closed with dual approval. Tasks and milestones are view-only.
+                  {project?.completionDeploymentUrl ? (
+                    <>
+                      {" "}
+                      <a href={project.completionDeploymentUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-300 hover:text-indigo-200 underline break-all">
+                        Live deployment
+                      </a>
+                    </>
+                  ) : null}
+                </p>
+              </div>
             </div>
           )}
 
@@ -1652,7 +1690,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                         return (
                           <div key={task.id}
                             className={`group relative p-5 rounded-3xl border transition-all duration-300 transform ${task.status === "completed_by_developer" ? "hover:-translate-y-1 hover:shadow-[0_12px_40px_rgba(168,85,247,0.2)] bg-gradient-to-br from-[#160f24] to-[#0A0A0A] border-purple-500/30 cursor-pointer" : "hover:-translate-y-0.5 hover:shadow-[0_8px_30px_rgba(0,0,0,0.4)] bg-gradient-to-br from-[#111] to-[#050505] border-white/5 hover:border-white/15"}`}
-                            onClick={() => task.status === "completed_by_developer" && isCreator && setReviewTask(task)}>
+                            onClick={() => task.status === "completed_by_developer" && isCreator && !workspaceProjectCompleted && setReviewTask(task)}>
                             <div className="flex items-start justify-between gap-4 flex-wrap">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-3 mb-1 flex-wrap">
@@ -1681,7 +1719,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                                     <div className="text-[9px] text-[#888]">AI Score</div>
                                   </div>
                                 )}
-                                {task.status === "completed_by_developer" && isCreator && (
+                                {task.status === "completed_by_developer" && isCreator && !workspaceProjectCompleted && (
                                   <div className="flex flex-col gap-2">
                                     <button type="button" onClick={e => { e.stopPropagation(); void approveTask(task, m.id); }}
                                       className="px-3 py-1.5 bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-black text-[10px] uppercase tracking-widest rounded-lg hover:bg-emerald-500/30 transition-all flex items-center gap-1">
@@ -1693,7 +1731,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                                     </button>
                                   </div>
                                 )}
-                                {(task.status === "pending" || task.status === "in-progress" || task.status === "validating" || task.status === "reopened") && isDeveloper && (
+                                {(task.status === "pending" || task.status === "in-progress" || task.status === "validating" || task.status === "reopened") && isDeveloper && !workspaceProjectCompleted && (
                                   <button type="button" onClick={e => { e.stopPropagation(); void markTaskCompleted(m.id, task, task.status === "reopened" ? "Addressed feedback and re-completed work." : "Marked complete by developer in workspace."); }}
                                     className="px-4 py-2 border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-emerald-500/20 transition-all flex items-center gap-2">
                                     <Play className="w-3 h-3" /> Mark as completed
@@ -2725,6 +2763,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                       getProjectExecution(savedProjectId).then(setProjExec);
                     }
                   }}
+                  onProjectCompleted={onProjectDocCompleted}
                 />
               </motion.section>
             )}

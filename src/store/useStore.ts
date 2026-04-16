@@ -76,6 +76,12 @@ export interface ProjectState {
   creatorEmail?: string;
   /** Firebase UID of the hired developer (if any) */
   developerUid?: string;
+  /** Dual-approved project closure — locks workspace editing */
+  lifecycleStatus?: "active" | "completed";
+  /** ms since epoch when client approved final completion */
+  completedAt?: number;
+  /** Deployment / live URL captured at completion (from project execution) */
+  completionDeploymentUrl?: string;
 }
 
 interface BuildCraftStore {

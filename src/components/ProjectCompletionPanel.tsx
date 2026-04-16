@@ -28,7 +28,10 @@ import {
   getStatusColor,
 } from "@/lib/project-execution";
 import { processCompletionRewards } from "@/lib/rewards";
+import { markProjectCompleted } from "@/lib/firestore";
 import { logAction } from "@/lib/auditLog";
+
+const BADGE_PROJECT_VERIFIED = "Project Verified";
 
 interface Props {
   projectExecution: ProjectExecution | null;
@@ -45,6 +48,8 @@ interface Props {
   executionLoadError?: string | null;
   /** Create or heal projectExecution doc (creator or hired developer) */
   onEnsureExecution?: () => Promise<void>;
+  /** After Firestore project doc is marked completed (sync parent UI / store). */
+  onProjectCompleted?: (payload: { deploymentUrl: string }) => void;
   onRefresh?: () => void;
 }
 
@@ -61,6 +66,7 @@ export function ProjectCompletionPanel({
   projectName,
   executionLoadError,
   onEnsureExecution,
+  onProjectCompleted,
   onRefresh,
 }: Props) {
   const [view, setView] = useState<PanelView>("status");
@@ -77,7 +83,11 @@ export function ProjectCompletionPanel({
   const [newDelDesc, setNewDelDesc] = useState("");
   const [newDelUrl, setNewDelUrl] = useState("");
   const [addingDeliverable, setAddingDeliverable] = useState(false);
-  const [rewardResult, setRewardResult] = useState<{ badgeUpgraded: boolean; portfolioUpdated: boolean } | null>(null);
+  const [rewardResult, setRewardResult] = useState<{
+    badgeUpgraded: boolean;
+    portfolioUpdated: boolean;
+    tier3: boolean;
+  } | null>(null);
   const [devChecklist, setDevChecklist] = useState<DevCompletionChecklist>({
     featuresComplete: false,
     codeDelivered: false,
@@ -184,8 +194,14 @@ export function ProjectCompletionPanel({
     setSubmitting(true);
     try {
       await creatorApproveCompletion(projectId, creatorNotes, clientAcceptsDeliverables);
+      const deploy = pe.deploymentUrl.trim();
+      await markProjectCompleted(projectId, {
+        completedAt: Date.now(),
+        completionDeploymentUrl: deploy,
+      });
+      onProjectCompleted?.({ deploymentUrl: deploy });
       if (pe.developerUid) {
-        const result = await processCompletionRewards(pe.developerUid, projectName);
+        const result = await processCompletionRewards(pe.developerUid, projectName, projectId);
         setRewardResult(result);
       }
       await logAction(currentUid, "project.updated", {
@@ -196,7 +212,7 @@ export function ProjectCompletionPanel({
       fetch("/api/notify-project-completed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, projectName }),
+        body: JSON.stringify({ projectId, projectName, developerTierUpgrade: true }),
       }).catch(() => {});
     } catch (e) {
       console.error("Approve failed:", e);
@@ -618,9 +634,9 @@ export function ProjectCompletionPanel({
 
           {rewardResult && (
             <div className="space-y-2 pt-2">
-              {rewardResult.badgeUpgraded && (
+              {(rewardResult.badgeUpgraded || rewardResult.tier3) && (
                 <div className="flex items-center gap-2 p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-bold">
-                  <Award className="w-4 h-4" /> Developer earned Tier 3: Project Verified badge!
+                  <Award className="w-4 h-4" /> Developer upgraded to Tier 3 — {BADGE_PROJECT_VERIFIED} badge unlocked. Matching priority boosted.
                 </div>
               )}
               {rewardResult.portfolioUpdated && (

@@ -205,6 +205,40 @@ export async function updateProject(
   }
 }
 
+/** Persist dual-approved completion on the saved project (creator + developer workflow). */
+export async function markProjectCompleted(
+  docId: string,
+  opts: { completedAt: number; completionDeploymentUrl: string },
+): Promise<boolean> {
+  if (!docId) return false;
+  try {
+    const snap = await getDoc(doc(db, "projects", docId));
+    if (!snap.exists()) return false;
+    const data = snap.data() as Record<string, unknown>;
+    const rawProject = data.project as ProjectState | undefined;
+    if (!rawProject) return false;
+    const merged: ProjectState = {
+      ...rawProject,
+      lifecycleStatus: "completed",
+      completedAt: opts.completedAt,
+      completionDeploymentUrl: opts.completionDeploymentUrl,
+    };
+    const ownerUid = typeof data.uid === "string" ? data.uid : merged.creatorUid ?? "";
+    const emailNorm = normalizeAuthEmail(
+      merged.creatorEmail ?? (typeof data.email === "string" ? data.email : undefined),
+    );
+    const projectPayload = sanitizeProjectForWrite(merged, { uid: ownerUid, email: emailNorm });
+    await updateDoc(doc(db, "projects", docId), {
+      project: projectPayload,
+      updatedAt: serverTimestamp(),
+    });
+    return true;
+  } catch (err) {
+    console.warn("[firestore] markProjectCompleted failed:", err);
+    return false;
+  }
+}
+
 /** Load all projects belonging to a user, newest first. Returns [] for demo users. */
 export async function getUserProjects(uid: string): Promise<SavedProject[]> {
   if (!isFirebaseUid(uid)) return [];

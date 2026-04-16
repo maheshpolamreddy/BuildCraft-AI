@@ -37,6 +37,14 @@ export interface DeveloperProfile {
 
   // Step 4 — Verification
   verificationStatus: VerificationStatus;
+  /** Human-readable tier for dashboards (mirrors verificationStatus). */
+  tierLabel?: string;
+  /** Badges earned on-platform (e.g. "Project Verified"). */
+  earnedBadges?: string[];
+  /** Firestore project doc IDs successfully completed with dual approval. */
+  completedProjectIds?: string[];
+  /** Denormalized count for matching / profile display. */
+  completedProjectsCount?: number;
   /** IDs from the employee-dashboard skill test catalog; tier upgrade after full profile. */
   passedSkillAssessments?: string[];
 
@@ -149,6 +157,10 @@ export const EMPTY_PROFILE: Omit<DeveloperProfile, "userId" | "email" | "created
   skills: [], tools: [],
   githubUrl: "", portfolioUrl: "", resumeUrl: "", projectDescriptions: [],
   verificationStatus: "self-declared",
+  tierLabel: "Tier 1",
+  earnedBadges: [],
+  completedProjectIds: [],
+  completedProjectsCount: 0,
   availability: "full-time", payMin: 0, payMax: 0, payCurrency: "USD", preferredTypes: [],
   profileStatus: "pending", completedStep: 0, registrationDone: false,
 };
