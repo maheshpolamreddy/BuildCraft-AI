@@ -1165,6 +1165,7 @@ export default function DiscoveryHub() {
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         {matchedDevs.map((dev, idx) => {
                           const expanded = !!expandedDevs[dev.userId];
+                          const isTier3 = dev.verificationStatus === "project-verified";
                           const bandStyle =
                             dev.confidenceBand === "Excellent" 
                               ? { text: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/30", glow: "shadow-[0_0_20px_rgba(16,185,129,0.3)]" }
@@ -1179,9 +1180,19 @@ export default function DiscoveryHub() {
                               initial={{ opacity: 0, y: 12 }}
                               animate={{ opacity: 1, y: 0 }}
                               transition={{ delay: idx * 0.06 }}
-                              className="bg-[#040404] rounded-2xl border border-white/8 overflow-hidden hover:border-white/18 transition-all duration-500 group"
+                              className={`relative rounded-2xl overflow-hidden transition-all duration-500 group ${
+                                isTier3
+                                  ? "border border-amber-400/40 shadow-[0_0_36px_-8px_rgba(251,191,36,0.4)] bg-gradient-to-br from-amber-950/30 via-[#040404] to-purple-950/25"
+                                  : "bg-[#040404] border border-white/8 hover:border-white/18"
+                              }`}
                             >
-                              <div className="p-5 flex gap-4">
+                              {isTier3 && (
+                                <div
+                                  className="absolute inset-0 rounded-2xl bg-gradient-to-r from-amber-500/10 via-purple-500/5 to-fuchsia-500/10 pointer-events-none"
+                                  aria-hidden
+                                />
+                              )}
+                              <div className="p-5 flex gap-4 relative">
                                 {/* Avatar */}
                                 <div className={`w-14 h-14 rounded-2xl border ${bandStyle.border} ${bandStyle.bg} overflow-hidden flex items-center justify-center shrink-0 transition-all duration-300 ${bandStyle.glow} group-hover:scale-105`}>
                                   {dev.photoURL ? (
@@ -1194,9 +1205,27 @@ export default function DiscoveryHub() {
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-start justify-between gap-2">
                                     <div className="min-w-0">
-                                      <h3 className="text-white font-bold text-sm truncate tracking-tight">{dev.fullName || "Developer"}</h3>
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <h3
+                                          className={`font-bold text-sm truncate tracking-tight ${
+                                            isTier3
+                                              ? "bg-gradient-to-r from-amber-100 to-purple-200 bg-clip-text text-transparent"
+                                              : "text-white"
+                                          }`}
+                                        >
+                                          {dev.fullName || "Developer"}
+                                        </h3>
+                                        {isTier3 && (
+                                          <span className="shrink-0 text-[7px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded border border-amber-400/40 bg-amber-500/15 text-amber-200">
+                                            Verified
+                                          </span>
+                                        )}
+                                      </div>
                                       <p className="text-[10px] text-white/35 mt-0.5 font-light">
                                         {dev.primaryRole} &middot; {dev.yearsExp}y exp &middot; {dev.availability}
+                                        {isTier3 && typeof dev.completedProjectsCount === "number" && dev.completedProjectsCount > 0
+                                          ? ` · ${dev.completedProjectsCount} verified project${dev.completedProjectsCount === 1 ? "" : "s"}`
+                                          : ""}
                                       </p>
                                     </div>
                                     {/* Score badge */}

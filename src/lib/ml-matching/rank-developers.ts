@@ -139,7 +139,13 @@ export function rankDevelopersForProject(
     return { dev, score, overlap, missing, features: f, linear };
   });
 
-  return scored.sort((a, b) => b.score - a.score);
+  const tierRank = (s: string) =>
+    s === "project-verified" ? 3 : s === "assessment-passed" ? 2 : 1;
+  return scored.sort((a, b) => {
+    const td = tierRank(b.dev.verificationStatus) - tierRank(a.dev.verificationStatus);
+    if (td !== 0) return td;
+    return b.score - a.score;
+  });
 }
 
 export function explainDeveloperMatch(

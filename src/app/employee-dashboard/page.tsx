@@ -24,7 +24,7 @@ import { type MatchedProject } from "@/app/api/match-projects/route";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signOutUser } from "@/lib/auth";
-import { getHireRequestsByDeveloper, type HireRequest } from "@/lib/hireRequests";
+import { subscribeHireRequestsByDeveloper, type HireRequest } from "@/lib/hireRequests";
 import { getProject, claimProjectAsDeveloper } from "@/lib/firestore";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -329,6 +329,37 @@ export default function EmployeeDashboard() {
     [hireReqs],
   );
 
+  /** Live counts: profile + workspace snapshots stay in sync after dual-approved completion. */
+  const devDashboardMetrics = useMemo(() => {
+    const acceptedList = hireReqs.filter((r) => r.status === "accepted");
+    const requestsAccepted = acceptedList.length;
+    let activeProjects = 0;
+    let completedFromWorkspaces = 0;
+    for (const r of acceptedList) {
+      const pid = typeof r.projectId === "string" ? r.projectId.trim() : "";
+      if (!pid) {
+        activeProjects++;
+        continue;
+      }
+      const wc = workspaceCompletion[pid];
+      if (wc?.completed) completedFromWorkspaces++;
+      else activeProjects++;
+    }
+    const profileCompleted = developerProfile?.completedProjectsCount ?? 0;
+    const completedProjects = Math.max(profileCompleted, completedFromWorkspaces);
+    return {
+      completedProjects,
+      activeProjects,
+      closedProjects: closedHireCount,
+      requestsAccepted,
+    };
+  }, [
+    hireReqs,
+    workspaceCompletion,
+    developerProfile?.completedProjectsCount,
+    closedHireCount,
+  ]);
+
   const needsProfileAfterSkillPass = useMemo(() => {
     if (!developerProfile) return false;
     const passed = (developerProfile.passedSkillAssessments?.length ?? 0) > 0;
@@ -432,26 +463,12 @@ export default function EmployeeDashboard() {
     };
   }, [firebaseUid, router, setDeveloperProfile]);
 
-  // ── Load hire requests on mount + refetch on tab switch + poll every 30s ──
-  const fetchHireReqs = useRef<() => void>(() => {});
-  fetchHireReqs.current = () => {
-    if (!currentUser?.uid || currentUser.uid === "demo-guest") return;
-    getHireRequestsByDeveloper(currentUser.uid)
-      .then(setHireReqs)
-      .catch(() => {});
-  };
-
+  // ── Hire requests (real-time) ────────────────────────────────────────────
   useEffect(() => {
-    fetchHireReqs.current();
-    const id = setInterval(() => fetchHireReqs.current(), 30_000);
-    return () => clearInterval(id);
+    const uid = currentUser?.uid;
+    if (!uid || uid === "demo-guest") return;
+    return subscribeHireRequestsByDeveloper(uid, setHireReqs);
   }, [currentUser?.uid]);
-
-  useEffect(() => {
-    if (activeTab === "projects" || activeTab === "workspace") {
-      fetchHireReqs.current();
-    }
-  }, [activeTab]);
 
   // ── Fetch AI-matched project opportunities ────────────────────────────────
   useEffect(() => {
@@ -506,20 +523,11 @@ export default function EmployeeDashboard() {
       if (!ok) throw new Error(String(data?.error || "Failed to respond to invitation"));
 
       if (action === "accept") {
-        const updated = await getHireRequestsByDeveloper(currentUser.uid);
-        setHireReqs(updated);
-        const targetReq = updated.find(r => r.token === token);
-        const pid = String(data?.projectId || targetReq?.projectId || "");
-
-        if (pid) {
-          await openDeveloperWorkspace(pid);
-        } else {
-          router.push("/employee-dashboard?tab=workspace");
-        }
-      } else {
-        // Refetch to clear the rejected one
-        const updated = await getHireRequestsByDeveloper(currentUser.uid);
-        setHireReqs(updated);
+        const pid = String(
+          data?.projectId || hireReqs.find((r) => r.token === token)?.projectId || "",
+        ).trim();
+        if (pid) await openDeveloperWorkspace(pid);
+        else router.push("/employee-dashboard?tab=workspace");
       }
     } catch (err) {
       setRespondError(err instanceof Error ? err.message : "Something went wrong");
@@ -604,9 +612,22 @@ export default function EmployeeDashboard() {
           const tier = (developerProfile?.verificationStatus ?? "self-declared") as keyof typeof TIER_CONFIG;
           const cfg = TIER_CONFIG[tier];
           const completion = profileCompletion(developerProfile);
+          const tier3Glow = tier === "project-verified";
           return (
-            <div className={`mb-5 p-4 bg-white/5 border ${cfg.border} rounded-2xl text-center`}>
-              <div className={`flex items-center justify-center gap-1.5 mb-1 ${cfg.color}`}>
+            <div
+              className={`mb-5 p-4 rounded-2xl text-center relative overflow-hidden ${
+                tier3Glow
+                  ? "border border-amber-400/40 bg-gradient-to-br from-amber-950/40 via-white/[0.04] to-purple-950/35 shadow-[0_0_32px_-10px_rgba(251,191,36,0.35)]"
+                  : `bg-white/5 border ${cfg.border}`
+              }`}
+            >
+              {tier3Glow && (
+                <div
+                  className="absolute inset-0 bg-gradient-to-r from-amber-500/10 via-transparent to-purple-500/10 pointer-events-none"
+                  aria-hidden
+                />
+              )}
+              <div className={`relative flex items-center justify-center gap-1.5 mb-1 ${cfg.color}`}>
                 {cfg.icon}
                 <span className="text-xs font-black uppercase tracking-widest">{cfg.label}</span>
               </div>
@@ -615,7 +636,7 @@ export default function EmployeeDashboard() {
                   <div key={i} className={`h-1.5 w-8 rounded-full transition-all ${i < cfg.dots ? DOT_COLORS[i] : "bg-white/10"}`} />
                 ))}
               </div>
-              <div className="mt-3 space-y-1">
+              <div className="relative mt-3 space-y-1">
                 <div className="flex justify-between text-[9px] uppercase tracking-widest font-bold">
                   <span className="text-white/30">Profile</span>
                   <span className={completion >= 80 ? "text-emerald-400" : completion >= 50 ? "text-yellow-400" : "text-red-400"}>{completion}%</span>
@@ -624,23 +645,60 @@ export default function EmployeeDashboard() {
                   <div className={`h-full rounded-full transition-all duration-700 ${completion >= 80 ? "bg-emerald-500" : completion >= 50 ? "bg-yellow-500" : "bg-red-500"}`}
                     style={{ width: `${completion}%` }} />
                 </div>
+                {tier3Glow && typeof developerProfile?.completedProjectsCount === "number" && (
+                  <p className="text-[9px] text-amber-200/90 font-bold pt-2 border-t border-white/10 mt-2">
+                    Verified completions: {developerProfile.completedProjectsCount}
+                  </p>
+                )}
               </div>
             </div>
           );
         })()}
 
-        {/* Live stats — dashboard overview only (per-project work lives in each workspace) */}
+        {/* Live analytics — updates in real time via Firestore listeners */}
         <div className="grid grid-cols-2 gap-2 mb-5">
           {[
-            { label: "Pending invites", value: String(pendingInvitations.length), icon: <Star className="w-3 h-3" />, color: "text-yellow-400" },
-            { label: "Active projects", value: String(activeAssignments.length), icon: <Briefcase className="w-3 h-3" />, color: "text-blue-400" },
-            { label: "Closed", value: String(closedHireCount), icon: <Flag className="w-3 h-3" />, color: "text-white/40" },
-            { label: "Skill tests", value: String(openSkillTestCount), icon: <Activity className="w-3 h-3" />, color: "text-indigo-400" },
-          ].map(s => (
+            {
+              label: "Completed",
+              value: String(devDashboardMetrics.completedProjects),
+              icon: <CheckCircle2 className="w-3 h-3" />,
+              color: "text-emerald-400",
+            },
+            {
+              label: "Active",
+              value: String(devDashboardMetrics.activeProjects),
+              icon: <Briefcase className="w-3 h-3" />,
+              color: "text-blue-400",
+            },
+            {
+              label: "Closed",
+              value: String(devDashboardMetrics.closedProjects),
+              icon: <Flag className="w-3 h-3" />,
+              color: "text-white/45",
+            },
+            {
+              label: "Requests accepted",
+              value: String(devDashboardMetrics.requestsAccepted),
+              icon: <ShieldCheck className="w-3 h-3" />,
+              color: "text-amber-400",
+            },
+          ].map((s) => (
             <div key={s.label} className="p-3 bg-white/5 rounded-xl text-center border border-white/5">
               <div className={`flex items-center justify-center gap-1 mb-1 ${s.color}`}>{s.icon}</div>
               <div className={`font-bold text-sm ${s.color}`}>{s.value}</div>
-              <div className="text-[9px] text-[#888] uppercase tracking-widest">{s.label}</div>
+              <div className="text-[9px] text-[#888] uppercase tracking-widest leading-tight">{s.label}</div>
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-2 gap-2 mb-5">
+          {[
+            { label: "Pending invites", value: String(pendingInvitations.length), icon: <Star className="w-3 h-3" />, color: "text-yellow-400" },
+            { label: "Skill tests open", value: String(openSkillTestCount), icon: <Activity className="w-3 h-3" />, color: "text-indigo-400" },
+          ].map((s) => (
+            <div key={s.label} className="p-2.5 bg-white/[0.03] rounded-lg text-center border border-white/[0.06]">
+              <div className={`flex items-center justify-center gap-1 mb-0.5 ${s.color}`}>{s.icon}</div>
+              <div className={`font-bold text-xs ${s.color}`}>{s.value}</div>
+              <div className="text-[8px] text-[#666] uppercase tracking-widest">{s.label}</div>
             </div>
           ))}
         </div>

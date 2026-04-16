@@ -29,6 +29,8 @@ export interface DevCandidate {
   payMax: number;
   payCurrency: string;
   profileStatus: string;
+  /** Dual-approved completions (from developer profile). */
+  completedProjectsCount?: number;
 }
 
 export interface MatchedDeveloper extends DevCandidate {
@@ -58,6 +60,9 @@ function toDevCandidate(raw: unknown): DevCandidate | null {
     const n = Number(v);
     return Number.isFinite(n) ? n : 0;
   };
+  const completedN = toNum(
+    (o as { completedProjectsCount?: unknown }).completedProjectsCount,
+  );
   return {
     userId,
     fullName: toStr(o.fullName || (o as { name?: unknown }).name || (o as { displayName?: unknown }).displayName),
@@ -75,6 +80,7 @@ function toDevCandidate(raw: unknown): DevCandidate | null {
     payMax: toNum(o.payMax),
     payCurrency: toStr(o.payCurrency) || "USD",
     profileStatus: toStr(o.profileStatus) || "pending",
+    completedProjectsCount: completedN > 0 ? completedN : undefined,
   };
 }
 

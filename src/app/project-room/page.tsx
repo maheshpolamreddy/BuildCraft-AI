@@ -2089,10 +2089,11 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                         : dev.confidenceBand === "Strong" ? "text-blue-400 bg-blue-500/10 border-blue-500/30"
                         : dev.confidenceBand === "Good"   ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/30"
                         : "text-white/40 bg-white/5 border-white/10";
-                      const tierLabel  = dev.verificationStatus === "project-verified" ? "Tier 3 · Project-Verified"
+                      const isTier3    = dev.verificationStatus === "project-verified";
+                      const tierLabel  = isTier3 ? "Tier 3 · Project-Verified"
                         : dev.verificationStatus === "assessment-passed" ? "Tier 2 · Assessment-Passed"
                         : "Tier 1 · Self-Declared";
-                      const tierColor  = dev.verificationStatus === "project-verified" ? "text-emerald-400"
+                      const tierColor  = isTier3 ? "text-amber-200"
                         : dev.verificationStatus === "assessment-passed" ? "text-yellow-400"
                         : "text-white/40";
 
@@ -2104,10 +2105,27 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                           transition={{ delay: i * 0.05 }}
                           className="group relative"
                         >
-                          {/* Premium Glowing Border */}
-                          <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500/20 to-purple-500/20 rounded-3xl blur opacity-0 group-hover:opacity-100 transition duration-500" />
-                          
-                          <div className="relative glass-panel p-6 rounded-3xl border border-white/10 hover:border-white/20 transition-all duration-300 overflow-hidden">
+                          {isTier3 && (
+                            <>
+                              <div
+                                className="absolute -inset-[2px] rounded-3xl bg-gradient-to-r from-amber-400 via-purple-500 to-fuchsia-500 opacity-75 blur-[2px] pointer-events-none"
+                                aria-hidden
+                              />
+                              <div
+                                className="absolute -inset-px rounded-3xl bg-gradient-to-br from-amber-500/40 via-purple-600/25 to-fuchsia-600/35 pointer-events-none"
+                                aria-hidden
+                              />
+                            </>
+                          )}
+                          <div className="absolute -inset-0.5 bg-gradient-to-r from-indigo-500/20 to-purple-500/20 rounded-3xl blur opacity-0 group-hover:opacity-100 transition duration-500 pointer-events-none" />
+
+                          <div
+                            className={`relative glass-panel p-6 rounded-3xl transition-all duration-300 overflow-hidden ${
+                              isTier3
+                                ? "border border-amber-400/45 shadow-[0_0_48px_-12px_rgba(251,191,36,0.45)] bg-gradient-to-br from-amber-950/25 via-[#0a0a0a] to-purple-950/30 hover:border-amber-300/55"
+                                : "border border-white/10 hover:border-white/20"
+                            }`}
+                          >
                             {/* Subtle background glow */}
                             <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none" />
 
@@ -2138,7 +2156,13 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-start justify-between gap-4">
                                   <div className="space-y-1">
-                                    <h3 className={`text-xl font-black tracking-tight leading-tight ${dev.verificationStatus === "project-verified" ? "silver-gradient" : "text-white"}`}>
+                                    <h3
+                                      className={`text-xl font-black tracking-tight leading-tight ${
+                                        isTier3
+                                          ? "bg-gradient-to-r from-amber-100 via-white to-purple-200 bg-clip-text text-transparent"
+                                          : "text-white"
+                                      }`}
+                                    >
                                       {dev.fullName || "Anonymous"}
                                     </h3>
                                     <div className="flex flex-wrap items-center gap-x-2 text-[10px] font-medium text-white/40">
@@ -2148,9 +2172,30 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                                       <span className="w-1 h-1 rounded-full bg-white/10" />
                                       <span className="text-emerald-400/80 uppercase">{dev.availability}</span>
                                     </div>
-                                    <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[9px] font-black uppercase tracking-widest mt-2 ${tierColor} ${dev.verificationStatus !== "self-declared" ? "bg-emerald-500/5 shadow-[0_0_15px_rgba(52,211,153,0.1)]" : "bg-white/5 opacity-50"}`}>
-                                      <ShieldCheck className="w-3 h-3" /> {tierLabel}
+                                    <div className="flex flex-wrap items-center gap-2 mt-2">
+                                      <div
+                                        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[9px] font-black uppercase tracking-widest ${tierColor} ${
+                                          isTier3
+                                            ? "border-amber-400/50 bg-amber-500/10 shadow-[0_0_20px_rgba(251,191,36,0.25)]"
+                                            : dev.verificationStatus !== "self-declared"
+                                              ? "bg-emerald-500/5 border-emerald-500/30 shadow-[0_0_15px_rgba(52,211,153,0.1)]"
+                                              : "bg-white/5 border-white/10 opacity-50"
+                                        }`}
+                                      >
+                                        <ShieldCheck className="w-3 h-3" /> {tierLabel}
+                                      </div>
+                                      {isTier3 && (
+                                        <span className="px-2 py-0.5 rounded-md text-[8px] font-black uppercase tracking-widest bg-gradient-to-r from-amber-500/30 to-purple-500/30 text-amber-50 border border-amber-300/35">
+                                          Verified Developer
+                                        </span>
+                                      )}
                                     </div>
+                                    {isTier3 && typeof dev.completedProjectsCount === "number" && (
+                                      <p className="text-[10px] text-amber-200/80 font-bold mt-2 tracking-wide">
+                                        Completed projects (verified):{" "}
+                                        <span className="text-white tabular-nums">{dev.completedProjectsCount}</span>
+                                      </p>
+                                    )}
                                   </div>
                                   
                                   {/* Trust Band */}

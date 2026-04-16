@@ -14,7 +14,7 @@
 import { db } from "./firebase";
 import {
   doc, setDoc, getDoc, updateDoc,
-  collection, query, where, getDocs,
+  collection, query, where, getDocs, onSnapshot,
   serverTimestamp, Timestamp,
 } from "firebase/firestore";
 
@@ -99,6 +99,24 @@ export async function getHireRequestsByDeveloper(developerUid: string): Promise<
   const q    = query(collection(db, "hireRequests"), where("developerUid", "==", developerUid));
   const snap = await getDocs(q);
   return snap.docs.map(d => d.data() as HireRequest);
+}
+
+/** Live updates for developer dashboard (invites, accepted, closed). */
+export function subscribeHireRequestsByDeveloper(
+  developerUid: string,
+  onUpdate: (rows: HireRequest[]) => void,
+  onError?: (msg: string) => void,
+): () => void {
+  if (!developerUid || developerUid === "demo-guest") return () => {};
+  const q = query(collection(db, "hireRequests"), where("developerUid", "==", developerUid));
+  return onSnapshot(
+    q,
+    (snap) => onUpdate(snap.docs.map((d) => d.data() as HireRequest)),
+    (err) => {
+      if (onError) onError(err.message);
+      else console.warn("[hireRequests] subscribe developer:", err);
+    },
+  );
 }
 
 export async function getAcceptedRequestForProject(creatorUid: string, projectName: string): Promise<HireRequest | null> {
