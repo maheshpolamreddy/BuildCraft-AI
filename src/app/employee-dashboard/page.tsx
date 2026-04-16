@@ -26,13 +26,70 @@ import { useRouter } from "next/navigation";
 import { signOutUser } from "@/lib/auth";
 import { subscribeHireRequestsByDeveloper, type HireRequest } from "@/lib/hireRequests";
 import { getProject, claimProjectAsDeveloper } from "@/lib/firestore";
-import { doc, onSnapshot } from "firebase/firestore";
+import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 import { formatDateTimeSmart } from "@/lib/dateDisplay";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Tab = "projects" | "workspace" | "assessments" | "profile";
+
+/** Live row from `projects/{id}` for dashboard + workspace cards (single source of truth). */
+type WorkspaceCompletionRow = {
+  completed: boolean;
+  completedAt?: number;
+  deployUrl?: string;
+  displayName: string;
+};
+
+function parseProjectDocToWorkspaceMeta(data: Record<string, unknown>): WorkspaceCompletionRow {
+  const proj = data.project as Record<string, unknown> | undefined;
+  const nestedDone = proj?.lifecycleStatus === "completed";
+  const rootDone = data.completionStatus === "completed";
+  const completed = Boolean(nestedDone || rootDone);
+  let completedAt: number | undefined;
+  const ca = proj?.completedAt;
+  if (typeof ca === "number") completedAt = ca;
+  else if (ca && typeof (ca as { toMillis?: () => number }).toMillis === "function") {
+    completedAt = (ca as { toMillis: () => number }).toMillis();
+  }
+  if (completedAt == null && typeof data.completionRecordedAtMs === "number") {
+    completedAt = data.completionRecordedAtMs;
+  }
+  let deployUrl: string | undefined;
+  if (typeof proj?.completionDeploymentUrl === "string") deployUrl = proj.completionDeploymentUrl;
+  else if (typeof data.completionDeploymentUrlRoot === "string") deployUrl = data.completionDeploymentUrlRoot;
+  const displayName = typeof proj?.name === "string" ? proj.name : "";
+  return { completed, completedAt, deployUrl, displayName };
+}
+
+function normalizeHireProjectName(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * Match hire row to saved project doc: prefer hire.projectId, else same normalized display name
+ * (covers legacy invites created before projectId was persisted).
+ */
+function resolveAssignmentProjectState(
+  a: HireRequest,
+  map: Record<string, WorkspaceCompletionRow>,
+): { meta?: WorkspaceCompletionRow; effectiveProjectId?: string } {
+  const pid = a.projectId?.trim();
+  if (pid) {
+    const m = map[pid];
+    if (m) return { meta: m, effectiveProjectId: pid };
+    return { effectiveProjectId: pid };
+  }
+  const target = normalizeHireProjectName(a.projectName ?? "");
+  if (!target) return {};
+  for (const [id, meta] of Object.entries(map)) {
+    if (meta.displayName && normalizeHireProjectName(meta.displayName) === target) {
+      return { meta, effectiveProjectId: id };
+    }
+  }
+  return {};
+}
 
 // ── Role label map ────────────────────────────────────────────────────────────
 const ROLE_LABEL: Record<string, string> = {
@@ -243,10 +300,8 @@ export default function EmployeeDashboard() {
   const [invitedProjects, setInvitedProjects]   = useState<Set<string>>(new Set());
   const [respondLoading,   setRespondLoading]    = useState<string | null>(null);
   const [respondError,     setRespondError]      = useState<string | null>(null);
-  /** projectId → completion info from saved project doc */
-  const [workspaceCompletion, setWorkspaceCompletion] = useState<
-    Record<string, { completed: boolean; completedAt?: number; deployUrl?: string }>
-  >({});
+  /** projectId → completion info from saved project doc (merged: developerUid query + per-id listeners). */
+  const [workspaceCompletion, setWorkspaceCompletion] = useState<Record<string, WorkspaceCompletionRow>>({});
 
   const userName = developerProfile?.fullName || currentUser?.displayName || "Developer";
   const userSkills = developerProfile?.skills ?? [];
@@ -293,36 +348,56 @@ export default function EmployeeDashboard() {
     [activeAssignments],
   );
 
+  /** All projects assigned to this developer (top-level developerUid) — fixes missing hire.projectId. */
+  useEffect(() => {
+    const uid = currentUser?.uid;
+    if (!uid || uid === "demo-guest") return;
+    const q = query(collection(db, "projects"), where("developerUid", "==", uid));
+    return onSnapshot(q, (snap) => {
+      setWorkspaceCompletion((prev) => {
+        const next = { ...prev };
+        snap.docs.forEach((d) => {
+          next[d.id] = parseProjectDocToWorkspaceMeta(d.data() as Record<string, unknown>);
+        });
+        return next;
+      });
+    });
+  }, [currentUser?.uid]);
+
+  /** Per hire.projectId listener — covers docs where developerUid on root is missing/stale. */
   useEffect(() => {
     const ids = activeAssignments.map((a) => a.projectId).filter((id): id is string => Boolean(id?.trim()));
-    if (!ids.length) {
-      setWorkspaceCompletion({});
-      return;
-    }
+    if (!ids.length) return;
     const unsubs = ids.map((id) =>
       onSnapshot(doc(db, "projects", id), (snap) => {
         if (!snap.exists()) return;
-        const data = snap.data() as Record<string, unknown>;
-        const proj = data.project as Record<string, unknown> | undefined;
-        const nestedDone = proj?.lifecycleStatus === "completed";
-        const rootDone = data.completionStatus === "completed";
-        const completed = Boolean(nestedDone || rootDone);
+        const row = parseProjectDocToWorkspaceMeta(snap.data() as Record<string, unknown>);
         setWorkspaceCompletion((prev) => ({
           ...prev,
-          [id]: {
-            completed,
-            completedAt:
-              (typeof proj?.completedAt === "number" ? proj.completedAt : undefined) ??
-              (typeof data.completionRecordedAtMs === "number" ? data.completionRecordedAtMs : undefined),
-            deployUrl:
-              (typeof proj?.completionDeploymentUrl === "string" ? proj.completionDeploymentUrl : undefined) ??
-              (typeof data.completionDeploymentUrlRoot === "string" ? data.completionDeploymentUrlRoot : undefined),
-          },
+          [id]: row,
         }));
       }),
     );
     return () => unsubs.forEach((u) => u());
   }, [activeAssignmentProjectIdsKey]);
+
+  const openClientProjects = useMemo(
+    () =>
+      activeAssignments.filter((r) => {
+        const { meta } = resolveAssignmentProjectState(r, workspaceCompletion);
+        return !meta?.completed;
+      }),
+    [activeAssignments, workspaceCompletion],
+  );
+
+  const completedClientProjects = useMemo(
+    () =>
+      activeAssignments.filter((r) => {
+        const { meta } = resolveAssignmentProjectState(r, workspaceCompletion);
+        return meta?.completed === true;
+      }),
+    [activeAssignments, workspaceCompletion],
+  );
 
   const closedHireCount = useMemo(
     () => hireReqs.filter(r => r.status === "rejected" || r.status === "expired").length,
@@ -336,13 +411,8 @@ export default function EmployeeDashboard() {
     let activeProjects = 0;
     let completedFromWorkspaces = 0;
     for (const r of acceptedList) {
-      const pid = typeof r.projectId === "string" ? r.projectId.trim() : "";
-      if (!pid) {
-        activeProjects++;
-        continue;
-      }
-      const wc = workspaceCompletion[pid];
-      if (wc?.completed) completedFromWorkspaces++;
+      const { meta } = resolveAssignmentProjectState(r, workspaceCompletion);
+      if (meta?.completed) completedFromWorkspaces++;
       else activeProjects++;
     }
     const profileCompleted = developerProfile?.completedProjectsCount ?? 0;
@@ -553,6 +623,86 @@ export default function EmployeeDashboard() {
     router.push(`/developer/workspace/${encodeURIComponent(pid)}`);
   }
 
+  function renderOpportunitiesProjectCard(assignment: HireRequest) {
+    const { meta: wc, effectiveProjectId } = resolveAssignmentProjectState(assignment, workspaceCompletion);
+    const isDone = wc?.completed === true;
+    const pidForOpen = (effectiveProjectId ?? assignment.projectId)?.trim() ?? "";
+    const enterWorkspace = () => openDeveloperWorkspace(pidForOpen || undefined);
+    return (
+      <div
+        key={assignment.token}
+        className={`glass-panel p-6 rounded-2xl border transition-all ${
+          isDone
+            ? "border-emerald-500/35 bg-emerald-500/[0.07] hover:border-emerald-500/50"
+            : "border-blue-500/20 bg-blue-500/5 hover:border-blue-500/40"
+        }`}
+      >
+        <div className="flex justify-between items-start mb-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+              {isDone ? (
+                <>
+                  <span className="text-[9px] text-emerald-400 font-black uppercase tracking-widest px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10">
+                    ✓ Completed
+                  </span>
+                  <span className="text-[9px] text-amber-400 font-black uppercase tracking-widest px-2 py-0.5 rounded-full border border-amber-500/25 bg-amber-500/10">
+                    Tier 3 · Project Verified
+                  </span>
+                </>
+              ) : (
+                <>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-widest">In progress</span>
+                </>
+              )}
+            </div>
+            <h3 className="text-white font-black">{assignment.projectName}</h3>
+            <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest mt-1">Client: {assignment.creatorName}</p>
+            {isDone && wc?.completedAt != null && (
+              <p className="text-[10px] text-white/35 mt-1">
+                Completed {new Date(wc.completedAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
+              </p>
+            )}
+            {isDone && wc?.deployUrl ? (
+              <a
+                href={wc.deployUrl.startsWith("http") ? wc.deployUrl : `https://${wc.deployUrl}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-[10px] text-emerald-400/90 hover:text-emerald-300 mt-2 font-bold"
+              >
+                <ExternalLink className="w-3 h-3" /> Deployment
+              </a>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={enterWorkspace}
+            disabled={!pidForOpen}
+            className={`p-2.5 rounded-xl transition-all ${
+              isDone
+                ? "bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 hover:bg-emerald-500/25"
+                : "bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20"
+            } disabled:opacity-40 disabled:cursor-not-allowed`}
+          >
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={enterWorkspace}
+          disabled={!pidForOpen}
+          className={`w-full py-2.5 flex items-center justify-center gap-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+            isDone
+              ? "bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25"
+              : "bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10"
+          }`}
+        >
+          <Play className="w-3.5 h-3.5" /> {isDone ? "View workspace (read-only)" : "Open workspace"}
+        </button>
+      </div>
+    );
+  }
+
   async function handleLogout() {
     try {
       await signOutUser();
@@ -706,7 +856,7 @@ export default function EmployeeDashboard() {
         <nav className="flex-grow space-y-2">
           {([
             { id: "projects",    label: "Opportunities",  icon: <Briefcase className="w-5 h-5" />, badge: pendingInvitations.length > 0 ? String(pendingInvitations.length) : null },
-            { id: "workspace",   label: "Workspaces",     icon: <Code2 className="w-5 h-5" />, badge: activeAssignments.length > 0 ? String(activeAssignments.length) : null },
+            { id: "workspace",   label: "Workspaces",     icon: <Code2 className="w-5 h-5" />, badge: devDashboardMetrics.activeProjects > 0 ? String(devDashboardMetrics.activeProjects) : null },
             { id: "assessments", label: "Skill Tests",    icon: <Activity className="w-5 h-5" />, badge: openSkillTestCount > 0 ? String(openSkillTestCount) : null },
             { id: "profile",     label: "My Profile",     icon: <User className="w-5 h-5" /> },
           ] as const).map(tab => (
@@ -737,7 +887,10 @@ export default function EmployeeDashboard() {
               {developerProfile?.profileStatus === "active" ? "Available for Projects" : "Status: Inactive"}
             </div>
             <p className="text-[10px] text-[#888] font-light">
-              {activeAssignments.length} active project{activeAssignments.length === 1 ? "" : "s"}
+              {devDashboardMetrics.activeProjects} in-progress workspace{devDashboardMetrics.activeProjects === 1 ? "" : "s"}
+              {devDashboardMetrics.completedProjects > 0
+                ? ` · ${devDashboardMetrics.completedProjects} completed`
+                : ""}
               {pendingInvitations.length > 0 ? ` · ${pendingInvitations.length} invite${pendingInvitations.length === 1 ? "" : "s"} pending` : ""}
             </p>
           </div>
@@ -846,93 +999,29 @@ export default function EmployeeDashboard() {
                   </div>
                 )}
 
-                {/* ── ACTIVE ASSIGNMENTS ── */}
-                {activeAssignments.length > 0 && (
-                  <div className="space-y-4">
-                    <h2 className="text-white font-black tracking-tight flex items-center gap-2">
-                      <Briefcase className="w-5 h-5 text-blue-400" /> My Active Projects
-                    </h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {activeAssignments?.map((assignment) => {
-                        const enterWorkspace = () => openDeveloperWorkspace(assignment.projectId);
-                        const pid = assignment.projectId?.trim() ?? "";
-                        const wc = pid ? workspaceCompletion[pid] : undefined;
-                        const isDone = wc?.completed === true;
-                        return (
-                        <div
-                          key={assignment?.token}
-                          className={`glass-panel p-6 rounded-2xl border transition-all ${
-                            isDone
-                              ? "border-emerald-500/35 bg-emerald-500/[0.07] hover:border-emerald-500/50"
-                              : "border-blue-500/20 bg-blue-500/5 hover:border-blue-500/40"
-                          }`}
-                        >
-                          <div className="flex justify-between items-start mb-4">
-                            <div>
-                              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                                {isDone ? (
-                                  <>
-                                    <span className="text-[9px] text-emerald-400 font-black uppercase tracking-widest px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10">
-                                      ✓ Completed project
-                                    </span>
-                                    <span className="text-[9px] text-amber-400 font-black uppercase tracking-widest px-2 py-0.5 rounded-full border border-amber-500/25 bg-amber-500/10">
-                                      Tier 3 · Verified
-                                    </span>
-                                    <span className="text-[9px] text-indigo-300 font-bold uppercase tracking-widest">Verified project</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                                    <span className="text-[9px] text-emerald-500 font-bold uppercase tracking-widest">Active Workspace</span>
-                                  </>
-                                )}
-                              </div>
-                              <h3 className="text-white font-black">{assignment.projectName}</h3>
-                              <p className="text-white/40 text-[10px] font-bold uppercase tracking-widest mt-1">Client: {assignment.creatorName}</p>
-                              {isDone && wc?.completedAt != null && (
-                                <p className="text-[10px] text-white/35 mt-1">
-                                  Completed {new Date(wc.completedAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
-                                </p>
-                              )}
-                              {isDone && wc?.deployUrl ? (
-                                <a
-                                  href={wc.deployUrl.startsWith("http") ? wc.deployUrl : `https://${wc.deployUrl}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-[10px] text-emerald-400/90 hover:text-emerald-300 mt-2 font-bold"
-                                >
-                                  <ExternalLink className="w-3 h-3" /> Deployment
-                                </a>
-                              ) : null}
-                            </div>
-                            <button
-                              type="button"
-                              onClick={enterWorkspace}
-                              className={`p-2.5 rounded-xl transition-all ${
-                                isDone
-                                  ? "bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 hover:bg-emerald-500/25"
-                                  : "bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20"
-                              }`}
-                            >
-                              <ArrowRight className="w-4 h-4" />
-                            </button>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={enterWorkspace}
-                            disabled={!assignment.projectId}
-                            className={`w-full py-2.5 flex items-center justify-center gap-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
-                              isDone
-                                ? "bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25"
-                                : "bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10"
-                            }`}
-                          >
-                            <Play className="w-3.5 h-3.5" /> {isDone ? "View workspace (read-only)" : "Open workspace"}
-                          </button>
+                {/* ── CLIENT PROJECTS (live status from Firestore project docs) ── */}
+                {(completedClientProjects.length > 0 || openClientProjects.length > 0) && (
+                  <div className="space-y-8">
+                    {completedClientProjects.length > 0 && (
+                      <div className="space-y-4">
+                        <h2 className="text-white font-black tracking-tight flex items-center gap-2">
+                          <CheckCircle2 className="w-5 h-5 text-emerald-400" /> Completed projects
+                        </h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {completedClientProjects.map((assignment) => renderOpportunitiesProjectCard(assignment))}
                         </div>
-                        );
-                      })}
-                    </div>
+                      </div>
+                    )}
+                    {openClientProjects.length > 0 && (
+                      <div className="space-y-4">
+                        <h2 className="text-white font-black tracking-tight flex items-center gap-2">
+                          <Briefcase className="w-5 h-5 text-blue-400" /> In progress
+                        </h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {openClientProjects.map((assignment) => renderOpportunitiesProjectCard(assignment))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1124,81 +1213,124 @@ export default function EmployeeDashboard() {
                     </button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {activeAssignments.map((a) => {
-                      const lastMs = a.respondedAt?.toMillis?.() ?? null;
-                      const last = lastMs != null ? new Date(lastMs) : null;
-                      const lastLabel = last
-                        ? `Last update ${formatDateTimeSmart(last)}`
-                        : "Activity timestamp not recorded";
-                      const hasId = Boolean(a.projectId?.trim());
-                      const pid = a.projectId?.trim() ?? "";
-                      const wc = pid ? workspaceCompletion[pid] : undefined;
-                      const isDone = wc?.completed === true;
-                      return (
-                        <div
-                          key={a.token}
-                          className={`glass-panel p-6 rounded-2xl border flex flex-col gap-4 ${
-                            isDone
-                              ? "border-emerald-500/35 bg-emerald-500/[0.06]"
-                              : "border-blue-500/20 bg-blue-500/[0.03]"
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              {isDone ? (
-                                <div className="flex flex-wrap gap-2">
-                                  <span className="text-[9px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full">
-                                    ✓ Completed
-                                  </span>
-                                  <span className="text-[9px] font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/25 px-2 py-0.5 rounded-full">
-                                    Tier 3 Verified
-                                  </span>
+                  <div className="space-y-8">
+                    {completedClientProjects.length > 0 && (
+                      <div className="space-y-3">
+                        <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-emerald-400/90">Completed</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {completedClientProjects.map((a) => {
+                            const { meta: wc, effectiveProjectId } = resolveAssignmentProjectState(a, workspaceCompletion);
+                            const isDone = wc?.completed === true;
+                            const lastMs = a.respondedAt?.toMillis?.() ?? null;
+                            const last = lastMs != null ? new Date(lastMs) : null;
+                            const lastLabel = last
+                              ? `Last update ${formatDateTimeSmart(last)}`
+                              : "Activity timestamp not recorded";
+                            const pidOpen = (effectiveProjectId ?? a.projectId)?.trim() ?? "";
+                            const hasId = Boolean(pidOpen);
+                            return (
+                              <div
+                                key={a.token}
+                                className="glass-panel p-6 rounded-2xl border border-emerald-500/35 bg-emerald-500/[0.06] flex flex-col gap-4"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap gap-2">
+                                      <span className="text-[9px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                                        ✓ Completed
+                                      </span>
+                                      <span className="text-[9px] font-black uppercase tracking-widest text-amber-400 bg-amber-500/10 border border-amber-500/25 px-2 py-0.5 rounded-full">
+                                        Tier 3 · Project Verified
+                                      </span>
+                                    </div>
+                                    <h3 className="text-white font-black text-lg mt-2 truncate">{a.projectName}</h3>
+                                    <p className="text-[10px] text-white/35 font-bold uppercase tracking-widest mt-1">
+                                      Client · {a.creatorName}
+                                    </p>
+                                    {isDone && wc?.deployUrl ? (
+                                      <a
+                                        href={wc.deployUrl.startsWith("http") ? wc.deployUrl : `https://${wc.deployUrl}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 text-[10px] text-emerald-400 mt-2 font-bold"
+                                      >
+                                        <ExternalLink className="w-3 h-3" /> Deployment
+                                      </a>
+                                    ) : null}
+                                  </div>
                                 </div>
-                              ) : (
-                                <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 px-2 py-0.5 rounded-full">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" aria-hidden />
-                                  In progress
-                                </span>
-                              )}
-                              <h3 className="text-white font-black text-lg mt-2 truncate">{a.projectName}</h3>
-                              <p className="text-[10px] text-white/35 font-bold uppercase tracking-widest mt-1">
-                                Client · {a.creatorName}
-                              </p>
-                              {isDone && wc?.deployUrl ? (
-                                <a
-                                  href={wc.deployUrl.startsWith("http") ? wc.deployUrl : `https://${wc.deployUrl}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 text-[10px] text-emerald-400 mt-2 font-bold"
+                                <p className="text-[10px] text-white/30 font-light">{lastLabel}</p>
+                                {!hasId && (
+                                  <p className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                                    Project ID is still linking. Refresh shortly or contact support if this does not resolve.
+                                  </p>
+                                )}
+                                <button
+                                  type="button"
+                                  disabled={!hasId}
+                                  onClick={() => openDeveloperWorkspace(pidOpen)}
+                                  className="w-full py-3 font-black uppercase tracking-widest text-[10px] rounded-xl flex items-center justify-center gap-2 transition-all hover:scale-[1.01] border border-emerald-500/35 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
                                 >
-                                  <ExternalLink className="w-3 h-3" /> Deployment
-                                </a>
-                              ) : null}
-                            </div>
-                          </div>
-                          <p className="text-[10px] text-white/30 font-light">{lastLabel}</p>
-                          {!hasId && (
-                            <p className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
-                              Project ID is still linking. Refresh shortly or contact support if this does not resolve.
-                            </p>
-                          )}
-                          <button
-                            type="button"
-                            disabled={!hasId}
-                            onClick={() => openDeveloperWorkspace(a.projectId)}
-                            className={`w-full py-3 font-black uppercase tracking-widest text-[10px] rounded-xl flex items-center justify-center gap-2 transition-all hover:scale-[1.01] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 ${
-                              isDone
-                                ? "border border-emerald-500/35 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
-                                : "silver-gradient text-black"
-                            }`}
-                          >
-                            <Play className="w-3.5 h-3.5 shrink-0" aria-hidden />
-                            {isDone ? "View workspace" : "Open workspace"}
-                          </button>
+                                  <Play className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                                  View workspace (read-only)
+                                </button>
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
+                      </div>
+                    )}
+                    {openClientProjects.length > 0 && (
+                      <div className="space-y-3">
+                        <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-blue-400/90">In progress</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {openClientProjects.map((a) => {
+                            const { effectiveProjectId } = resolveAssignmentProjectState(a, workspaceCompletion);
+                            const lastMs = a.respondedAt?.toMillis?.() ?? null;
+                            const last = lastMs != null ? new Date(lastMs) : null;
+                            const lastLabel = last
+                              ? `Last update ${formatDateTimeSmart(last)}`
+                              : "Activity timestamp not recorded";
+                            const pidOpen = (effectiveProjectId ?? a.projectId)?.trim() ?? "";
+                            const hasId = Boolean(pidOpen);
+                            return (
+                              <div
+                                key={a.token}
+                                className="glass-panel p-6 rounded-2xl border border-blue-500/20 bg-blue-500/[0.03] flex flex-col gap-4"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-blue-300 bg-blue-500/10 border border-blue-500/25 px-2 py-0.5 rounded-full">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" aria-hidden />
+                                      In progress
+                                    </span>
+                                    <h3 className="text-white font-black text-lg mt-2 truncate">{a.projectName}</h3>
+                                    <p className="text-[10px] text-white/35 font-bold uppercase tracking-widest mt-1">
+                                      Client · {a.creatorName}
+                                    </p>
+                                  </div>
+                                </div>
+                                <p className="text-[10px] text-white/30 font-light">{lastLabel}</p>
+                                {!hasId && (
+                                  <p className="text-xs text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                                    Project ID is still linking. Refresh shortly or contact support if this does not resolve.
+                                  </p>
+                                )}
+                                <button
+                                  type="button"
+                                  disabled={!hasId}
+                                  onClick={() => openDeveloperWorkspace(pidOpen)}
+                                  className="w-full py-3 font-black uppercase tracking-widest text-[10px] rounded-xl flex items-center justify-center gap-2 transition-all hover:scale-[1.01] silver-gradient text-black disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100"
+                                >
+                                  <Play className="w-3.5 h-3.5 shrink-0" aria-hidden />
+                                  Open workspace
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1392,10 +1524,10 @@ export default function EmployeeDashboard() {
                   <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50 mb-4">Client projects</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {[
-                      { label: "Active", value: String(activeAssignments.length), color: "text-blue-400" },
+                      { label: "Active", value: String(devDashboardMetrics.activeProjects), color: "text-blue-400" },
+                      { label: "Completed", value: String(devDashboardMetrics.completedProjects), color: "text-emerald-400" },
                       { label: "Pending invites", value: String(pendingInvitations.length), color: "text-yellow-400" },
                       { label: "Closed", value: String(closedHireCount), color: "text-white/40" },
-                      { label: "Profile", value: `${completionPct}%`, color: "text-emerald-400" },
                     ].map(s => (
                       <div key={s.label} className="p-4 bg-white/5 rounded-xl text-center border border-white/5">
                         <div className={`text-2xl font-black ${s.color}`}>{s.value}</div>

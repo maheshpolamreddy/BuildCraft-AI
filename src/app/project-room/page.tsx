@@ -416,8 +416,16 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       const nextLife =
         (typeof nested?.lifecycleStatus === "string" ? nested.lifecycleStatus : undefined) ||
         (rootComplete ? "completed" : pState.lifecycleStatus);
+      const nestedCompletedAt = nested?.completedAt;
+      const nestedAtMs =
+        typeof nestedCompletedAt === "number"
+          ? nestedCompletedAt
+          : nestedCompletedAt &&
+              typeof (nestedCompletedAt as { toMillis?: () => number }).toMillis === "function"
+            ? (nestedCompletedAt as { toMillis: () => number }).toMillis()
+            : undefined;
       const nextAt =
-        (typeof nested?.completedAt === "number" ? nested.completedAt : undefined) ??
+        nestedAtMs ??
         (typeof data.completionRecordedAtMs === "number" ? data.completionRecordedAtMs : undefined) ??
         pState.completedAt;
       const nextDep =

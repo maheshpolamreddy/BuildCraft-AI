@@ -3,12 +3,49 @@ import { getHireRequest, respondToHireRequest } from "@/lib/hireRequests";
 import { sendHireAccepted, transactionalEmailConfigured } from "@/lib/email";
 import { createOrGetChat } from "@/lib/chat";
 import { adminDb } from "@/lib/firebase-admin";
+import type { Firestore } from "firebase-admin/firestore";
 
 /** Prefer deployment host so server-side fetch() works on Vercel (localhost would fail). */
 function appBaseUrl(): string {
   const v = process.env.VERCEL_URL?.trim();
   if (v) return v.startsWith("http") ? v : `https://${v}`;
   return process.env.NEXT_PUBLIC_APP_URL?.trim() || "http://localhost:3000";
+}
+
+function normalizeProjectNameKey(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/**
+ * When hire was created without savedProjectId, resolve the Firestore `projects` doc id by creator + name
+ * so acceptance still links developerUid, execution, and dashboard listeners.
+ */
+async function resolveProjectDocIdForHire(
+  adb: Firestore,
+  creatorUid: string,
+  projectName: string,
+): Promise<string | null> {
+  const key = normalizeProjectNameKey(projectName);
+  if (!creatorUid || !key) return null;
+  try {
+    const snap = await adb.collection("projects").where("uid", "==", creatorUid).limit(50).get();
+    let best: { id: string; updatedSec: number } | null = null;
+    for (const docSnap of snap.docs) {
+      const data = docSnap.data() as {
+        project?: { name?: string };
+        updatedAt?: { seconds?: number };
+      };
+      const nm =
+        typeof data.project?.name === "string" ? normalizeProjectNameKey(data.project.name) : "";
+      if (nm !== key) continue;
+      const sec = typeof data.updatedAt?.seconds === "number" ? data.updatedAt.seconds : 0;
+      if (!best || sec >= best.updatedSec) best = { id: docSnap.id, updatedSec: sec };
+    }
+    return best?.id ?? null;
+  } catch (e) {
+    console.warn("[hire-respond] resolveProjectDocIdForHire:", e);
+    return null;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -47,6 +84,23 @@ export async function POST(req: NextRequest) {
 
     await respondToHireRequest(token, "accepted");
 
+    let effectiveProjectId = request.projectId?.trim() || null;
+    if (!effectiveProjectId) {
+      const resolved = await resolveProjectDocIdForHire(
+        adminDb,
+        request.creatorUid,
+        request.projectName,
+      );
+      if (resolved) {
+        effectiveProjectId = resolved;
+        try {
+          await adminDb.collection("hireRequests").doc(token).update({ projectId: resolved });
+        } catch (e) {
+          console.warn("[hire-respond] backfill projectId on hireRequests:", e);
+        }
+      }
+    }
+
     // 1. Send confirmation email to project creator
     const emailResult = await sendHireAccepted({
       creatorEmail:  request.creatorEmail,
@@ -72,10 +126,10 @@ export async function POST(req: NextRequest) {
     });
 
     // 3. Authorize developer on project and workspace via Admin SDK
-    if (request.projectId) {
+    if (effectiveProjectId) {
       try {
-        const projRef = adminDb.collection("projects").doc(request.projectId);
-        const workRef = adminDb.collection("projectWorkspaces").doc(request.projectId);
+        const projRef = adminDb.collection("projects").doc(effectiveProjectId);
+        const workRef = adminDb.collection("projectWorkspaces").doc(effectiveProjectId);
         // We use update and ignore failures (e.g. if the workspace doesn't exist yet)
         await Promise.allSettled([
           projRef.update({ developerUid: request.developerUid }),
@@ -87,12 +141,12 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Initialize project execution tracking (fire and forget)
-    if (request.projectId) {
+    if (effectiveProjectId) {
       try {
         const { initProjectExecution } = await import("@/lib/project-execution");
         await initProjectExecution({
-          projectId: request.projectId,
-          savedProjectId: request.projectId,
+          projectId: effectiveProjectId,
+          savedProjectId: effectiveProjectId,
           projectName: request.projectName,
           creatorUid: request.creatorUid,
           developerUid: request.developerUid,
@@ -118,7 +172,12 @@ export async function POST(req: NextRequest) {
       }),
     }).catch(err => console.error("[hire-respond] PRD generation failed:", err));
 
-    return NextResponse.json({ success: true, status: "accepted", chatId: token, projectId: request.projectId ?? null });
+    return NextResponse.json({
+      success: true,
+      status: "accepted",
+      chatId: token,
+      projectId: effectiveProjectId ?? null,
+    });
   } catch (err) {
     console.error("[hire-respond]", err);
     const code =
