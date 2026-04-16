@@ -138,7 +138,14 @@ const TIER_CONFIG = {
   "self-declared":     { tierNumber: 1, label: "Tier 1",    subtitle: "Self-declared",    color: "text-white/50",    border: "border-white/10",           icon: <Edit3 className="w-3.5 h-3.5" />, dots: 1 },
   "assessment-passed": { tierNumber: 2, label: "Tier 2",    subtitle: "Assessment-passed", color: "text-yellow-400",  border: "border-yellow-500/30",      icon: <Award className="w-3.5 h-3.5" />, dots: 2 },
   "project-verified":  { tierNumber: 3, label: "Tier 3",    subtitle: "Project-verified",  color: "text-emerald-400", border: "border-emerald-500/30",     icon: <ShieldCheck className="w-3.5 h-3.5" />, dots: 3 },
-};
+} as const;
+
+function tierKeyFromProfile(status: string | undefined): keyof typeof TIER_CONFIG {
+  if (status === "project-verified" || status === "assessment-passed" || status === "self-declared") {
+    return status;
+  }
+  return "self-declared";
+}
 
 const DOT_COLORS = ["bg-emerald-500", "bg-yellow-500", "bg-emerald-500"];
 
@@ -892,75 +899,103 @@ export default function EmployeeDashboard() {
           </button>
         )}
 
-        {/* Dynamic tier card */}
-        {(() => {
-          const tier = (developerProfile?.verificationStatus ?? "self-declared") as keyof typeof TIER_CONFIG;
-          const cfg = TIER_CONFIG[tier] ?? TIER_CONFIG["self-declared"];
-          const completion = profileCompletion(developerProfile);
-          const tier3Glow = tier === "project-verified";
-          return (
-            <div
-              className={`mb-5 p-4 rounded-2xl text-center relative overflow-hidden ${
-                tier3Glow
-                  ? "border border-amber-400/40 bg-gradient-to-br from-amber-950/40 via-white/[0.04] to-purple-950/35 shadow-[0_0_32px_-10px_rgba(251,191,36,0.35)]"
-                  : `bg-white/5 border ${cfg.border}`
-              }`}
-            >
-              {tier3Glow && (
-                <div
-                  className="absolute inset-0 bg-gradient-to-r from-amber-500/10 via-transparent to-purple-500/10 pointer-events-none"
-                  aria-hidden
-                />
-              )}
-              <div className="relative flex flex-col items-center gap-2">
-                <div
-                  className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border-2 font-black text-2xl tabular-nums leading-none ${
-                    tier3Glow
-                      ? "border-amber-400/55 bg-amber-500/15 text-amber-100 shadow-[0_0_24px_-8px_rgba(251,191,36,0.5)]"
-                      : "border-white/20 bg-white/[0.06] text-white/90"
-                  }`}
-                  aria-label={`Verification tier ${cfg.tierNumber}`}
-                >
-                  {cfg.tierNumber}
-                </div>
-                <div className={`flex items-center justify-center gap-1.5 ${cfg.color}`}>
-                  {cfg.icon}
-                  <div className="text-left">
-                    <div className="text-xs font-black uppercase tracking-widest leading-tight">{cfg.label}</div>
-                    <div className="text-[9px] font-bold uppercase tracking-wider text-white/35 leading-tight">
-                      {cfg.subtitle}
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="mt-3 flex items-center justify-center gap-1.5">
-                {[0, 1, 2].map((i) => (
+        {/* Verification tier — horizontal capsule + bottom notch (always shows 1 / 2 / 3) */}
+        <div className="mb-5">
+          {(() => {
+            const tier = tierKeyFromProfile(developerProfile?.verificationStatus);
+            const cfg = TIER_CONFIG[tier];
+            const completion = profileCompletion(developerProfile);
+            const tier3Glow = tier === "project-verified";
+            const tierNum = cfg.tierNumber;
+
+            return (
+              <>
+                <div className="relative pb-3">
                   <div
-                    key={i}
-                    className={`h-1.5 w-8 rounded-full transition-all ${
-                      i < cfg.dots ? DOT_COLORS[i] : "bg-white/10"
+                    className={`relative flex w-full min-h-[4.5rem] items-center gap-3 rounded-full border-2 px-4 py-3 shadow-inner ${
+                      tier3Glow
+                        ? "border-amber-400/55 bg-gradient-to-br from-[#1a1208] via-[#0c0c0c] to-[#140a1a] shadow-[0_0_32px_-10px_rgba(251,191,36,0.35)]"
+                        : tier === "assessment-passed"
+                          ? "border-yellow-500/45 bg-[#0a0a0a]"
+                          : "border-white/20 bg-[#0a0a0a]"
                     }`}
+                  >
+                    {tier3Glow && (
+                      <div
+                        className="pointer-events-none absolute inset-0 rounded-full bg-gradient-to-r from-amber-500/[0.07] via-transparent to-purple-500/[0.07]"
+                        aria-hidden
+                      />
+                    )}
+                    <div
+                      className={`relative z-10 flex h-12 min-w-[3rem] shrink-0 items-center justify-center rounded-xl border-2 text-3xl font-black tabular-nums leading-none text-white ${
+                        tier3Glow
+                          ? "border-amber-400/60 bg-amber-500/25 text-amber-50"
+                          : tier === "assessment-passed"
+                            ? "border-yellow-500/40 bg-yellow-500/10 text-yellow-100"
+                            : "border-white/25 bg-white/[0.08] text-white"
+                      }`}
+                      aria-label={`Verification tier ${tierNum}`}
+                    >
+                      {tierNum}
+                    </div>
+                    <div className="relative z-10 min-w-0 flex-1 text-left">
+                      <p className={`text-[11px] font-black uppercase tracking-[0.22em] ${cfg.color}`}>
+                        {cfg.label}
+                      </p>
+                      <p className="mt-0.5 truncate text-[10px] font-bold uppercase tracking-wider text-white/50">
+                        {cfg.subtitle}
+                      </p>
+                    </div>
+                    <div className={`relative z-10 shrink-0 ${cfg.color}`}>{cfg.icon}</div>
+                  </div>
+                  {/* Bottom-center tab / notch */}
+                  <div
+                    className={`pointer-events-none absolute bottom-0 left-1/2 z-20 h-2.5 w-10 -translate-x-1/2 translate-y-px rounded-t-md border border-b-0 bg-[#050505] sm:w-12 ${
+                      tier3Glow ? "border-amber-400/35" : "border-white/20"
+                    }`}
+                    aria-hidden
                   />
-                ))}
-              </div>
-              <div className="relative mt-3 space-y-1">
-                <div className="flex justify-between text-[9px] uppercase tracking-widest font-bold">
-                  <span className="text-white/30">Profile</span>
-                  <span className={completion >= 80 ? "text-emerald-400" : completion >= 50 ? "text-yellow-400" : "text-red-400"}>{completion}%</span>
                 </div>
-                <div className="h-1 bg-white/10 rounded-full overflow-hidden">
-                  <div className={`h-full rounded-full transition-all duration-700 ${completion >= 80 ? "bg-emerald-500" : completion >= 50 ? "bg-yellow-500" : "bg-red-500"}`}
-                    style={{ width: `${completion}%` }} />
+
+                <div className="mt-1 flex items-center justify-center gap-1.5">
+                  {[0, 1, 2].map((i) => (
+                    <div
+                      key={i}
+                      className={`h-1.5 w-8 rounded-full transition-all ${
+                        i < cfg.dots ? DOT_COLORS[i] : "bg-white/10"
+                      }`}
+                    />
+                  ))}
                 </div>
-                {tier3Glow && typeof developerProfile?.completedProjectsCount === "number" && (
-                  <p className="text-[9px] text-amber-200/90 font-bold pt-2 border-t border-white/10 mt-2">
-                    Verified completions: {developerProfile.completedProjectsCount}
-                  </p>
-                )}
-              </div>
-            </div>
-          );
-        })()}
+                <div className="relative mt-3 space-y-1">
+                  <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest">
+                    <span className="text-white/30">Profile</span>
+                    <span
+                      className={
+                        completion >= 80 ? "text-emerald-400" : completion >= 50 ? "text-yellow-400" : "text-red-400"
+                      }
+                    >
+                      {completion}%
+                    </span>
+                  </div>
+                  <div className="h-1 overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className={`h-full rounded-full transition-all duration-700 ${
+                        completion >= 80 ? "bg-emerald-500" : completion >= 50 ? "bg-yellow-500" : "bg-red-500"
+                      }`}
+                      style={{ width: `${completion}%` }}
+                    />
+                  </div>
+                  {tier3Glow && typeof developerProfile?.completedProjectsCount === "number" && (
+                    <p className="mt-2 border-t border-white/10 pt-2 text-[9px] font-bold text-amber-200/90">
+                      Verified completions: {developerProfile.completedProjectsCount}
+                    </p>
+                  )}
+                </div>
+              </>
+            );
+          })()}
+        </div>
 
         {/* Live analytics — updates in real time via Firestore listeners */}
         <div className="grid grid-cols-2 gap-2 mb-5">
