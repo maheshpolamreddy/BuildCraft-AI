@@ -27,9 +27,9 @@ import {
   getStatusLabel,
   getStatusColor,
 } from "@/lib/project-execution";
-import { processCompletionRewards } from "@/lib/rewards";
 import { markProjectCompleted } from "@/lib/firestore";
 import { logAction } from "@/lib/auditLog";
+import { auth } from "@/lib/firebase";
 
 const BADGE_PROJECT_VERIFIED = "Project Verified";
 
@@ -203,8 +203,30 @@ export function ProjectCompletionPanel({
       });
       onProjectCompleted?.({ deploymentUrl: deploy });
       if (pe.developerUid) {
-        const result = await processCompletionRewards(pe.developerUid, projectName, projectId);
-        setRewardResult(result);
+        try {
+          const idToken = await auth.currentUser?.getIdToken();
+          if (idToken) {
+            const res = await fetch("/api/project-completion-rewards", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ idToken, projectId, projectName }),
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (res.ok) {
+              setRewardResult({
+                badgeUpgraded: true,
+                portfolioUpdated: true,
+                tier3: true,
+              });
+            } else {
+              console.warn("[ProjectCompletionPanel] rewards API:", payload);
+              setRewardResult(null);
+            }
+          }
+        } catch (e) {
+          console.warn("[ProjectCompletionPanel] rewards API failed:", e);
+          setRewardResult(null);
+        }
       }
       await logAction(currentUid, "project.completed", {
         action: "creator_approved_completion",

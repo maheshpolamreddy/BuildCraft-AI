@@ -27,7 +27,7 @@ import { signOutUser } from "@/lib/auth";
 import { subscribeHireRequestsByDeveloper, type HireRequest } from "@/lib/hireRequests";
 import { getProject, claimProjectAsDeveloper } from "@/lib/firestore";
 import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 import { formatDateTimeSmart } from "@/lib/dateDisplay";
 
@@ -67,6 +67,41 @@ function normalizeHireProjectName(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+/** Tolerant match for hire card title vs Firestore `project.name` (typos e.g. Alra vs AIra). */
+function levenshtein(a: string, b: string): number {
+  if (a.length < b.length) return levenshtein(b, a);
+  const prev = new Array<number>(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    let cur0 = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cur = Math.min(
+        prev[j] + 1,
+        prev[j - 1] + 1,
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+      prev[j - 1] = cur0;
+      cur0 = cur;
+    }
+    prev[b.length] = cur0;
+  }
+  return prev[b.length];
+}
+
+function namesLikelySameProject(hireName: string, docName: string): boolean {
+  const a = normalizeHireProjectName(hireName);
+  const b = normalizeHireProjectName(docName);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const A = a.replace(/[^a-z0-9]/gi, "");
+  const B = b.replace(/[^a-z0-9]/gi, "");
+  if (!A || !B) return false;
+  if (A === B) return true;
+  if (A.length >= 8 && B.length >= 8 && (A.includes(B) || B.includes(A))) return true;
+  const maxDist = Math.min(3, Math.max(1, Math.floor(Math.min(A.length, B.length) / 6)));
+  return levenshtein(A, B) <= maxDist;
+}
+
 /**
  * Match hire row to saved project doc: prefer hire.projectId, else same normalized display name
  * (covers legacy invites created before projectId was persisted).
@@ -81,10 +116,9 @@ function resolveAssignmentProjectState(
     if (m) return { meta: m, effectiveProjectId: pid };
     return { effectiveProjectId: pid };
   }
-  const target = normalizeHireProjectName(a.projectName ?? "");
-  if (!target) return {};
+  if (!normalizeHireProjectName(a.projectName ?? "")) return {};
   for (const [id, meta] of Object.entries(map)) {
-    if (meta.displayName && normalizeHireProjectName(meta.displayName) === target) {
+    if (meta.displayName && namesLikelySameProject(a.projectName ?? "", meta.displayName)) {
       return { meta, effectiveProjectId: id };
     }
   }
@@ -101,9 +135,9 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 const TIER_CONFIG = {
-  "self-declared":     { label: "Tier 1 · Self-Declared",    color: "text-white/50",    border: "border-white/10",           icon: <Edit3 className="w-3.5 h-3.5" />, dots: 1 },
-  "assessment-passed": { label: "Tier 2 · Assessment-Passed", color: "text-yellow-400",  border: "border-yellow-500/30",      icon: <Award className="w-3.5 h-3.5" />, dots: 2 },
-  "project-verified":  { label: "Tier 3 · Project-Verified",  color: "text-emerald-400", border: "border-emerald-500/30",     icon: <ShieldCheck className="w-3.5 h-3.5" />, dots: 3 },
+  "self-declared":     { tierNumber: 1, label: "Tier 1",    subtitle: "Self-declared",    color: "text-white/50",    border: "border-white/10",           icon: <Edit3 className="w-3.5 h-3.5" />, dots: 1 },
+  "assessment-passed": { tierNumber: 2, label: "Tier 2",    subtitle: "Assessment-passed", color: "text-yellow-400",  border: "border-yellow-500/30",      icon: <Award className="w-3.5 h-3.5" />, dots: 2 },
+  "project-verified":  { tierNumber: 3, label: "Tier 3",    subtitle: "Project-verified",  color: "text-emerald-400", border: "border-emerald-500/30",     icon: <ShieldCheck className="w-3.5 h-3.5" />, dots: 3 },
 };
 
 const DOT_COLORS = ["bg-emerald-500", "bg-yellow-500", "bg-emerald-500"];
@@ -302,6 +336,11 @@ export default function EmployeeDashboard() {
   const [respondError,     setRespondError]      = useState<string | null>(null);
   /** projectId → completion info from saved project doc (merged: developerUid query + per-id listeners). */
   const [workspaceCompletion, setWorkspaceCompletion] = useState<Record<string, WorkspaceCompletionRow>>({});
+  /** Dual-approval completion also mirrored on projectExecution/{id}. */
+  const [executionCompletedByProjectId, setExecutionCompletedByProjectId] = useState<
+    Record<string, boolean>
+  >({});
+  const rewardsHealAttempted = useRef<Set<string>>(new Set());
 
   const userName = developerProfile?.fullName || currentUser?.displayName || "Developer";
   const userSkills = developerProfile?.skills ?? [];
@@ -348,6 +387,20 @@ export default function EmployeeDashboard() {
     [activeAssignments],
   );
 
+  /** Includes fuzzy name–matched Firestore ids so projectExecution listeners still attach. */
+  const executionWatchIdsKey = useMemo(() => {
+    const ids = new Set<string>();
+    for (const a of activeAssignments) {
+      const raw = a.projectId?.trim();
+      if (raw) ids.add(raw);
+      else {
+        const st = resolveAssignmentProjectState(a, workspaceCompletion);
+        if (st.effectiveProjectId?.trim()) ids.add(st.effectiveProjectId.trim());
+      }
+    }
+    return [...ids].sort().join("|");
+  }, [activeAssignments, workspaceCompletion]);
+
   /** All projects assigned to this developer (top-level developerUid) — fixes missing hire.projectId. */
   useEffect(() => {
     const uid = currentUser?.uid;
@@ -381,22 +434,50 @@ export default function EmployeeDashboard() {
     return () => unsubs.forEach((u) => u());
   }, [activeAssignmentProjectIdsKey]);
 
+  useEffect(() => {
+    const unique = executionWatchIdsKey.split("|").filter(Boolean);
+    if (!unique.length) return;
+    const unsubs = unique.map((id) =>
+      onSnapshot(doc(db, "projectExecution", id), (snap) => {
+        const done =
+          snap.exists() && (snap.data() as { status?: string }).status === "completed";
+        setExecutionCompletedByProjectId((prev) => ({ ...prev, [id]: done }));
+      }),
+    );
+    return () => unsubs.forEach((u) => u());
+  }, [executionWatchIdsKey]);
+
+  const mergedWorkspaceCompletion = useMemo(() => {
+    const out: Record<string, WorkspaceCompletionRow> = { ...workspaceCompletion };
+    for (const [id, execDone] of Object.entries(executionCompletedByProjectId)) {
+      if (!execDone) continue;
+      const cur = out[id];
+      out[id] = {
+        completed: true,
+        completedAt: cur?.completedAt,
+        deployUrl: cur?.deployUrl,
+        displayName: cur?.displayName ?? "",
+      };
+    }
+    return out;
+  }, [workspaceCompletion, executionCompletedByProjectId]);
+
   const openClientProjects = useMemo(
     () =>
       activeAssignments.filter((r) => {
-        const { meta } = resolveAssignmentProjectState(r, workspaceCompletion);
+        const { meta } = resolveAssignmentProjectState(r, mergedWorkspaceCompletion);
         return !meta?.completed;
       }),
-    [activeAssignments, workspaceCompletion],
+    [activeAssignments, mergedWorkspaceCompletion],
   );
 
   const completedClientProjects = useMemo(
     () =>
       activeAssignments.filter((r) => {
-        const { meta } = resolveAssignmentProjectState(r, workspaceCompletion);
+        const { meta } = resolveAssignmentProjectState(r, mergedWorkspaceCompletion);
         return meta?.completed === true;
       }),
-    [activeAssignments, workspaceCompletion],
+    [activeAssignments, mergedWorkspaceCompletion],
   );
 
   const closedHireCount = useMemo(
@@ -411,7 +492,7 @@ export default function EmployeeDashboard() {
     let activeProjects = 0;
     let completedFromWorkspaces = 0;
     for (const r of acceptedList) {
-      const { meta } = resolveAssignmentProjectState(r, workspaceCompletion);
+      const { meta } = resolveAssignmentProjectState(r, mergedWorkspaceCompletion);
       if (meta?.completed) completedFromWorkspaces++;
       else activeProjects++;
     }
@@ -425,9 +506,60 @@ export default function EmployeeDashboard() {
     };
   }, [
     hireReqs,
-    workspaceCompletion,
+    mergedWorkspaceCompletion,
     developerProfile?.completedProjectsCount,
     closedHireCount,
+  ]);
+
+  /** Self-heal Tier 3 / counts if project completed but Admin rewards never ran (e.g. old client-only path). */
+  useEffect(() => {
+    const uid = currentUser?.uid;
+    if (!uid || uid === "demo-guest") return;
+
+    const sync = async () => {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      for (const hire of activeAssignments) {
+        const { meta, effectiveProjectId } = resolveAssignmentProjectState(
+          hire,
+          mergedWorkspaceCompletion,
+        );
+        const pid = effectiveProjectId?.trim();
+        if (!pid || !meta?.completed) continue;
+
+        const ids = developerProfile?.completedProjectIds ?? [];
+        const alreadyRecorded = ids.includes(pid);
+        const tierOk = developerProfile?.verificationStatus === "project-verified";
+        if (tierOk && alreadyRecorded) continue;
+        if (rewardsHealAttempted.current.has(pid)) continue;
+
+        rewardsHealAttempted.current.add(pid);
+        try {
+          const idToken = await user.getIdToken();
+          const res = await fetch("/api/project-completion-rewards", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              idToken,
+              projectId: pid,
+              projectName: hire.projectName,
+            }),
+          });
+          if (!res.ok) rewardsHealAttempted.current.delete(pid);
+        } catch {
+          rewardsHealAttempted.current.delete(pid);
+        }
+      }
+    };
+
+    void sync();
+  }, [
+    activeAssignments,
+    mergedWorkspaceCompletion,
+    developerProfile?.verificationStatus,
+    developerProfile?.completedProjectIds?.join("|"),
+    currentUser?.uid,
   ]);
 
   const needsProfileAfterSkillPass = useMemo(() => {
@@ -624,7 +756,10 @@ export default function EmployeeDashboard() {
   }
 
   function renderOpportunitiesProjectCard(assignment: HireRequest) {
-    const { meta: wc, effectiveProjectId } = resolveAssignmentProjectState(assignment, workspaceCompletion);
+    const { meta: wc, effectiveProjectId } = resolveAssignmentProjectState(
+      assignment,
+      mergedWorkspaceCompletion,
+    );
     const isDone = wc?.completed === true;
     const pidForOpen = (effectiveProjectId ?? assignment.projectId)?.trim() ?? "";
     const enterWorkspace = () => openDeveloperWorkspace(pidForOpen || undefined);
@@ -760,7 +895,7 @@ export default function EmployeeDashboard() {
         {/* Dynamic tier card */}
         {(() => {
           const tier = (developerProfile?.verificationStatus ?? "self-declared") as keyof typeof TIER_CONFIG;
-          const cfg = TIER_CONFIG[tier];
+          const cfg = TIER_CONFIG[tier] ?? TIER_CONFIG["self-declared"];
           const completion = profileCompletion(developerProfile);
           const tier3Glow = tier === "project-verified";
           return (
@@ -777,13 +912,35 @@ export default function EmployeeDashboard() {
                   aria-hidden
                 />
               )}
-              <div className={`relative flex items-center justify-center gap-1.5 mb-1 ${cfg.color}`}>
-                {cfg.icon}
-                <span className="text-xs font-black uppercase tracking-widest">{cfg.label}</span>
+              <div className="relative flex flex-col items-center gap-2">
+                <div
+                  className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border-2 font-black text-2xl tabular-nums leading-none ${
+                    tier3Glow
+                      ? "border-amber-400/55 bg-amber-500/15 text-amber-100 shadow-[0_0_24px_-8px_rgba(251,191,36,0.5)]"
+                      : "border-white/20 bg-white/[0.06] text-white/90"
+                  }`}
+                  aria-label={`Verification tier ${cfg.tierNumber}`}
+                >
+                  {cfg.tierNumber}
+                </div>
+                <div className={`flex items-center justify-center gap-1.5 ${cfg.color}`}>
+                  {cfg.icon}
+                  <div className="text-left">
+                    <div className="text-xs font-black uppercase tracking-widest leading-tight">{cfg.label}</div>
+                    <div className="text-[9px] font-bold uppercase tracking-wider text-white/35 leading-tight">
+                      {cfg.subtitle}
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div className="mt-2 flex items-center justify-center gap-1.5">
-                {[0,1,2].map(i => (
-                  <div key={i} className={`h-1.5 w-8 rounded-full transition-all ${i < cfg.dots ? DOT_COLORS[i] : "bg-white/10"}`} />
+              <div className="mt-3 flex items-center justify-center gap-1.5">
+                {[0, 1, 2].map((i) => (
+                  <div
+                    key={i}
+                    className={`h-1.5 w-8 rounded-full transition-all ${
+                      i < cfg.dots ? DOT_COLORS[i] : "bg-white/10"
+                    }`}
+                  />
                 ))}
               </div>
               <div className="relative mt-3 space-y-1">
@@ -1219,7 +1376,10 @@ export default function EmployeeDashboard() {
                         <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-emerald-400/90">Completed</h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           {completedClientProjects.map((a) => {
-                            const { meta: wc, effectiveProjectId } = resolveAssignmentProjectState(a, workspaceCompletion);
+                            const { meta: wc, effectiveProjectId } = resolveAssignmentProjectState(
+                              a,
+                              mergedWorkspaceCompletion,
+                            );
                             const isDone = wc?.completed === true;
                             const lastMs = a.respondedAt?.toMillis?.() ?? null;
                             const last = lastMs != null ? new Date(lastMs) : null;
@@ -1285,7 +1445,10 @@ export default function EmployeeDashboard() {
                         <h3 className="text-[10px] font-black uppercase tracking-[0.25em] text-blue-400/90">In progress</h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           {openClientProjects.map((a) => {
-                            const { effectiveProjectId } = resolveAssignmentProjectState(a, workspaceCompletion);
+                            const { effectiveProjectId } = resolveAssignmentProjectState(
+                              a,
+                              mergedWorkspaceCompletion,
+                            );
                             const lastMs = a.respondedAt?.toMillis?.() ?? null;
                             const last = lastMs != null ? new Date(lastMs) : null;
                             const lastLabel = last

@@ -293,6 +293,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   // ── Project Execution state ──────────────────────────────────────────────
   const [projExec, setProjExec] = useState<ProjectExecution | null>(null);
   const [projExecSubError, setProjExecSubError] = useState<string | null>(null);
+  /** True when Firestore projects/{id} shows dual-approved completion (handles store not hydrated yet). */
+  const [firestoreProjectCompleted, setFirestoreProjectCompleted] = useState(false);
 
   /** Reset when switching Firestore project doc so milestone AI does not skip for the new id. */
   const generatedRef = useRef(false);
@@ -322,6 +324,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       setMatchedDevs([]);
       setPrds([]);
       setProjExec(null);
+      setFirestoreProjectCompleted(false);
       setActiveTab("milestones");
       setGate3Hired(false);
       setExpandedMilestone("m1");
@@ -405,16 +408,22 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   /** Keep completion + deployment fields in sync when the saved project doc updates (e.g. client approves elsewhere). */
   useEffect(() => {
     if (!savedProjectId || !authReady) return;
+    setFirestoreProjectCompleted(false);
     const r = doc(db, "projects", savedProjectId);
     return onSnapshot(r, (snap) => {
       if (!snap.exists()) return;
       const data = snap.data() as Record<string, unknown>;
       const nested = data.project as Record<string, unknown> | undefined;
+      const rootComplete = data.completionStatus === "completed";
+      const nestedLife =
+        typeof nested?.lifecycleStatus === "string" ? nested.lifecycleStatus : undefined;
+      const docCompleted = rootComplete || nestedLife === "completed";
+      setFirestoreProjectCompleted(docCompleted);
+
       const pState = useStore.getState().project;
       if (!pState) return;
-      const rootComplete = data.completionStatus === "completed";
       const nextLife =
-        (typeof nested?.lifecycleStatus === "string" ? nested.lifecycleStatus : undefined) ||
+        nestedLife ||
         (rootComplete ? "completed" : pState.lifecycleStatus);
       const nestedCompletedAt = nested?.completedAt;
       const nestedAtMs =
@@ -534,7 +543,9 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   const completionSectionUnlocked = areMilestonesReadyForCompletion(milestones);
   /** Final dual-approved closure — milestones/tasks become view-only */
   const workspaceProjectCompleted =
-    projExec?.status === "completed" || project?.lifecycleStatus === "completed";
+    projExec?.status === "completed" ||
+    project?.lifecycleStatus === "completed" ||
+    firestoreProjectCompleted;
 
   // ── Strict Tab Guard ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -1506,9 +1517,15 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
             <span className="text-lg font-black text-white tracking-tighter group-hover:text-white/80 transition-colors truncate max-w-[180px]">BuildCraft AI</span>
           </Link>
           <div className="text-[10px] text-white/30 truncate mb-1">{projectName}</div>
-          <div className="text-green-500 text-[10px] uppercase tracking-[0.2em] flex items-center gap-1 font-bold">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" /> Workspace Active
-          </div>
+          {workspaceProjectCompleted ? (
+            <div className="text-emerald-400 text-[10px] uppercase tracking-[0.2em] flex items-center gap-1 font-bold">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" aria-hidden /> Project completed
+            </div>
+          ) : (
+            <div className="text-green-500 text-[10px] uppercase tracking-[0.2em] flex items-center gap-1 font-bold">
+              <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" aria-hidden /> Workspace active
+            </div>
+          )}
           <div className="text-[#888] text-[10px] mt-1">{version} · {approvedCount} tools approved</div>
         </div>
 
@@ -1572,7 +1589,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
           {/* Project Workspace tabs */}
           {([
             { id: "milestones", label: "Tasks & Milestones",   icon: <ListOrdered className="w-5 h-5" />,  badge: inReview > 0 ? `${inReview} review` : null },
-            { id: "talent",     label: hiringState === "accepted" ? "Hired Developer" : hiringState === "pending" ? "Hiring Status" : "Find Developers", icon: <UserCheck className="w-5 h-5" />,    badge: hiringState === "accepted" ? "Active" : hiringState === "pending" ? "Pending" : (gate3Hired ? null : "!") },
+            { id: "talent",     label: hiringState === "accepted" ? "Hired Developer" : hiringState === "pending" ? "Hiring Status" : "Find Developers", icon: <UserCheck className="w-5 h-5" />,    badge: hiringState === "accepted" ? (workspaceProjectCompleted ? "Completed" : "Active") : hiringState === "pending" ? "Pending" : (gate3Hired ? null : "!") },
             { id: "architecture", label: "Architecture & Tools", icon: <Layers className="w-5 h-5" />, badge: approvedCount > 0 ? String(approvedCount) : null },
             { id: "deliverables", label: "Files & Deliverables", icon: <Package className="w-5 h-5" />, badge: doneTasks > 0 ? `${doneTasks} done` : null },
             { id: "prd",        label: "PRD Document",    icon: <FileText className="w-5 h-5" />,     badge: prds.length > 0 ? "New" : null },
