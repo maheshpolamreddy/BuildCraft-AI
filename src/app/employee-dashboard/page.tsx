@@ -28,6 +28,7 @@ import { subscribeHireRequestsByDeveloper, type HireRequest } from "@/lib/hireRe
 import { getProject, claimProjectAsDeveloper } from "@/lib/firestore";
 import { collection, doc, onSnapshot, query, where } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
+import { listenWhenAuthed } from "@/lib/auth";
 import { DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 import { formatDateTimeSmart } from "@/lib/dateDisplay";
 
@@ -408,51 +409,96 @@ export default function EmployeeDashboard() {
     return [...ids].sort().join("|");
   }, [activeAssignments, workspaceCompletion]);
 
+  /** Single stable dep for Firestore snapshot effects (constant array length — avoids React refresh / HMR hook mismatch). */
+  const projectDocListenersKey = useMemo(
+    () => `${activeAssignmentProjectIdsKey}\0${currentUser?.uid ?? ""}`,
+    [activeAssignmentProjectIdsKey, currentUser?.uid],
+  );
+  const executionListenersKey = useMemo(
+    () => `${executionWatchIdsKey}\0${currentUser?.uid ?? ""}`,
+    [executionWatchIdsKey, currentUser?.uid],
+  );
+
   /** All projects assigned to this developer (top-level developerUid) — fixes missing hire.projectId. */
   useEffect(() => {
     const uid = currentUser?.uid;
     if (!uid || uid === "demo-guest") return;
-    const q = query(collection(db, "projects"), where("developerUid", "==", uid));
-    return onSnapshot(q, (snap) => {
-      setWorkspaceCompletion((prev) => {
-        const next = { ...prev };
-        snap.docs.forEach((d) => {
-          next[d.id] = parseProjectDocToWorkspaceMeta(d.data() as Record<string, unknown>);
-        });
-        return next;
-      });
+    return listenWhenAuthed(uid, () => {
+      const q = query(collection(db, "projects"), where("developerUid", "==", uid));
+      return onSnapshot(
+        q,
+        (snap) => {
+          setWorkspaceCompletion((prev) => {
+            const next = { ...prev };
+            snap.docs.forEach((d) => {
+              next[d.id] = parseProjectDocToWorkspaceMeta(d.data() as Record<string, unknown>);
+            });
+            return next;
+          });
+        },
+        (err) => {
+          if (err.code !== "permission-denied") {
+            console.warn("[employee-dashboard] projects query snapshot:", err);
+          }
+        },
+      );
     });
   }, [currentUser?.uid]);
 
   /** Per hire.projectId listener — covers docs where developerUid on root is missing/stale. */
   useEffect(() => {
+    const uid = currentUser?.uid;
+    if (!uid || uid === "demo-guest") return;
     const ids = activeAssignments.map((a) => a.projectId).filter((id): id is string => Boolean(id?.trim()));
     if (!ids.length) return;
-    const unsubs = ids.map((id) =>
-      onSnapshot(doc(db, "projects", id), (snap) => {
-        if (!snap.exists()) return;
-        const row = parseProjectDocToWorkspaceMeta(snap.data() as Record<string, unknown>);
-        setWorkspaceCompletion((prev) => ({
-          ...prev,
-          [id]: row,
-        }));
-      }),
-    );
-    return () => unsubs.forEach((u) => u());
-  }, [activeAssignmentProjectIdsKey]);
+    return listenWhenAuthed(uid, () => {
+      const unsubs = ids.map((id) =>
+        onSnapshot(
+          doc(db, "projects", id),
+          (snap) => {
+            if (!snap.exists()) return;
+            const row = parseProjectDocToWorkspaceMeta(snap.data() as Record<string, unknown>);
+            setWorkspaceCompletion((prev) => ({
+              ...prev,
+              [id]: row,
+            }));
+          },
+          (err) => {
+            if (err.code !== "permission-denied") {
+              console.warn("[employee-dashboard] project doc snapshot:", err);
+            }
+          },
+        ),
+      );
+      return () => unsubs.forEach((u) => u());
+    });
+  }, [projectDocListenersKey]);
 
   useEffect(() => {
-    const unique = executionWatchIdsKey.split("|").filter(Boolean);
+    const uid = currentUser?.uid;
+    if (!uid || uid === "demo-guest") return;
+    const idsKey = executionListenersKey.split("\0")[0] ?? "";
+    const unique = idsKey.split("|").filter(Boolean);
     if (!unique.length) return;
-    const unsubs = unique.map((id) =>
-      onSnapshot(doc(db, "projectExecution", id), (snap) => {
-        const done =
-          snap.exists() && (snap.data() as { status?: string }).status === "completed";
-        setExecutionCompletedByProjectId((prev) => ({ ...prev, [id]: done }));
-      }),
-    );
-    return () => unsubs.forEach((u) => u());
-  }, [executionWatchIdsKey]);
+    return listenWhenAuthed(uid, () => {
+      const unsubs = unique.map((id) =>
+        onSnapshot(
+          doc(db, "projectExecution", id),
+          (snap) => {
+            const done =
+              snap.exists() && (snap.data() as { status?: string }).status === "completed";
+            setExecutionCompletedByProjectId((prev) => ({ ...prev, [id]: done }));
+          },
+          (err) => {
+            if (err.code !== "permission-denied") {
+              console.warn("[employee-dashboard] projectExecution snapshot:", err);
+            }
+          },
+        ),
+      );
+      return () => unsubs.forEach((u) => u());
+    });
+  }, [executionListenersKey]);
 
   const mergedWorkspaceCompletion = useMemo(() => {
     const out: Record<string, WorkspaceCompletionRow> = { ...workspaceCompletion };

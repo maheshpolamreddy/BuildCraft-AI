@@ -14,6 +14,7 @@
  */
 
 import { db } from "./firebase";
+import { listenWhenAuthed } from "./auth";
 import {
   doc, setDoc, getDoc, updateDoc, addDoc,
   collection, query, orderBy, limit,
@@ -229,26 +230,32 @@ export async function sendChatMessage(chatId: string, msg: { text: string; sende
 
 export function subscribeToChatMessages(
   chatId: string,
+  viewerUid: string,
   cb: (msgs: ChatMessage[]) => void,
   onError?: (message: string) => void,
 ): Unsubscribe {
-  const q = query(
-    collection(db, "chats", chatId, "messages"),
-    orderBy("sentAt", "asc"),
-    limit(200),
-  );
-  return onSnapshot(
-    q,
-    snap => {
-      const msgs = snap.docs.map(d => normalizeChatMessage(d.id, d.data() as Record<string, unknown>));
-      cb(msgs);
-    },
-    err => {
-      console.error("[chat] subscribe messages:", err);
-      onError?.(err.message || "Could not load messages");
-      cb([]);
-    },
-  );
+  if (!viewerUid || viewerUid === "demo-guest") return () => {};
+  return listenWhenAuthed(viewerUid, () => {
+    const q = query(
+      collection(db, "chats", chatId, "messages"),
+      orderBy("sentAt", "asc"),
+      limit(200),
+    );
+    return onSnapshot(
+      q,
+      (snap) => {
+        const msgs = snap.docs.map((d) =>
+          normalizeChatMessage(d.id, d.data() as Record<string, unknown>),
+        );
+        cb(msgs);
+      },
+      (err) => {
+        if (err.code !== "permission-denied") console.error("[chat] subscribe messages:", err);
+        onError?.(err.message || "Could not load messages");
+        cb([]);
+      },
+    );
+  });
 }
 
 export async function markMessagesRead(chatId: string, readerUid: string): Promise<void> {
@@ -268,19 +275,23 @@ export async function getChatRoom(chatId: string): Promise<ChatRoom | null> {
 /** Real-time chat room metadata (creator/dev UIDs and names for message labels). */
 export function subscribeToChatRoom(
   chatId: string,
+  viewerUid: string,
   cb: (room: ChatRoom | null) => void,
   onError?: (message: string) => void,
 ): Unsubscribe {
-  const ref = doc(db, "chats", chatId);
-  return onSnapshot(
-    ref,
-    snap => {
-      cb(snap.exists() ? (snap.data() as ChatRoom) : null);
-    },
-    err => {
-      console.error("[chat] subscribe room:", err);
-      onError?.(err.message || "Could not load chat room");
-      cb(null);
-    },
-  );
+  if (!viewerUid || viewerUid === "demo-guest") return () => {};
+  return listenWhenAuthed(viewerUid, () => {
+    const ref = doc(db, "chats", chatId);
+    return onSnapshot(
+      ref,
+      (snap) => {
+        cb(snap.exists() ? (snap.data() as ChatRoom) : null);
+      },
+      (err) => {
+        if (err.code !== "permission-denied") console.error("[chat] subscribe room:", err);
+        onError?.(err.message || "Could not load chat room");
+        cb(null);
+      },
+    );
+  });
 }

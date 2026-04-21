@@ -1,4 +1,5 @@
 import { db } from "./firebase";
+import { listenWhenAuthed } from "./auth";
 import {
   doc,
   setDoc,
@@ -204,28 +205,31 @@ export async function updateWorkspaceTask(
 
 /**
  * Subscribe to real-time milestone updates.
- * Returns an unsubscribe function.
+ * `expectedUid` must be the signed-in Firebase user (token must match for rules).
  */
 export function subscribeToWorkspace(
   projectId: string,
+  expectedUid: string,
   onUpdate: (state: WorkspaceState | null) => void,
-  onError?: (err: string) => void
+  onError?: (err: string) => void,
 ): () => void {
-  const ref = doc(db, "projectWorkspaces", projectId);
-  return onSnapshot(
-    ref,
-    (snap) => {
-      if (snap.exists()) {
-        onUpdate(snap.data() as WorkspaceState);
-      } else {
-        onUpdate(null);
-      }
-    },
-    (err) => {
-      console.warn("Workspace sync error:", err);
-      if (onError) onError(err.message);
-    }
-  );
+  return listenWhenAuthed(expectedUid, () => {
+    const ref = doc(db, "projectWorkspaces", projectId);
+    return onSnapshot(
+      ref,
+      (snap) => {
+        if (snap.exists()) {
+          onUpdate(snap.data() as WorkspaceState);
+        } else {
+          onUpdate(null);
+        }
+      },
+      (err) => {
+        if (err.code !== "permission-denied") console.warn("Workspace sync error:", err);
+        if (onError) onError(err.message);
+      },
+    );
+  });
 }
 /**
  * Replaces the matched developers in the project workspace.

@@ -61,6 +61,7 @@ import {
 import { useFirebaseUid } from "@/hooks/useFirebaseUid";
 import { deleteDoc, doc, onSnapshot } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
+import { listenWhenAuthed } from "@/lib/auth";
 import { getProject, claimProjectAsDeveloper, syncDeveloperUidToProjectRoot, type SavedProject } from "@/lib/firestore";
 import { CreatorFlowBreadcrumb, DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 import { CreatorFlowGuard } from "@/components/CreatorFlowGuard";
@@ -407,10 +408,14 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
   /** Keep completion + deployment fields in sync when the saved project doc updates (e.g. client approves elsewhere). */
   useEffect(() => {
-    if (!savedProjectId || !authReady) return;
+    const uid = currentUser?.uid;
+    if (!savedProjectId || !authReady || !uid || uid === "demo-guest") return;
     setFirestoreProjectCompleted(false);
-    const r = doc(db, "projects", savedProjectId);
-    return onSnapshot(r, (snap) => {
+    return listenWhenAuthed(uid, () => {
+      const r = doc(db, "projects", savedProjectId);
+      return onSnapshot(
+        r,
+        (snap) => {
       if (!snap.exists()) return;
       const data = snap.data() as Record<string, unknown>;
       const nested = data.project as Record<string, unknown> | undefined;
@@ -454,8 +459,15 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
         completedAt: nextAt,
         completionDeploymentUrl: nextDep,
       });
+    },
+        (err) => {
+          if (err.code !== "permission-denied") {
+            console.warn("[ProjectRoom] project doc snapshot:", err);
+          }
+        },
+      );
     });
-  }, [savedProjectId, authReady, setProject]);
+  }, [savedProjectId, authReady, currentUser?.uid, setProject]);
 
   // Deep-link from Discovery / Architecture / hire emails (e.g. ?tab=chat&chat=…)
   useEffect(() => {
@@ -577,8 +589,9 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
   // ── Sync Milestones from Real-Time Workspace ─────────────────────────────
   useEffect(() => {
-    if (!savedProjectId) return;
-    return subscribeToWorkspace(savedProjectId, (state) => {
+    const uid = currentUser?.uid;
+    if (!savedProjectId || !uid || uid === "demo-guest") return;
+    return subscribeToWorkspace(savedProjectId, uid, (state) => {
        if (state) {
          if (state.milestones && state.milestones.length > 0) {
            setMilestones(withDerivedMilestoneStatuses(state.milestones));
@@ -588,7 +601,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
          }
        }
     });
-  }, [savedProjectId]);
+  }, [savedProjectId, currentUser?.uid]);
 
   // ── Subscribe to Project Execution state ──────────────────────────────────
   useEffect(() => {
@@ -596,6 +609,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     setProjExecSubError(null);
     return subscribeToProjectExecution(
       savedProjectId,
+      currentUser.uid,
       setProjExec,
       (err) => {
         console.warn("[ProjectRoom] projExec subscription:", err);
@@ -921,14 +935,22 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       setChatRoom(null);
       return;
     }
+    const uid = currentUser?.uid;
+    if (!uid || uid === "demo-guest") {
+      setFireMsgs([]);
+      setChatRoom(null);
+      return;
+    }
     setChatSubError(null);
     const unMsg = subscribeToChatMessages(
       activeChatId,
+      uid,
       msgs => setFireMsgs(msgs),
       err => setChatSubError(err),
     );
     const unRoom = subscribeToChatRoom(
       activeChatId,
+      uid,
       setChatRoom,
       err => setChatSubError(prev => prev ?? err),
     );
@@ -936,7 +958,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       unMsg();
       unRoom();
     };
-  }, [activeChatId]);
+  }, [activeChatId, currentUser?.uid]);
 
   const chatBubbleRows = useMemo(
     () => fireMsgs.map(msg => ({ msg, ...classifyChatBubble(msg, chatViewerUid, chatRoom) })),
@@ -1239,10 +1261,12 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
   // ── Project audit log (subcollection + legacy, real-time) ───────────────────
   useEffect(() => {
-    if (activeTab !== "audit" || !savedProjectId) return;
+    const uid = currentUser?.uid;
+    if (activeTab !== "audit" || !savedProjectId || !uid || uid === "demo-guest") return;
     setLoadingAudit(true);
     const unsub = subscribeProjectAuditLog(
       savedProjectId,
+      uid,
       (entries) => {
         setAuditEntries(entries);
         setLoadingAudit(false);
@@ -1250,7 +1274,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       40,
     );
     return () => unsub();
-  }, [activeTab, savedProjectId]);
+  }, [activeTab, savedProjectId, currentUser?.uid]);
 
   // ── Task actions ────────────────────────────────────────────────────────────
   async function approveTask(task: Task, milestoneId: string) {

@@ -5,6 +5,7 @@
  */
 
 import { db } from "./firebase";
+import { listenWhenAuthed } from "./auth";
 import {
   doc, setDoc, getDoc, updateDoc, onSnapshot, serverTimestamp,
 } from "firebase/firestore";
@@ -125,13 +126,19 @@ export async function getProjectExecution(projectId: string): Promise<ProjectExe
 
 export function subscribeToProjectExecution(
   projectId: string,
+  expectedUid: string,
   onUpdate: (pe: ProjectExecution | null) => void,
   onError?: (err: string) => void,
 ): () => void {
-  return onSnapshot(
-    doc(db, COL, projectId),
-    (snap) => onUpdate(snap.exists() ? (snap.data() as ProjectExecution) : null),
-    (err) => { if (onError) onError(err.message); },
+  return listenWhenAuthed(expectedUid, () =>
+    onSnapshot(
+      doc(db, COL, projectId),
+      (snap) => onUpdate(snap.exists() ? (snap.data() as ProjectExecution) : null),
+      (err) => {
+        if (onError) onError(err.message);
+        else if (err.code !== "permission-denied") console.warn("[projectExecution] subscribe:", err);
+      },
+    ),
   );
 }
 

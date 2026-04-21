@@ -14,6 +14,7 @@ import {
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { db } from "./firebase";
+import { listenWhenAuthed } from "./auth";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -234,32 +235,39 @@ export async function getProjectAuditLog(projectId: string, maxEntries = 50): Pr
  */
 export function subscribeProjectAuditLog(
   projectId: string,
+  expectedUid: string,
   onUpdate: (entries: AuditEntry[]) => void,
   maxEntries = 40,
 ): () => void {
-  if (!projectId) return () => {};
-  let cancelled = false;
-  let unsubSnapshot: (() => void) | null = null;
+  if (!projectId || !expectedUid || expectedUid === "demo-guest") return () => {};
+  return listenWhenAuthed(expectedUid, () => {
+    let cancelled = false;
+    let unsubSnapshot: (() => void) | null = null;
 
-  void getProjectAuditLogLegacy(projectId, maxEntries).then((legacy) => {
-    if (cancelled) return;
-    const q = query(
-      collection(db, "projects", projectId, "audit_logs"),
-      orderBy("timestamp", "desc"),
-      limit(maxEntries),
-    );
-    unsubSnapshot = onSnapshot(
-      q,
-      (snap) => {
-        const sub = snap.docs.map((d) => mapSubAuditDoc(d, projectId));
-        onUpdate(mergeAndDedupe(sub, legacy, maxEntries));
-      },
-      (err) => console.warn("[auditLog] subscribeProjectAuditLog:", err),
-    );
+    void getProjectAuditLogLegacy(projectId, maxEntries).then((legacy) => {
+      if (cancelled) return;
+      const q = query(
+        collection(db, "projects", projectId, "audit_logs"),
+        orderBy("timestamp", "desc"),
+        limit(maxEntries),
+      );
+      unsubSnapshot = onSnapshot(
+        q,
+        (snap) => {
+          const sub = snap.docs.map((d) => mapSubAuditDoc(d, projectId));
+          onUpdate(mergeAndDedupe(sub, legacy, maxEntries));
+        },
+        (err) => {
+          if (err.code !== "permission-denied") {
+            console.warn("[auditLog] subscribeProjectAuditLog:", err);
+          }
+        },
+      );
+    });
+
+    return () => {
+      cancelled = true;
+      unsubSnapshot?.();
+    };
   });
-
-  return () => {
-    cancelled = true;
-    unsubSnapshot?.();
-  };
 }

@@ -87,3 +87,29 @@ export function onAuthChange(callback: (user: AuthUser | null) => void) {
     callback(user ? toAuthUser(user) : null)
   );
 }
+
+type FirestoreUnsub = () => void;
+
+/**
+ * Attach Firestore listeners only when auth.currentUser.uid === expectedUid so
+ * request.auth is set (avoids permission-denied snapshot races).
+ */
+export function listenWhenAuthed(
+  expectedUid: string,
+  attach: (user: User) => FirestoreUnsub,
+): FirestoreUnsub {
+  if (!expectedUid || expectedUid === "demo-guest") {
+    return () => {};
+  }
+  let innerUnsub: FirestoreUnsub | null = null;
+  const authUnsub = onAuthStateChanged(auth, (user) => {
+    innerUnsub?.();
+    innerUnsub = null;
+    if (!user || user.uid !== expectedUid) return;
+    innerUnsub = attach(user);
+  });
+  return () => {
+    authUnsub();
+    innerUnsub?.();
+  };
+}

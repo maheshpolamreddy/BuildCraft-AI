@@ -12,6 +12,7 @@
  */
 
 import { db } from "./firebase";
+import { listenWhenAuthed } from "./auth";
 import {
   doc, setDoc, getDoc, updateDoc,
   collection, query, where, getDocs, onSnapshot,
@@ -108,15 +109,19 @@ export function subscribeHireRequestsByDeveloper(
   onError?: (msg: string) => void,
 ): () => void {
   if (!developerUid || developerUid === "demo-guest") return () => {};
-  const q = query(collection(db, "hireRequests"), where("developerUid", "==", developerUid));
-  return onSnapshot(
-    q,
-    (snap) => onUpdate(snap.docs.map((d) => d.data() as HireRequest)),
-    (err) => {
-      if (onError) onError(err.message);
-      else console.warn("[hireRequests] subscribe developer:", err);
-    },
-  );
+  return listenWhenAuthed(developerUid, () => {
+    const q = query(collection(db, "hireRequests"), where("developerUid", "==", developerUid));
+    return onSnapshot(
+      q,
+      (snap) => onUpdate(snap.docs.map((d) => d.data() as HireRequest)),
+      (err) => {
+        if (onError) onError(err.message);
+        else if (err.code !== "permission-denied") {
+          console.warn("[hireRequests] subscribe developer:", err);
+        }
+      },
+    );
+  });
 }
 
 export async function getAcceptedRequestForProject(creatorUid: string, projectName: string): Promise<HireRequest | null> {

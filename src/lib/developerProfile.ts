@@ -4,6 +4,7 @@ import {
   type QueryDocumentSnapshot,
 } from "firebase/firestore";
 import { db } from "./firebase";
+import { listenWhenAuthed } from "./auth";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -216,12 +217,16 @@ export function subscribeToDeveloperProfile(
   onUpdate: (profile: DeveloperProfile | null) => void,
 ): () => void {
   if (!isFirebaseUid(uid)) return () => {};
-  return onSnapshot(
-    doc(db, "developerProfiles", uid),
-    (snap) => {
-      onUpdate(snap.exists() ? (snap.data() as DeveloperProfile) : null);
-    },
-    (err) => console.warn("[developerProfile] snapshot:", err),
+  return listenWhenAuthed(uid, () =>
+    onSnapshot(
+      doc(db, "developerProfiles", uid),
+      (snap) => {
+        onUpdate(snap.exists() ? (snap.data() as DeveloperProfile) : null);
+      },
+      (err) => {
+        if (err.code !== "permission-denied") console.warn("[developerProfile] snapshot:", err);
+      },
+    ),
   );
 }
 
