@@ -77,9 +77,7 @@ function PlatformEntryInner() {
   }, [asDeveloper, setRole]);
 
   /** Wait for persist rehydration so late merge from localStorage cannot wipe role/text state after sign-in. */
-  const [storePersistReady, setStorePersistReady] = useState(
-    () => typeof window !== "undefined" && useStore.persist.hasHydrated(),
-  );
+  const [storePersistReady, setStorePersistReady] = useState(false);
   useEffect(() => {
     if (useStore.persist.hasHydrated()) {
       setStorePersistReady(true);
