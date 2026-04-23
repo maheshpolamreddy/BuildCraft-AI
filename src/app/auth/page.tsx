@@ -15,6 +15,7 @@ import {
   signUpWithEmail,
   signInWithEmail,
   signInWithGoogle,
+  signInWithGoogleInSameTab,
   isAuthPopupBlockedError,
 } from "@/lib/auth";
 import { logAction } from "@/lib/auditLog";
@@ -230,8 +231,7 @@ function PlatformEntryInner() {
       setEmployerWizardOpen(false);
     } catch (err: unknown) {
       if (isAuthPopupBlockedError(err)) {
-        setGooglePopupBlocked(true);
-        setAuthError(null);
+        void signInWithGoogleInSameTab();
         return;
       }
       const msg = err instanceof Error ? err.message : "Google sign-in failed.";
