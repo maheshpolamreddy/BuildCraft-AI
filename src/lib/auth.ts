@@ -2,7 +2,6 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
-  signInWithRedirect,
   getRedirectResult,
   signOut,
   updateProfile,
@@ -78,52 +77,18 @@ export async function signInWithEmail(email: string, password: string) {
   return toAuthUser(user);
 }
 
-export type SignInWithGoogleResult =
-  | { kind: "signedIn"; user: AuthUser }
-  | { kind: "redirect" };
-
 /**
- * When popup flows fail, fall back to full-page Google redirect. Do not use this for
- * explicit user actions like closing the popup.
+ * Google sign-in via popup only (required for Vercel: redirect flow often returns to /auth
+ * with no session if authorized domains / handler URL are wrong, and full-page reload races
+ * route guards). Ensure COOP headers on /auth (next.config) and Firebase authorized domains.
  */
-function shouldFallbackToGoogleRedirect(code: string | undefined): boolean {
-  if (!code) return false;
-  if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
-    return false;
-  }
-  return (
-    code === "auth/popup-blocked" ||
-    code === "auth/operation-not-supported-in-this-environment" ||
-    code === "auth/web-storage-unsupported" ||
-    code === "auth/internal-error"
-  );
-}
-
-/**
- * Google: try popup first (with COOP header on /auth; see next.config). If the browser
- * or host blocks the popup/result handoff, use signInWithRedirect. Redirect also completes
- * the session when getRedirectResult runs in AuthProvider.
- */
-export async function signInWithGoogle(): Promise<SignInWithGoogleResult> {
+export async function signInWithGoogle(): Promise<AuthUser> {
   if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
     throw new Error("Firebase is not configured (missing NEXT_PUBLIC_FIREBASE_API_KEY).");
   }
-  try {
-    const { user } = await signInWithPopup(auth, googleProvider);
-    await createUserProfile(user);
-    return { kind: "signedIn", user: toAuthUser(user) };
-  } catch (err: unknown) {
-    const code = getAuthErrorCode(err);
-    if (shouldFallbackToGoogleRedirect(code)) {
-      try {
-        await signInWithRedirect(auth, googleProvider);
-        return { kind: "redirect" };
-      } catch (redirectErr) {
-        throw redirectErr;
-      }
-    }
-    throw err;
-  }
+  const { user } = await signInWithPopup(auth, googleProvider);
+  await createUserProfile(user);
+  return toAuthUser(user);
 }
 
 /** Call once on app load after a Google redirect sign-in to create the Firestore user stub. */

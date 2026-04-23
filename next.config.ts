@@ -15,6 +15,15 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        source: "/auth/:path*",
+        headers: [
+          {
+            key: "Cross-Origin-Opener-Policy",
+            value: "same-origin-allow-popups",
+          },
+        ],
+      },
+      {
         source: "/",
         headers: [
           {

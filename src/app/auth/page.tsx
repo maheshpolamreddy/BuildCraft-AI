@@ -164,12 +164,9 @@ function PlatformEntryInner() {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      const outcome = await signInWithGoogle();
-      if (outcome.kind === "redirect") {
-        return;
-      }
-      setCurrentUser(outcome.user);
-      await logAction(outcome.user.uid, "auth.sign_in", { method: "google" });
+      const googleUser = await signInWithGoogle();
+      setCurrentUser(googleUser);
+      await logAction(googleUser.uid, "auth.sign_in", { method: "google" });
       userReturnedToAuth.current = false;
       if (!asDeveloper) setRole(null);
       setEmployerWizardOpen(false);
