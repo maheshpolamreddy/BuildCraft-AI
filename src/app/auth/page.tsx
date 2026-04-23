@@ -726,7 +726,7 @@ function friendlyError(msg: string, err?: unknown): string {
     );
   }
   if (code === "auth/popup-blocked") {
-    return "Your browser blocked the sign-in window. Allow popups for this site (address bar) and use Continue with Google again.";
+    return "Popup blocked by browser. Please allow popups or try again.";
   }
   if (code === "auth/popup-closed-by-user") {
     return "The sign-in window was closed. Try again when you are ready.";
@@ -739,7 +739,7 @@ function friendlyError(msg: string, err?: unknown): string {
   if (msg.includes("invalid-email"))            return "Please enter a valid email address.";
   if (msg.includes("popup-closed"))             return "Sign-in popup was closed. Please try again.";
   if (msg.includes("popup-blocked")) {
-    return "Your browser blocked the sign-in window. Allow popups for this site and try Continue with Google again.";
+    return "Popup blocked by browser. Please allow popups or try again.";
   }
   if (msg.includes("network-request-failed"))   return "Network error. Check your internet connection.";
   if (msg.includes("unauthorized-domain"))      return "This domain is not authorized in Firebase. Add it under Authentication → Settings → Authorized domains.";
