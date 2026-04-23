@@ -16,9 +16,12 @@ const firebaseConfig = {
 // Prevent re-initialization during Next.js hot reloads
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-export const auth           = getAuth(app);
-export const db             = getFirestore(app);
+export const auth = getAuth(app);
+export const db   = getFirestore(app);
+
 export const googleProvider = new GoogleAuthProvider();
+// Account picker on every sign-in; helps multi-account and redirect return flows.
+googleProvider.setCustomParameters({ prompt: "select_account" });
 
 // Analytics only runs in the browser (not during SSR)
 export const analyticsPromise = isSupported().then((yes) =>

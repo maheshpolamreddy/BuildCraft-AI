@@ -83,10 +83,25 @@ export type SignInWithGoogleResult =
   | { kind: "redirect" };
 
 /**
- * Google sign-in: popup first (better UX). If the browser blocks the popup,
- * falls back to same-window redirect (avoids auth/popup-blocked).
+ * In production, use redirect-only. Popup-based sign-in often breaks on deployed hosts:
+ * the OAuth window may open as a new tab, and strict Cross-Origin-Opener-Policy (e.g. on
+ * Vercel) can block the postMessage back to the opener, so the user picks an account but
+ * the app never receives the session. Full-page redirect avoids that entirely.
+ * In development, we still use popup first for a faster local loop, then the same fallbacks.
+ */
+function useGoogleRedirectOnly(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
+/**
+ * Google sign-in: in production, full-page redirect. In dev, popup first; if the browser
+ * blocks the popup, fall back to same-window redirect.
  */
 export async function signInWithGoogle(): Promise<SignInWithGoogleResult> {
+  if (useGoogleRedirectOnly()) {
+    await signInWithRedirect(auth, googleProvider);
+    return { kind: "redirect" };
+  }
   try {
     const { user } = await signInWithPopup(auth, googleProvider);
     await createUserProfile(user);
@@ -112,7 +127,12 @@ export async function consumeGoogleRedirectResult(): Promise<AuthUser | null> {
     await createUserProfile(result.user);
     return toAuthUser(result.user);
   } catch (err) {
-    console.warn("[auth] getRedirectResult:", err);
+    // Log at error level in prod so Vercel logs show OAuth redirect failures.
+    const code = getAuthErrorCode(err);
+    if (code === "auth/redirect-cancelled-by-user") {
+      return null;
+    }
+    console.error("[auth] getRedirectResult failed:", err);
     return null;
   }
 }
