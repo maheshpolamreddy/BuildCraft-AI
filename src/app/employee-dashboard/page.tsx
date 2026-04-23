@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo, useCallback, type RefObject } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ShieldCheck, User, Star, Activity, AlertTriangle, Briefcase,
@@ -31,6 +31,7 @@ import { auth, db } from "@/lib/firebase";
 import { listenWhenAuthed } from "@/lib/auth";
 import { DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 import { formatDateTimeSmart } from "@/lib/dateDisplay";
+import { useScrollRailMetrics, ScrollGlowRail } from "@/components/scroll-glow/ScrollGlowRail";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Tab = "projects" | "workspace" | "assessments" | "profile";
@@ -310,78 +311,6 @@ const SKILL_ASSESSMENT_CATALOG: SkillAssessmentCatalogEntry[] = [
     ],
   },
 ];
-
-type ScrollRailMetrics = { pctTop: number; pctHeight: number; scrollable: boolean };
-
-function useScrollRailMetrics(scrollRef: RefObject<HTMLElement | null>): ScrollRailMetrics {
-  const [m, setM] = useState<ScrollRailMetrics>({ pctTop: 0, pctHeight: 0, scrollable: false });
-  const update = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const { scrollTop, scrollHeight, clientHeight } = el;
-    if (scrollHeight <= clientHeight + 2) {
-      setM({ pctTop: 0, pctHeight: 0, scrollable: false });
-      return;
-    }
-    const maxScroll = scrollHeight - clientHeight;
-    const visibleRatio = clientHeight / scrollHeight;
-    const thumbPct = Math.max(visibleRatio * 100, 10);
-    const scrollRatio = maxScroll > 0 ? scrollTop / maxScroll : 0;
-    const pctTop = scrollRatio * (100 - thumbPct);
-    setM({ pctTop, pctHeight: thumbPct, scrollable: true });
-  }, [scrollRef]);
-  useEffect(() => {
-    const el = scrollRef.current;
-    update();
-    if (!el) return undefined;
-    el.addEventListener("scroll", update, { passive: true });
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    window.addEventListener("resize", update);
-    return () => {
-      el.removeEventListener("scroll", update);
-      ro.disconnect();
-      window.removeEventListener("resize", update);
-    };
-  }, [scrollRef, update]);
-  return m;
-}
-
-function ScrollGlowRail({
-  metrics,
-  variant,
-}: {
-  metrics: ScrollRailMetrics;
-  variant: "sidebar" | "panel";
-}) {
-  const thumbGradient =
-    variant === "sidebar"
-      ? "from-cyan-200/95 via-indigo-400/90 to-violet-500/85"
-      : "from-sky-300/90 via-indigo-400/95 to-fuchsia-400/80";
-  const shimmerGradient =
-    variant === "sidebar"
-      ? "from-transparent via-indigo-400/55 to-transparent"
-      : "from-transparent via-cyan-400/45 to-transparent";
-  return (
-    <div
-      className="pointer-events-none absolute right-0 top-0 z-20 flex h-full w-3 shrink-0 justify-center"
-      aria-hidden
-    >
-      <div className="relative h-full w-full overflow-hidden rounded-full opacity-90">
-        <div className="absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-gradient-to-b from-white/[0.03] via-white/15 to-white/[0.03]" />
-        <div
-          className={`dashboard-rail-shimmer absolute left-1/2 top-0 h-[42%] w-[5px] -translate-x-1/2 rounded-full bg-gradient-to-b ${shimmerGradient} blur-[1px] shadow-[0_0_18px_rgba(129,140,248,0.35)]`}
-        />
-        {metrics.scrollable ? (
-          <div
-            className={`absolute left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-gradient-to-b ${thumbGradient} shadow-[0_0_16px_rgba(99,102,241,0.75),0_0_28px_rgba(34,211,238,0.25)] transition-[top,height] duration-150 ease-out`}
-            style={{ top: `${metrics.pctTop}%`, height: `${metrics.pctHeight}%` }}
-          />
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function EmployeeDashboard() {
@@ -985,7 +914,7 @@ export default function EmployeeDashboard() {
   }
 
   return (
-    <div className="min-h-screen relative flex overflow-x-hidden bg-[#030303]">
+    <div className="min-h-screen h-screen max-h-screen overflow-hidden relative flex overflow-x-hidden bg-[#030303]">
       <div className="fixed top-1/4 left-1/4 w-[500px] h-[500px] bg-white/[0.02] rounded-full blur-[150px] pointer-events-none -z-10" />
       <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-white/[0.01] rounded-full blur-[180px] pointer-events-none -z-10" />
 

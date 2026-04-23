@@ -38,6 +38,7 @@ import type { GeneratedPromptRow, ProjectBlueprint as StoreProjectBlueprint } fr
 import { useAutoSave } from "@/hooks/useAutoSave";
 import { CreatorFlowBreadcrumb } from "@/components/FlowNavigation";
 import { formatProjectListDateBadge } from "@/lib/dateDisplay";
+import { useScrollRailMetrics, ScrollGlowRail } from "@/components/scroll-glow/ScrollGlowRail";
 
 type Tab = "architecture" | "tools" | "risks" | "prompts" | "code" | "config";
 
@@ -1091,6 +1092,10 @@ export default function ArchitectureView() {
   }, [analysisLoading, promptsLoading, orchestrationLabels.length]);
 
   const autoOrchestrateAttempted = useRef(false);
+  const asideScrollRef = useRef<HTMLDivElement>(null);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+  const asideRail = useScrollRailMetrics(asideScrollRef);
+  const mainRail = useScrollRailMetrics(mainScrollRef);
 
   const runFullPlanOrchestration = useCallback(async () => {
     if (!project) return;
@@ -1461,7 +1466,7 @@ export default function ArchitectureView() {
   }
 
   return (
-    <div className="min-h-screen relative flex">
+    <div className="min-h-screen h-screen max-h-screen overflow-hidden relative flex">
       <CreatorFlowGuard />
       {/* Ambient background glows */}
       <div className="fixed top-0 left-0 w-[600px] h-[600px] bg-indigo-500/[0.04] rounded-full blur-[200px] pointer-events-none -z-10" />
@@ -1469,7 +1474,11 @@ export default function ArchitectureView() {
       <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-blue-500/[0.02] rounded-full blur-[150px] pointer-events-none -z-10" />
 
       {/* Sidebar */}
-      <aside className="w-64 border-r border-white/5 bg-[#030303]/90 backdrop-blur-2xl flex flex-col p-6 sticky top-0 h-screen shadow-[inset_-1px_0_0_rgba(255,255,255,0.03)]">
+      <aside className="relative w-64 shrink-0 border-r border-white/5 bg-[#030303]/90 backdrop-blur-2xl flex flex-col sticky top-0 h-screen shadow-[inset_-1px_0_0_rgba(255,255,255,0.03)]">
+        <div
+          ref={asideScrollRef}
+          className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col p-6"
+        >
         <div className="mb-8">
           <Link href="/" className="flex items-center gap-2 group w-fit hover:scale-105 transition-transform">
             <Logo className="w-9 h-9 group-hover:drop-shadow-[0_0_15px_rgba(59,130,246,0.8)] transition-all" />
@@ -1641,7 +1650,7 @@ export default function ArchitectureView() {
                     </p>
                   )}
 
-                  <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
+                  <div className="no-scrollbar space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
                     {filteredHistory.map(saved => {
                       const isActive = saved.id === savedProjectId;
                       return (
@@ -1700,10 +1709,16 @@ export default function ArchitectureView() {
             <span className="text-[10px] text-emerald-400/80 font-bold tracking-wide">Confidence: {project?.confidence ?? 72}%</span>
           </div>
         </div>
+        </div>
+        <ScrollGlowRail metrics={asideRail} variant="sidebar" />
       </aside>
 
       {/* Main Content */}
-      <main className="flex-grow p-8 lg:p-10 overflow-y-auto bg-[#030303]">
+      <main className="relative flex-1 min-w-0 min-h-0 flex flex-col bg-[#030303]">
+        <div
+          ref={mainScrollRef}
+          className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-8 lg:p-10"
+        >
         <div className="max-w-5xl space-y-8">
           <CreatorFlowBreadcrumb />
 
@@ -2494,7 +2509,7 @@ export default function ArchitectureView() {
 
                           {/* Prompt body */}
                           <div className="relative">
-                            <pre className="p-5 text-[11.5px] text-white/70 leading-[1.75] overflow-x-auto font-mono whitespace-pre-wrap bg-black/25 max-h-[520px] overflow-y-auto">
+                            <pre className="no-scrollbar p-5 text-[11.5px] text-white/70 leading-[1.75] overflow-x-auto font-mono whitespace-pre-wrap bg-black/25 max-h-[520px] overflow-y-auto">
                               {p.prompt}
                             </pre>
                             {/* Paste hint */}
@@ -2575,7 +2590,7 @@ export default function ArchitectureView() {
                         <CopyButton text={allEnvBlock} />
                       </div>
                     </div>
-                    <pre className="p-5 text-[11px] text-emerald-300/80 font-mono leading-relaxed overflow-x-auto bg-[#0a0a0a] max-h-64 overflow-y-auto whitespace-pre">
+                    <pre className="no-scrollbar p-5 text-[11px] text-emerald-300/80 font-mono leading-relaxed overflow-x-auto bg-[#0a0a0a] max-h-64 overflow-y-auto whitespace-pre">
                       {allEnvBlock}
                     </pre>
                   </div>
@@ -2837,7 +2852,7 @@ export default function ArchitectureView() {
                           <CopyButton text={JSON.stringify(uiJsonScreen, null, 2)} />
                         </div>
                         {uiJsonShowRaw && (
-                          <pre className="max-h-56 overflow-auto rounded-xl border border-white/10 bg-black/60 p-4 text-[11px] leading-relaxed text-emerald-300/80">
+                          <pre className="no-scrollbar max-h-56 overflow-auto rounded-xl border border-white/10 bg-black/60 p-4 text-[11px] leading-relaxed text-emerald-300/80">
                             {JSON.stringify(uiJsonScreen, null, 2)}
                           </pre>
                         )}
@@ -3019,7 +3034,7 @@ export default function ArchitectureView() {
                             <CopyButton text={stitchResult.html} />
                           </div>
                         </div>
-                        <pre className="p-5 text-[11px] text-emerald-300/80 leading-relaxed overflow-x-auto font-mono whitespace-pre-wrap bg-[#0a0a0a] max-h-[500px] overflow-y-auto">
+                        <pre className="no-scrollbar p-5 text-[11px] text-emerald-300/80 leading-relaxed overflow-x-auto font-mono whitespace-pre-wrap bg-[#0a0a0a] max-h-[500px] overflow-y-auto">
                           <code>{stitchResult.html}</code>
                         </pre>
                       </motion.div>
@@ -3260,7 +3275,7 @@ export default function ArchitectureView() {
                                     <CopyButton text={generated.code} />
                                   </div>
                                 </div>
-                                <pre className="p-5 text-[11px] text-emerald-300/80 leading-relaxed overflow-x-auto font-mono whitespace-pre-wrap bg-[#0a0a0a] max-h-[500px] overflow-y-auto">
+                                <pre className="no-scrollbar p-5 text-[11px] text-emerald-300/80 leading-relaxed overflow-x-auto font-mono whitespace-pre-wrap bg-[#0a0a0a] max-h-[500px] overflow-y-auto">
                                   <code>{generated.code}</code>
                                 </pre>
                               </div>
@@ -3422,6 +3437,8 @@ export default function ArchitectureView() {
             </button>
           </motion.div>
         </div>
+        </div>
+        <ScrollGlowRail metrics={mainRail} variant="panel" />
       </main>
     </div>
   );

@@ -4,6 +4,7 @@ import "./globals.css";
 import AuthProvider from "@/components/AuthProvider";
 import AnimatedFavicon from "@/components/AnimatedFavicon";
 import NextTopLoader from "nextjs-toploader";
+import { DocumentScrollGlowRail } from "@/components/scroll-glow/ScrollGlowRail";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -26,6 +27,7 @@ export default function RootLayout({
         <NextTopLoader color="#4f46e5" showSpinner={false} />
         <AnimatedFavicon />
         <AuthProvider>
+          <DocumentScrollGlowRail />
           {children}
         </AuthProvider>
       </body>

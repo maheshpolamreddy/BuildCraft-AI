@@ -141,7 +141,7 @@
   display: none;
 }
 
-@keyframes dashboard-rail-shimmer {
+@keyframes scroll-rail-shimmer {
   0% {
     transform: translateY(-120%);
     opacity: 0.25;
@@ -155,6 +155,8 @@
   }
 }
 
+/* Site-wide glow scroll indicator (shells + document rail) */
+.scroll-rail-shimmer,
 .dashboard-rail-shimmer {
-  animation: dashboard-rail-shimmer 3.8s ease-in-out infinite;
+  animation: scroll-rail-shimmer 3.8s ease-in-out infinite;
 }

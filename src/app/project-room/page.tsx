@@ -65,6 +65,7 @@ import { listenWhenAuthed } from "@/lib/auth";
 import { getProject, claimProjectAsDeveloper, syncDeveloperUidToProjectRoot, type SavedProject } from "@/lib/firestore";
 import { CreatorFlowBreadcrumb, DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
 import { CreatorFlowGuard } from "@/components/CreatorFlowGuard";
+import { useScrollRailMetrics, ScrollGlowRail } from "@/components/scroll-glow/ScrollGlowRail";
 import { ProjectCompletionPanel } from "@/components/ProjectCompletionPanel";
 import {
   initProjectExecution,
@@ -824,6 +825,11 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     return () => { clearTimeout(timer); matchTriggeredRef.current = false; };
   }, [activeTab, isCreator, matchedDevs.length, matchLoading, authReady, currentUser?.uid, savedProjectId]);
 
+  const asideScrollRef = useRef<HTMLDivElement>(null);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+  const asideRail = useScrollRailMetrics(asideScrollRef);
+  const mainRail = useScrollRailMetrics(mainScrollRef);
+
   // ── Load PRDs when PRD tab opens — scoped to this workspace (not all user PRDs) ─
   useEffect(() => {
     if (activeTab !== "prd" || !currentUser) return;
@@ -1529,13 +1535,17 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   }
 
   return (
-    <div className="min-h-screen relative flex">
+    <div className="min-h-screen h-screen max-h-screen overflow-hidden relative flex">
       <CreatorFlowGuard />
       <div className="fixed inset-0 pointer-events-none opacity-[0.03] z-50 bg-[url('/noise.svg')]" />
       <div className="fixed top-1/4 right-1/4 w-[500px] h-[500px] bg-white/[0.02] rounded-full blur-[150px] pointer-events-none -z-10" />
 
       {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
-      <aside className="w-64 border-r border-white/5 bg-[#050505]/80 backdrop-blur-xl flex flex-col p-6 sticky top-0 h-screen overflow-y-auto">
+      <aside className="relative w-64 shrink-0 border-r border-white/5 bg-[#050505]/80 backdrop-blur-xl flex flex-col sticky top-0 h-screen">
+        <div
+          ref={asideScrollRef}
+          className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col p-6"
+        >
         <div className="mb-6">
           <Link href="/" className="flex items-center gap-2 group w-fit mb-1">
             <span className="text-lg font-black text-white tracking-tighter group-hover:text-white/80 transition-colors truncate max-w-[180px]">BuildCraft AI</span>
@@ -1657,10 +1667,16 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
           </div>
         </div>
         )}
+        </div>
+        <ScrollGlowRail metrics={asideRail} variant="sidebar" />
       </aside>
 
       {/* ── Main Content ────────────────────────────────────────────────────── */}
-      <main className="flex-grow p-10 overflow-y-auto">
+      <main className="relative flex-1 min-w-0 min-h-0 flex flex-col">
+        <div
+          ref={mainScrollRef}
+          className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-10"
+        >
         <div className="max-w-4xl space-y-10">
           {isDeveloper || isDeveloperWorkspace ? (
             <DeveloperFlowBreadcrumb
@@ -2670,7 +2686,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                     </div>
 
                     {/* Messages */}
-                    <div className="flex-1 overflow-y-auto p-5 space-y-3">
+                    <div className="no-scrollbar flex-1 overflow-y-auto p-5 space-y-3">
                       {fireMsgs.length === 0 && (
                         <div className="flex flex-col items-center justify-center h-full gap-2 text-white/20">
                           <MessageSquare className="w-8 h-8" />
@@ -2971,7 +2987,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500/50" />
                          <span className="ml-2 text-white/20 text-[9px] uppercase tracking-widest font-black">Build Terminal</span>
                       </div>
-                      <div className="p-4 space-y-1 h-56 overflow-y-auto scrollbar-hide flex flex-col-reverse">
+                      <div className="no-scrollbar p-4 space-y-1 h-56 overflow-y-auto flex flex-col-reverse">
                          {[...deployLogs].reverse().map((log, i) => (
                            <div key={i} className={`${log.includes("Completed") || log.includes("stable") ? "text-emerald-400" : log.includes("error") ? "text-red-400" : "text-white/40"}`}>
                              <span className="text-white/10 mr-2">[{new Date().toLocaleTimeString()}]</span>
@@ -3165,6 +3181,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
           </AnimatePresence>
         </div>
+        </div>
+        <ScrollGlowRail metrics={mainRail} variant="panel" />
       </main>
 
       {/* ── Task Review Modal ───────────────────────────────────────────────── */}
@@ -3183,7 +3201,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                   <X className="w-4 h-4" />
                 </button>
               </div>
-              <div className="p-5 space-y-4 max-h-96 overflow-y-auto">
+              <div className="no-scrollbar p-5 space-y-4 max-h-96 overflow-y-auto">
                 <div className="flex items-center gap-3">
                   {reviewTask.validationScore && (
                     <div className="flex items-center gap-2 p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-xl">
@@ -3242,7 +3260,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                   <X className="w-4 h-4" />
                 </button>
               </div>
-              <div className="p-5 space-y-4 max-h-72 overflow-y-auto">
+              <div className="no-scrollbar p-5 space-y-4 max-h-72 overflow-y-auto">
                 {messages.map(msg => (
                   <div key={msg.id} className={`flex gap-3 ${msg.isMe ? "flex-row-reverse" : ""}`}>
                     <div className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center shrink-0 text-[10px] font-bold text-white">{msg.from[0]}</div>

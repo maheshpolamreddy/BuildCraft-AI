@@ -33,6 +33,7 @@ import {
   pastProjectDisplayTitle,
   resolveProjectDisplayName,
 } from "@/lib/projectName";
+import { useScrollRailMetrics, ScrollGlowRail } from "@/components/scroll-glow/ScrollGlowRail";
 import { hydrateHistoryWithSessionProject, mergeProjectListsFromQueries } from "@/lib/projectHistory";
 
 const typeConfig: Record<Requirement["type"], { label: string; color: string; bg: string }> = {
@@ -88,6 +89,10 @@ export default function DiscoveryHub() {
   const [showDeleted,    setShowDeleted]    = useState(false);
   /** Ignores stale responses when several history loads overlap (e.g. save + effect). */
   const historyFetchSeq = useRef(0);
+  const asideScrollRef = useRef<HTMLDivElement>(null);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+  const asideRail = useScrollRailMetrics(asideScrollRef);
+  const mainRail = useScrollRailMetrics(mainScrollRef);
 
   // ── Hire a developer — AI matching (same engine as Project Workspace) ─────
   const [matchedDevs,   setMatchedDevs]   = useState<MatchedDeveloper[]>([]);
@@ -429,14 +434,18 @@ export default function DiscoveryHub() {
   }
 
   return (
-    <div className="min-h-screen relative flex">
+    <div className="min-h-screen h-screen max-h-screen overflow-hidden relative flex">
       <CreatorFlowGuard />
       <div className="fixed top-0 right-0 w-[700px] h-[700px] bg-blue-500/[0.04] rounded-full blur-[180px] pointer-events-none -z-10" />
       <div className="fixed bottom-0 left-0 w-[600px] h-[600px] bg-purple-500/[0.03] rounded-full blur-[180px] pointer-events-none -z-10" />
       <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-emerald-500/[0.02] rounded-full blur-[150px] pointer-events-none -z-10" />
 
       {/* Sidebar */}
-      <aside className="w-64 border-r border-white/5 bg-[#030303]/90 backdrop-blur-2xl flex flex-col p-6 sticky top-0 h-screen shadow-[inset_-1px_0_0_rgba(255,255,255,0.03)]">
+      <aside className="relative w-64 shrink-0 border-r border-white/5 bg-[#030303]/90 backdrop-blur-2xl flex flex-col sticky top-0 h-screen shadow-[inset_-1px_0_0_rgba(255,255,255,0.03)]">
+        <div
+          ref={asideScrollRef}
+          className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col p-6"
+        >
         <div className="mb-8">
           <Link href="/" className="flex items-center gap-2 group w-fit hover:scale-105 transition-transform">
             <Logo className="w-9 h-9 group-hover:drop-shadow-[0_0_15px_rgba(59,130,246,0.8)] transition-all" />
@@ -583,7 +592,7 @@ export default function DiscoveryHub() {
                     </p>
                   )}
 
-                  <div className="space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
+                  <div className="no-scrollbar space-y-1.5 max-h-[220px] overflow-y-auto pr-1">
                     {filteredHistory.map(saved => {
                       const isActive = saved.id === (useStore.getState().savedProjectId);
                       return (
@@ -653,10 +662,16 @@ export default function DiscoveryHub() {
             </div>
           </div>
         )}
+        </div>
+        <ScrollGlowRail metrics={asideRail} variant="sidebar" />
       </aside>
 
       {/* Main Content */}
-      <main className="flex-grow p-8 lg:p-10 lg:flex gap-10 overflow-y-auto bg-[#030303]">
+      <main className="relative flex-1 min-w-0 min-h-0 flex flex-col bg-[#030303]">
+        <div
+          ref={mainScrollRef}
+          className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-8 lg:p-10 lg:flex lg:gap-10"
+        >
         <div className="flex-grow max-w-4xl space-y-10">
           <CreatorFlowBreadcrumb />
 
@@ -1450,6 +1465,8 @@ export default function DiscoveryHub() {
             </div>
           </motion.aside>
         )}
+        </div>
+        <ScrollGlowRail metrics={mainRail} variant="panel" />
       </main>
     </div>
   );

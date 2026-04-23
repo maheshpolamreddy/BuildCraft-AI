@@ -21,6 +21,7 @@ import {
   type Availability,
 } from "@/lib/developerProfile";
 import { DeveloperFlowBreadcrumb } from "@/components/FlowNavigation";
+import { useScrollRailMetrics, ScrollGlowRail } from "@/components/scroll-glow/ScrollGlowRail";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 type ProfileTab = "personal" | "professional" | "portfolio" | "availability";
@@ -111,6 +112,10 @@ export default function DeveloperProfilePage() {
   const [newDesc, setNewDesc]   = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const asideScrollRef = useRef<HTMLDivElement>(null);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+  const asideRail = useScrollRailMetrics(asideScrollRef);
+  const mainRail = useScrollRailMetrics(mainScrollRef);
 
   // ── Load profile + live updates (badges / tier after project completion) ───
   useEffect(() => {
@@ -254,7 +259,7 @@ export default function DeveloperProfilePage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen h-screen max-h-screen overflow-hidden flex flex-col">
       {/* Background glows */}
       <div className="fixed inset-0 pointer-events-none -z-10">
         <div className="absolute top-0 right-1/3 w-[600px] h-[600px] bg-indigo-500/[0.04] rounded-full blur-[150px]" />
@@ -297,10 +302,14 @@ export default function DeveloperProfilePage() {
 
       <DeveloperFlowBreadcrumb />
 
-      <div className="flex flex-col lg:flex-row flex-1">
+      <div className="flex flex-col lg:flex-row flex-1 min-h-0">
 
         {/* ── LEFT — Live profile card (sticky) ────────────────────────── */}
-        <aside className="lg:w-80 lg:sticky lg:top-[69px] lg:h-[calc(100vh-69px)] overflow-y-auto p-6 space-y-4 border-b lg:border-b-0 lg:border-r border-white/5">
+        <aside className="relative lg:w-80 shrink-0 border-b lg:border-b-0 lg:border-r border-white/5 lg:sticky lg:top-[69px] lg:h-[calc(100vh-69px)] flex flex-col lg:min-h-0">
+          <div
+            ref={asideScrollRef}
+            className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-6 space-y-4"
+          >
 
           {/* Avatar + name */}
           <div className="glass-panel p-6 rounded-3xl border border-white/10 space-y-5">
@@ -480,10 +489,16 @@ export default function DeveloperProfilePage() {
               )}
             </div>
           </div>
+          </div>
+          <ScrollGlowRail metrics={asideRail} variant="sidebar" />
         </aside>
 
         {/* ── RIGHT — Edit panels ───────────────────────────────────────── */}
-        <main className="flex-1 p-6 lg:p-10 overflow-y-auto">
+        <main className="relative flex-1 min-h-0 min-w-0 flex flex-col">
+          <div
+            ref={mainScrollRef}
+            className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-6 lg:p-10"
+          >
           <div className="max-w-2xl mx-auto space-y-6">
 
             {/* Page title */}
@@ -838,6 +853,8 @@ export default function DeveloperProfilePage() {
             </div>
 
           </div>
+          </div>
+          <ScrollGlowRail metrics={mainRail} variant="panel" />
         </main>
       </div>
     </div>
