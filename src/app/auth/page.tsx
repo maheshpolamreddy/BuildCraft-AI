@@ -14,9 +14,8 @@ import type { EmployerProfile } from "@/store/useStore";
 import {
   signUpWithEmail,
   signInWithEmail,
-  processGoogleUser,
 } from "@/lib/auth";
-import { signInWithPopup } from "firebase/auth";
+import { signInWithRedirect } from "firebase/auth";
 import { auth, googleProvider } from "@/lib/firebase";
 import { logAction } from "@/lib/auditLog";
 import { updateUserProfile } from "@/lib/firestore";
@@ -43,8 +42,6 @@ function PlatformEntryInner() {
   const [name,       setName]       = useState("");
   const [showPass,   setShowPass]   = useState(false);
   const [authError,  setAuthError]  = useState<string | null>(null);
-  /** Dev only: popup-blocked helper UI (hidden in production). */
-  const [googlePopupBlocked, setGooglePopupBlocked] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [postRoleLoading, setPostRoleLoading] = useState(false);
   const [employerFullName, setEmployerFullName] = useState("");
@@ -195,7 +192,6 @@ function PlatformEntryInner() {
       userReturnedToAuth.current = false;
       if (!asDeveloper) setRole(null);
       setEmployerWizardOpen(false);
-      setGooglePopupBlocked(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Authentication failed.";
       setAuthError(friendlyError(msg, err));
@@ -218,23 +214,12 @@ function PlatformEntryInner() {
     setEmployerWebsite((prev) => (prev.trim() ? prev : ep.website));
   }, [step, name]);
 
-  async function handleGoogleAuth(popupPromise: Promise<any>) {
+  function handleGoogleAuth() {
+    if (authLoading) return;
     setAuthLoading(true);
     setAuthError(null);
-    try {
-      const { user } = await popupPromise;
-      const googleUser = await processGoogleUser(user);
-      setCurrentUser(googleUser);
-      await logAction(googleUser.uid, "auth.sign_in", { method: "google" });
-      userReturnedToAuth.current = false;
-      if (!asDeveloper) setRole(null);
-      setEmployerWizardOpen(false);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Google sign-in failed.";
-      setAuthError(friendlyError(msg, err));
-    } finally {
-      setAuthLoading(false);
-    }
+    signInWithRedirect(auth, googleProvider);
+    // Page will redirect to Google then return; AuthProvider handles getRedirectResult.
   }
 
   /** After choosing Developer: new users -> registration; completed profiles -> dashboard. */
@@ -393,11 +378,7 @@ function PlatformEntryInner() {
                 <div className="space-y-4 max-w-md mx-auto">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (authLoading) return;
-                      const popupPromise = signInWithPopup(auth, googleProvider);
-                      void handleGoogleAuth(popupPromise);
-                    }}
+                    onClick={handleGoogleAuth}
                     disabled={authLoading}
                     className="w-full py-4 flex items-center justify-center gap-3 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/30 transition-all rounded-2xl text-sm font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -474,7 +455,6 @@ function PlatformEntryInner() {
                     onClick={() => {
                       setAuthMode(authMode === "sign-in" ? "sign-up" : "sign-in");
                       setAuthError(null);
-                      setGooglePopupBlocked(false);
                     }}
                     className="w-full text-center text-xs text-white/40 hover:text-white transition-colors py-2"
                   >
