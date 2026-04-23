@@ -23,7 +23,7 @@ export function CreatorFlowGuard() {
     if (pathname?.startsWith("/creator/")) return;
 
     const returnTo = pathname || "/discovery";
-    router.replace(`/creator/profile-setup?return=${encodeURIComponent(returnTo)}`);
+    router.replace(`/creator/profile/setup?return=${encodeURIComponent(returnTo)}`);
   }, [
     authReady,
     currentUser,

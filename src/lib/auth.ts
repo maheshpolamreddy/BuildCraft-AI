@@ -2,6 +2,8 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut,
   updateProfile,
   sendPasswordResetEmail,
@@ -27,6 +29,14 @@ export function toAuthUser(user: User): AuthUser {
     displayName: user.displayName,
     photoURL:    user.photoURL,
   };
+}
+
+function getAuthErrorCode(err: unknown): string | undefined {
+  if (err && typeof err === "object" && "code" in err) {
+    const c = (err as { code?: unknown }).code;
+    return typeof c === "string" ? c : undefined;
+  }
+  return undefined;
 }
 
 // ── Profile creation ──────────────────────────────────────────────────────────
@@ -68,10 +78,43 @@ export async function signInWithEmail(email: string, password: string) {
   return toAuthUser(user);
 }
 
-export async function signInWithGoogle() {
-  const { user } = await signInWithPopup(auth, googleProvider);
-  await createUserProfile(user);  // non-blocking internally
-  return toAuthUser(user);
+export type SignInWithGoogleResult =
+  | { kind: "signedIn"; user: AuthUser }
+  | { kind: "redirect" };
+
+/**
+ * Google sign-in: popup first (better UX). If the browser blocks the popup,
+ * falls back to same-window redirect (avoids auth/popup-blocked).
+ */
+export async function signInWithGoogle(): Promise<SignInWithGoogleResult> {
+  try {
+    const { user } = await signInWithPopup(auth, googleProvider);
+    await createUserProfile(user);
+    return { kind: "signedIn", user: toAuthUser(user) };
+  } catch (err: unknown) {
+    const code = getAuthErrorCode(err);
+    if (
+      code === "auth/popup-blocked" ||
+      code === "auth/operation-not-supported-in-this-environment"
+    ) {
+      await signInWithRedirect(auth, googleProvider);
+      return { kind: "redirect" };
+    }
+    throw err;
+  }
+}
+
+/** Call once on app load after a Google redirect sign-in to create the Firestore user stub. */
+export async function consumeGoogleRedirectResult(): Promise<AuthUser | null> {
+  try {
+    const result = await getRedirectResult(auth);
+    if (!result?.user) return null;
+    await createUserProfile(result.user);
+    return toAuthUser(result.user);
+  } catch (err) {
+    console.warn("[auth] getRedirectResult:", err);
+    return null;
+  }
 }
 
 export async function signOutUser() {

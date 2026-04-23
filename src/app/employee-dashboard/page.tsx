@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, Suspense } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ShieldCheck, User, Star, Activity, AlertTriangle, Briefcase,
@@ -22,7 +22,7 @@ import {
 } from "@/lib/developerProfile";
 import { type MatchedProject } from "@/app/api/match-projects/route";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { signOutUser } from "@/lib/auth";
 import { subscribeHireRequestsByDeveloper, type HireRequest } from "@/lib/hireRequests";
 import { getProject, claimProjectAsDeveloper } from "@/lib/firestore";
@@ -313,19 +313,19 @@ const SKILL_ASSESSMENT_CATALOG: SkillAssessmentCatalogEntry[] = [
 ];
 
 // ── Main Component ────────────────────────────────────────────────────────────
-export default function EmployeeDashboard() {
+function EmployeeDashboardInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { project, currentUser, developerProfile, setDeveloperProfile, patchDeveloperProfile, reset, addUserRole, userRoles, setRole, setProject, setSavedProjectId } = useStore();
 
   const [hireReqs,     setHireReqs]    = useState<HireRequest[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("projects");
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const t = new URLSearchParams(window.location.search).get("tab") as Tab | null;
+    const t = searchParams.get("tab") as Tab | null;
     const allowed: Tab[] = ["projects", "workspace", "assessments", "profile"];
     if (t && allowed.includes(t)) setActiveTab(t);
-  }, []);
+  }, [searchParams]);
   const [startedAssessment, setStartedAssessment] = useState<string | null>(null);
   const [quizAnswers, setQuizAnswers] = useState<Record<string, number[]>>({});
   const [assessmentSubmitting, setAssessmentSubmitting] = useState(false);
@@ -2024,5 +2024,19 @@ export default function EmployeeDashboard() {
         <ScrollGlowRail metrics={mainRail} variant="panel" />
       </main>
     </div>
+  );
+}
+
+export default function EmployeeDashboard() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-[#030303] text-white/50">
+          <Loader2 className="w-8 h-8 animate-spin" aria-label="Loading" />
+        </div>
+      }
+    >
+      <EmployeeDashboardInner />
+    </Suspense>
   );
 }

@@ -473,8 +473,16 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   // Deep-link from Discovery / Architecture / hire emails (e.g. ?tab=chat&chat=…)
   useEffect(() => {
     const t = searchParams.get("tab");
-    if (t && VALID_TABS.includes(t as Tab)) setActiveTab(t as Tab);
-  }, [searchParams]);
+    if (!t || !VALID_TABS.includes(t as Tab)) return;
+    const next = t as Tab;
+    if (visibleTabs.includes(next)) setActiveTab(next);
+    else setActiveTab((visibleTabs[0] ?? "milestones") as Tab);
+  }, [searchParams, visibleTabs]);
+
+  useEffect(() => {
+    if (visibleTabs.includes(activeTab)) return;
+    setActiveTab((visibleTabs[0] ?? "milestones") as Tab);
+  }, [visibleTabs, activeTab]);
 
   const approvedCount = Object.values(approvedTools).filter(Boolean).length;
   const projectName  = project?.name ?? "My Project";

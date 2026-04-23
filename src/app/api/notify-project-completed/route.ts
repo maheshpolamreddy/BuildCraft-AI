@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import {
+  adminDb,
+  FirebaseAdminConfigurationError,
+  firebaseAdminUnavailableMessage,
+  isFirestoreCredentialsError,
+} from "@/lib/firebase-admin";
 import { sendProjectCompletionBroadcast, transactionalEmailConfigured } from "@/lib/email";
 
 function appBaseUrl(): string {
@@ -45,6 +50,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
     console.error("[notify-project-completed]", err);
+    if (err instanceof FirebaseAdminConfigurationError || isFirestoreCredentialsError(err)) {
+      return NextResponse.json(
+        { ok: false, error: firebaseAdminUnavailableMessage(err) },
+        { status: 503 },
+      );
+    }
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 }

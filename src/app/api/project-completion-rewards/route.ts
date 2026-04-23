@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { DocumentData } from "firebase-admin/firestore";
-import { adminAuth, adminDb } from "@/lib/firebase-admin";
+import {
+  adminAuth,
+  adminDb,
+  FirebaseAdminConfigurationError,
+  firebaseAdminUnavailableMessage,
+  isFirestoreCredentialsError,
+} from "@/lib/firebase-admin";
 import { processCompletionRewardsAdmin } from "@/lib/rewards-admin";
 
 function projectDocSaysCompleted(data: DocumentData): boolean {
@@ -63,6 +69,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, developerUid });
   } catch (e) {
     console.error("[project-completion-rewards]", e);
+    if (e instanceof FirebaseAdminConfigurationError || isFirestoreCredentialsError(e)) {
+      return NextResponse.json({ error: firebaseAdminUnavailableMessage(e) }, { status: 503 });
+    }
     const msg = e instanceof Error ? e.message : "Internal error";
     return NextResponse.json({ error: msg }, { status: 500 });
   }

@@ -23,13 +23,18 @@ export function useScrollRailMetrics(scrollRef: RefObject<HTMLElement | null>): 
   }, [scrollRef]);
   useEffect(() => {
     const el = scrollRef.current;
-    update();
-    if (!el) return undefined;
+    const raf = requestAnimationFrame(() => {
+      update();
+    });
+    if (!el) {
+      return () => cancelAnimationFrame(raf);
+    }
     el.addEventListener("scroll", update, { passive: true });
     const ro = new ResizeObserver(update);
     ro.observe(el);
     window.addEventListener("resize", update);
     return () => {
+      cancelAnimationFrame(raf);
       el.removeEventListener("scroll", update);
       ro.disconnect();
       window.removeEventListener("resize", update);
@@ -58,13 +63,16 @@ export function useWindowScrollRailMetrics(): ScrollRailMetrics {
     setM({ pctTop, pctHeight: thumbPct, scrollable: true });
   }, []);
   useEffect(() => {
-    update();
+    const raf = requestAnimationFrame(() => {
+      update();
+    });
     window.addEventListener("scroll", update, { passive: true });
     window.addEventListener("resize", update);
     const ro = new ResizeObserver(update);
     ro.observe(document.documentElement);
     if (document.body) ro.observe(document.body);
     return () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
       ro.disconnect();

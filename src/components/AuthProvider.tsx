@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
-import { onAuthChange } from "@/lib/auth";
+import { consumeGoogleRedirectResult, onAuthChange } from "@/lib/auth";
+import { logAction } from "@/lib/auditLog";
 import { useStore } from "@/store/useStore";
 import { getDeveloperProfile, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
 import { getUserProfile, updateUserProfile } from "@/lib/firestore";
@@ -53,18 +54,30 @@ function clearStaleDeveloperStateForUid(uid: string | undefined) {
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let previousUid: string | null = null;
-    const unsubscribe = onAuthChange((user) => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+
+    void (async () => {
+      const fromRedirect = await consumeGoogleRedirectResult();
+      if (fromRedirect && !cancelled) {
+        void logAction(fromRedirect.uid, "auth.sign_in", { method: "google", via: "redirect" });
+      }
+      if (cancelled) return;
+      unsubscribe = onAuthChange((user) => {
       if (!user) {
         if (previousUid !== null) {
           useStore.getState().clearProject();
         }
+        // Do not set `role: null` here. Transient `user === null` during OAuth/token refresh
+        // can fire before the /auth wizard finishes; nulling `role` with step=3 and
+        // `step === 3 && role === "employer"` leaves a blank card until refresh.
+        // Onboarding `role` is reset via `useStore.getState().reset()` on sign-out in the app.
         useStore.setState({
           currentUser: null,
           authReady: true,
           developerProfile: null,
           devRegistrationStep: 1,
           userRoles: [],
-          role: null,
           projectCreatorHydrated: false,
           projectCreatorProfileCompleted: null,
         });
@@ -143,7 +156,12 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
         }
       }
     });
-    return unsubscribe;
+    })();
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, []);
 
   return <>{children}</>;

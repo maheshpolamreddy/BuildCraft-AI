@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import {
+  adminDb,
+  FirebaseAdminConfigurationError,
+  firebaseAdminUnavailableMessage,
+  isFirestoreCredentialsError,
+} from "@/lib/firebase-admin";
 import { sendTaskWorkflowEmails, transactionalEmailConfigured } from "@/lib/email";
 
 function appBaseUrl(): string {
@@ -47,6 +52,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("[notify-task-workflow]", err);
+    if (err instanceof FirebaseAdminConfigurationError || isFirestoreCredentialsError(err)) {
+      return NextResponse.json(
+        { ok: false, error: firebaseAdminUnavailableMessage(err) },
+        { status: 503 },
+      );
+    }
     return NextResponse.json({ ok: false }, { status: 500 });
   }
 }

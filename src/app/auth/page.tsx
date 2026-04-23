@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useLayoutEffect, useEffect, Suspense } from "react";
+import { useState, useLayoutEffect, useEffect, Suspense, useRef } from "react";
 import Threads from "@/components/Threads";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   Building2, User, Lock, ArrowRight, Mail, CheckCircle2,
   ChevronRight, Fingerprint,
@@ -20,11 +20,13 @@ import {
 import { logAction } from "@/lib/auditLog";
 import { updateUserProfile } from "@/lib/firestore";
 import { getDeveloperProfile, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
+import { sanitizeInternalReturnPath } from "@/lib/safePaths";
 
 function PlatformEntryInner() {
   const router  = useRouter();
   const searchParams = useSearchParams();
-  const returnTo     = searchParams.get("return") ?? null;
+  const returnRaw = searchParams.get("return");
+  const returnTo = returnRaw ? sanitizeInternalReturnPath(returnRaw, "/discovery") : null;
   const asDeveloper  = searchParams.get("as") === "developer";
   const {
     role, setRole, setCurrentUser,
@@ -45,9 +47,17 @@ function PlatformEntryInner() {
   const [employerJobTitle, setEmployerJobTitle] = useState("");
   const [employerPhone, setEmployerPhone] = useState("");
   const [employerWebsite, setEmployerWebsite] = useState("");
+  /** Survives transient Zustand `role` clears (auth flicker) so step 3 does not unmount to a blank card. */
+  const [employerWizardOpen, setEmployerWizardOpen] = useState(false);
 
   const handleNext = () => setStep((p) => p + 1);
-  const handleBack = () => setStep((p) => p - 1);
+  /** When true, user used "Back" from role step; don't immediately force step 2 again (still signed in). */
+  const userReturnedToAuth = useRef(false);
+  const handleBack = () => {
+    if (step === 2) userReturnedToAuth.current = true;
+    if (step === 3) setEmployerWizardOpen(false);
+    setStep((p) => p - 1);
+  };
 
   /** Developers finish after role (2 steps). Employers continue to profile (3 steps). */
   const totalSteps = role === "employee" ? 2 : 3;
@@ -62,17 +72,53 @@ function PlatformEntryInner() {
     });
   }, [asDeveloper, setRole]);
 
-  // If user is already logged in and came via ?as=developer, skip auth step
+  /** Wait for persist rehydration so late merge from localStorage cannot wipe role/text state after sign-in. */
+  const [storePersistReady, setStorePersistReady] = useState(
+    () => typeof window !== "undefined" && useStore.persist.hasHydrated(),
+  );
+  useEffect(() => {
+    if (useStore.persist.hasHydrated()) {
+      setStorePersistReady(true);
+      return;
+    }
+    return useStore.persist.onFinishHydration(() => setStorePersistReady(true));
+  }, []);
+
   const authReady = useStore((s) => s.authReady);
   const storeUser = useStore((s) => s.currentUser);
+  const projectCreatorHydrated = useStore((s) => s.projectCreatorHydrated);
+
+  /**
+   * Single redirect path → role step: only after AuthProvider has finished loading Firestore user doc
+   * (projectCreatorHydrated). No handleNext in login handlers; avoids flash/blank while profile loads.
+   */
+  const autoRoleStepSyncRef = useRef(false);
   useEffect(() => {
-    if (!authReady) return;
-    if (!asDeveloper) return;
-    if (!storeUser || storeUser.uid === "demo-guest") return;
-    if (step === 1) {
-      setStep(2);
+    if (!storePersistReady || !authReady) return;
+    if (!storeUser) {
+      autoRoleStepSyncRef.current = false;
+      return;
     }
-  }, [authReady, asDeveloper, step, storeUser]);
+    if (userReturnedToAuth.current) return;
+    if (step !== 1) return;
+    if (autoRoleStepSyncRef.current) return;
+    // Demo: profile is "hydrated" immediately in AuthProvider; no Firestore — advance once to role.
+    if (storeUser.uid === "demo-guest") {
+      if (!projectCreatorHydrated) return;
+      autoRoleStepSyncRef.current = true;
+      if (!asDeveloper) setRole(null);
+      setStep(2);
+      return;
+    }
+    if (!projectCreatorHydrated) return;
+    autoRoleStepSyncRef.current = true;
+    if (!asDeveloper) setRole(null);
+    setStep(2);
+  }, [storePersistReady, authReady, storeUser, projectCreatorHydrated, step, asDeveloper, setRole]);
+
+  /** True while we have a real Firebase user but Firestore user profile has not finished loading. */
+  const isUserProfileLoading =
+    !!storeUser && storeUser.uid !== "demo-guest" && !projectCreatorHydrated;
 
   // ── Firebase auth handlers ────────────────────────────────────────────────
 
@@ -89,10 +135,12 @@ function PlatformEntryInner() {
         : await signInWithEmail(email, password);
       setCurrentUser(user);
       await logAction(user.uid, authMode === "sign-up" ? "auth.sign_up" : "auth.sign_in", { method: "email" });
-      handleNext();
+      userReturnedToAuth.current = false;
+      if (!asDeveloper) setRole(null);
+      setEmployerWizardOpen(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Authentication failed.";
-      setAuthError(friendlyError(msg));
+      setAuthError(friendlyError(msg, err));
     } finally {
       setAuthLoading(false);
     }
@@ -116,13 +164,18 @@ function PlatformEntryInner() {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      const user = await signInWithGoogle();
-      setCurrentUser(user);
-      await logAction(user.uid, "auth.sign_in", { method: "google" });
-      handleNext();
+      const outcome = await signInWithGoogle();
+      if (outcome.kind === "redirect") {
+        return;
+      }
+      setCurrentUser(outcome.user);
+      await logAction(outcome.user.uid, "auth.sign_in", { method: "google" });
+      userReturnedToAuth.current = false;
+      if (!asDeveloper) setRole(null);
+      setEmployerWizardOpen(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Google sign-in failed.";
-      setAuthError(friendlyError(msg));
+      setAuthError(friendlyError(msg, err));
     } finally {
       setAuthLoading(false);
     }
@@ -209,6 +262,14 @@ function PlatformEntryInner() {
     purple:  "bg-purple-500 text-white shadow-[0_0_20px_rgba(168,85,247,0.4)]",
   };
 
+  if (!storePersistReady) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-[#131313] p-6">
+        <Loader2 className="h-10 w-10 shrink-0 animate-spin text-white/35" aria-hidden />
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen relative flex font-body overflow-x-hidden items-center justify-center p-6">
       <div className="fixed inset-0 -z-20 opacity-80 pointer-events-none">
@@ -217,17 +278,14 @@ function PlatformEntryInner() {
       <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-blue-500/[0.02] rounded-full blur-[150px] pointer-events-none -z-10" />
       <div className="absolute bottom-0 left-0 w-[600px] h-[600px] bg-purple-500/[0.02] rounded-full blur-[150px] pointer-events-none -z-10" />
 
-      <AnimatePresence mode="wait">
         <motion.div
-          key={step}
-          initial={{ opacity: 0, y: 40, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          exit={{ opacity: 0, y: -40, scale: 0.98 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-          className="w-full max-w-[500px] premium-card rounded-[2.5rem] relative overflow-hidden ring-1 ring-white/5 flex flex-col shadow-[0_40px_100px_-20px_rgba(0,0,0,0.8)] backdrop-blur-3xl bg-black/40 group mx-auto"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+          className="w-full max-w-[500px] premium-card rounded-[2.5rem] relative overflow-hidden ring-1 ring-white/5 flex flex-col shadow-[0_40px_100px_-20px_rgba(0,0,0,0.8)] backdrop-blur-3xl bg-black/40 group mx-auto [isolation:isolate]"
         >
           {/* Main Auth Card */}
-          <div className="w-full p-8 md:p-12 relative flex flex-col justify-center min-h-[600px] z-10">
+          <div className="w-full p-8 md:p-12 relative flex min-h-[600px] flex-col justify-start z-10">
             <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/10 rounded-full blur-[100px] pointer-events-none z-0" />
             <div className="absolute bottom-0 left-0 w-96 h-96 bg-purple-500/10 rounded-full blur-[100px] pointer-events-none z-0" />
 
@@ -247,13 +305,25 @@ function PlatformEntryInner() {
             ))}
           </div>
 
-          <div className="relative z-10 flex-1 flex flex-col">
+          <div className="relative z-20 flex w-full min-h-[20rem] flex-1 flex-col">
 
-            {/* ── Step 1: Firebase Auth ─────────────────────────────────── */}
+            {isUserProfileLoading ? (
+              <div className="flex min-h-[20rem] flex-1 flex-col items-center justify-center gap-4 py-10 px-4">
+                <Loader2 className="h-10 w-10 shrink-0 animate-spin text-white/50" aria-hidden />
+                <p className="text-sm font-light text-white/60">Loading your account…</p>
+                <p className="text-xs text-center text-white/40 max-w-sm">
+                  Preparing your workspace. This only takes a moment.
+                </p>
+              </div>
+            ) : (
+              <>
+            {/* ── Step 1: Firebase Auth — avoid remounting the whole card on step change
+                (keyed AnimatePresence was leaving the role step body blank until refresh). */}
+
             {step === 1 && (
               <div className="space-y-8 flex-1 flex flex-col">
                 <div className="text-center space-y-3">
-                  <h1 className="text-3xl font-black tracking-tighter shiny-silver-text leading-tight">
+                  <h1 className="text-3xl font-black tracking-tighter leading-tight text-white drop-shadow-[0_0_1px_rgba(255,255,255,0.4)]">
                     {authMode === "sign-in" ? "Welcome Back" : "Create Account"}
                   </h1>
                   <p className="text-[#888] text-sm font-light">
@@ -356,7 +426,9 @@ function PlatformEntryInner() {
             {step === 2 && (
               <div className="space-y-8">
                 <div className="text-center space-y-3">
-                  <h1 className="text-3xl font-black tracking-tighter shiny-silver-text leading-tight">Choose Your Role</h1>
+                  <h1 className="text-3xl font-black tracking-tighter leading-tight text-white drop-shadow-[0_0_1px_rgba(255,255,255,0.4)]">
+                    Choose Your Role
+                  </h1>
                   <p className="text-[#888] text-sm font-light">Are you looking to build an app, or looking for work?</p>
                   {asDeveloper && (
                     <p className="text-xs text-indigo-300/90 font-light max-w-md mx-auto">
@@ -436,6 +508,7 @@ function PlatformEntryInner() {
                     disabled={!role || postRoleLoading}
                     onClick={async () => {
                       if (role === "employer") {
+                        setEmployerWizardOpen(true);
                         handleNext();
                         return;
                       }
@@ -456,10 +529,12 @@ function PlatformEntryInner() {
             )}
 
             {/* ── Step 3: Project creator profile (employer only) ───────── */}
-            {step === 3 && role === "employer" && (
+            {step === 3 && (role === "employer" || employerWizardOpen) && (
               <div className="space-y-8">
                 <div className="text-center space-y-3">
-                  <h1 className="text-3xl font-black tracking-tighter shiny-silver-text leading-tight">Your details</h1>
+                  <h1 className="text-3xl font-black tracking-tighter leading-tight text-white drop-shadow-[0_0_1px_rgba(255,255,255,0.4)]">
+                    Your details
+                  </h1>
                   <p className="text-[#888] text-sm font-light max-w-md mx-auto">
                     Tell us who you are so we can personalize your workspace and hiring experience.
                   </p>
@@ -549,18 +624,33 @@ function PlatformEntryInner() {
                 </div>
               </div>
             )}
+              </>
+            )}
 
           </div>
           </div>
         </motion.div>
-      </AnimatePresence>
     </main>
   );
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function friendlyError(msg: string): string {
+function firebaseErrorCode(err: unknown): string {
+  if (err && typeof err === "object" && "code" in err && typeof (err as { code: unknown }).code === "string") {
+    return (err as { code: string }).code;
+  }
+  return "";
+}
+
+function friendlyError(msg: string, err?: unknown): string {
+  const code = firebaseErrorCode(err);
+  if (code === "auth/popup-blocked") {
+    return "Your browser blocked the sign-in popup. Sign-in continues in this tab — follow the Google prompt.";
+  }
+  if (code === "auth/popup-closed-by-user") {
+    return "The sign-in window was closed. Try again when you are ready.";
+  }
   if (msg.includes("configuration-not-found"))  return "Firebase Authentication is not enabled yet. Please enable it in the Firebase console under Authentication → Get started.";
   if (msg.includes("email-already-in-use"))     return "This email is already registered. Try signing in.";
   if (msg.includes("wrong-password") || msg.includes("invalid-credential")) return "Incorrect email or password.";
@@ -568,6 +658,7 @@ function friendlyError(msg: string): string {
   if (msg.includes("weak-password"))            return "Password must be at least 6 characters.";
   if (msg.includes("invalid-email"))            return "Please enter a valid email address.";
   if (msg.includes("popup-closed"))             return "Sign-in popup was closed. Please try again.";
+  if (msg.includes("popup-blocked"))           return "Your browser blocked the sign-in window. Sign-in continues in this tab — follow the Google prompt.";
   if (msg.includes("network-request-failed"))   return "Network error. Check your internet connection.";
   if (msg.includes("unauthorized-domain"))      return "This domain is not authorized in Firebase. Add it under Authentication → Settings → Authorized domains.";
   if (msg.includes("operation-not-allowed"))    return "This sign-in method is not enabled. Enable it in Firebase console under Authentication → Sign-in method.";

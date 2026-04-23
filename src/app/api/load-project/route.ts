@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminDb } from "@/lib/firebase-admin";
+import {
+  adminDb,
+  FirebaseAdminConfigurationError,
+  firebaseAdminUnavailableMessage,
+  isFirestoreCredentialsError,
+} from "@/lib/firebase-admin";
 
 export async function GET(req: NextRequest) {
   try {
@@ -43,6 +48,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ project: data });
   } catch (err) {
     console.error("[load-project]", err);
+    if (err instanceof FirebaseAdminConfigurationError || isFirestoreCredentialsError(err)) {
+      return NextResponse.json({ error: firebaseAdminUnavailableMessage(err) }, { status: 503 });
+    }
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

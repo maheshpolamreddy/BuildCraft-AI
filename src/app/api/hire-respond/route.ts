@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { getHireRequest, respondToHireRequest } from "@/lib/hireRequests";
 import { sendHireAccepted, transactionalEmailConfigured } from "@/lib/email";
 import { createOrGetChat } from "@/lib/chat";
-import { adminDb } from "@/lib/firebase-admin";
+import {
+  adminDb,
+  FirebaseAdminConfigurationError,
+  firebaseAdminUnavailableMessage,
+  isFirestoreCredentialsError,
+} from "@/lib/firebase-admin";
 import type { Firestore } from "firebase-admin/firestore";
 
 /** Prefer deployment host so server-side fetch() works on Vercel (localhost would fail). */
@@ -180,6 +185,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     console.error("[hire-respond]", err);
+    if (err instanceof FirebaseAdminConfigurationError || isFirestoreCredentialsError(err)) {
+      return NextResponse.json({ error: firebaseAdminUnavailableMessage(err) }, { status: 503 });
+    }
     const code =
       typeof err === "object" && err !== null && "code" in err
         ? String((err as { code: string }).code)

@@ -579,10 +579,10 @@ export default function LandingPage() {
           <div className="space-y-6">
             <h4 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Resources</h4>
             <nav className="flex flex-col gap-4">
-              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">API Docs</Link>
-              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Trust Center</Link>
-              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Dispute Resolution</Link>
-              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Brand Assets</Link>
+              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">API Docs</Link>
+              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Trust Center</Link>
+              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Dispute Resolution</Link>
+              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Brand Assets</Link>
             </nav>
           </div>
 
@@ -590,9 +590,9 @@ export default function LandingPage() {
           <div className="space-y-6">
             <h4 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Company</h4>
             <nav className="flex flex-col gap-4">
-              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">About Us</Link>
-              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Privacy Policy</Link>
-              <Link href="#" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Terms of Service</Link>
+              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">About Us</Link>
+              <Link href="/privacy" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Privacy Policy</Link>
+              <Link href="/terms" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Terms of Service</Link>
               <button 
                 onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
                 className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/30 hover:text-white transition-all group/bt"

@@ -12,12 +12,15 @@ import {
   ProjectCreatorProfileEditor,
   canSubmitProjectCreatorProfile,
 } from "@/components/project-creator/ProjectCreatorProfileEditor";
+import { sanitizeInternalReturnPath } from "@/lib/safePaths";
 import type { EmployerProfile } from "@/store/useStore";
+
+const SETUP_PATH = "/creator/profile/setup";
 
 function ProfileSetupInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const returnPath = searchParams.get("return") || "/discovery";
+  const returnPath = sanitizeInternalReturnPath(searchParams.get("return"), "/discovery");
 
   const {
     authReady,
@@ -41,11 +44,11 @@ function ProfileSetupInner() {
   useEffect(() => {
     if (!authReady) return;
     if (!currentUser) {
-      router.replace(`/auth?return=${encodeURIComponent("/creator/profile-setup")}`);
+      router.replace(`/auth?return=${encodeURIComponent(SETUP_PATH)}`);
       return;
     }
     if (currentUser.uid === "demo-guest") {
-      router.replace(returnPath.startsWith("/") ? returnPath : "/discovery");
+      router.replace(returnPath);
       return;
     }
     if (!userRoles.includes("employer")) {
@@ -54,8 +57,7 @@ function ProfileSetupInner() {
     }
     if (!projectCreatorHydrated) return;
     if (projectCreatorProfileCompleted === true) {
-      const dest = returnPath.startsWith("/") ? returnPath : "/discovery";
-      router.replace(dest);
+      router.replace(returnPath);
     }
   }, [
     authReady,
@@ -83,8 +85,7 @@ function ProfileSetupInner() {
       });
       setProjectCreatorProfileCompleted(true);
       await logAction(currentUser.uid, "employer.project_creator_profile_completed", {});
-      const dest = returnPath.startsWith("/") ? returnPath : "/discovery";
-      router.replace(dest);
+      router.replace(returnPath);
     } catch {
       setError("Could not save. Check your connection and try again.");
     } finally {
