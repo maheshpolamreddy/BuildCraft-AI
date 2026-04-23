@@ -93,7 +93,6 @@ export async function signInWithGoogle(): Promise<AuthUser> {
   if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
     throw new Error("Firebase is not configured (missing NEXT_PUBLIC_FIREBASE_API_KEY).");
   }
-  await setPersistence(auth, browserLocalPersistence);
   const { user } = await signInWithPopup(auth, googleProvider);
   await createUserProfile(user);
   return toAuthUser(user);
@@ -107,7 +106,6 @@ export async function signInWithGoogleInSameTab(): Promise<void> {
   if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
     throw new Error("Firebase is not configured (missing NEXT_PUBLIC_FIREBASE_API_KEY).");
   }
-  await setPersistence(auth, browserLocalPersistence);
   await signInWithRedirect(auth, googleProvider);
 }
 
