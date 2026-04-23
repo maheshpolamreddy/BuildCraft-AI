@@ -344,6 +344,8 @@ function PlatformEntryInner() {
                     Continue with Google
                   </button>
 
+                  <ProductionAuthDomainReminder />
+
                   <div className="flex items-center gap-3">
                     <div className="flex-1 h-px bg-white/10" />
                     <span className="text-[10px] uppercase tracking-widest text-white/30 font-bold">or</span>
@@ -636,6 +638,56 @@ function PlatformEntryInner() {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/**
+ * Deployed hosts (e.g. *.vercel.app) must be allowlisted or Google completes OAuth but
+ * Firebase never attaches a session — localhost works because Firebase always allows localhost.
+ */
+function ProductionAuthDomainReminder() {
+  const [origin, setOrigin] = useState<string | null>(null);
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+  if (process.env.NODE_ENV !== "production") return null;
+  if (!origin) return null;
+  if (/^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return null;
+
+  const pid = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
+  const firebaseSettingsUrl = pid
+    ? `https://console.firebase.google.com/project/${encodeURIComponent(pid)}/authentication/settings`
+    : "https://console.firebase.google.com/";
+
+  return (
+    <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-left">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-amber-200/90 mb-1">
+        Production sign-in checklist
+      </p>
+      <p className="text-[11px] leading-snug text-white/55">
+        Add this exact origin to{" "}
+        <span className="text-white/75">Firebase → Authentication → Settings → Authorized domains</span>
+        :{" "}
+        <code className="break-all rounded bg-black/40 px-1 py-0.5 text-[10px] text-amber-100/90">
+          {origin.replace(/^https?:\/\//, "")}
+        </code>
+      </p>
+      <p className="mt-1.5 text-[11px] leading-snug text-white/55">
+        In{" "}
+        <span className="text-white/75">Google Cloud Console → APIs &amp; Services → Credentials → your Web client</span>
+        , add the same URL under{" "}
+        <span className="text-white/75">Authorized JavaScript origins</span> (use{" "}
+        <code className="text-[10px] text-amber-100/90">{origin}</code>).
+      </p>
+      <a
+        href={firebaseSettingsUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-2 inline-block text-[11px] font-semibold text-blue-400 hover:text-blue-300 underline underline-offset-2"
+      >
+        Open Firebase Auth settings
+      </a>
+    </div>
+  );
+}
+
 function firebaseErrorCode(err: unknown): string {
   if (err && typeof err === "object" && "code" in err && typeof (err as { code: unknown }).code === "string") {
     return (err as { code: string }).code;
@@ -645,6 +697,22 @@ function firebaseErrorCode(err: unknown): string {
 
 function friendlyError(msg: string, err?: unknown): string {
   const code = firebaseErrorCode(err);
+  const host =
+    typeof window !== "undefined" ? window.location.hostname : "your production domain";
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+
+  if (code === "auth/unauthorized-domain") {
+    return (
+      `This host (${host}) is not allowed for Firebase Auth. ` +
+      `In Firebase Console → Authentication → Settings → Authorized domains, add "${host}". ` +
+      `In Google Cloud → Credentials → your OAuth Web client, add ${origin || "this page's https URL"} to Authorized JavaScript origins.`
+    );
+  }
+  if (code === "auth/unauthorized-continue-uri" || code === "auth/invalid-continue-uri") {
+    return (
+      `The sign-in return URL is not authorized. Add ${origin || "this site's https URL"} to Firebase Authorized domains and Google OAuth settings.`
+    );
+  }
   if (code === "auth/popup-blocked") {
     return "Your browser blocked the sign-in window. We are opening Google in this tab instead — complete sign-in there, then you will return here.";
   }

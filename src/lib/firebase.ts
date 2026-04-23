@@ -15,6 +15,15 @@ const firebaseConfig = {
   measurementId:     process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID?.trim(),
 };
 
+if (typeof window !== "undefined") {
+  if (!firebaseConfig.apiKey || !firebaseConfig.authDomain || !firebaseConfig.projectId) {
+    console.error(
+      "[BuildCraft] Missing NEXT_PUBLIC_FIREBASE_* (apiKey, authDomain, or projectId). " +
+        "Google sign-in will fail on this host until Vercel env matches your Firebase web app.",
+    );
+  }
+}
+
 // Client-only module: do not import from Server Components.
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
