@@ -2,8 +2,9 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
-  signInWithRedirect,
   getRedirectResult,
+  setPersistence,
+  browserLocalPersistence,
   signOut,
   updateProfile,
   sendPasswordResetEmail,
@@ -78,33 +79,21 @@ export async function signInWithEmail(email: string, password: string) {
   return toAuthUser(user);
 }
 
-export type SignInWithGoogleOutcome =
-  | { kind: "signedIn"; user: AuthUser }
-  | { kind: "redirect" };
-
 /**
- * Prefer popup (best UX + works with COOP headers on /auth). If the browser blocks the popup,
- * fall back to same-tab redirect so sign-in can still complete (AuthProvider consumes redirect).
+ * Google sign-in uses **popup only**. We intentionally do not use `signInWithRedirect` as a
+ * fallback: on Vercel, that flow often opens `*.firebaseapp.com/__/auth/handler` and **hangs**
+ * (blank page + loading bar) while returning to the app — a known class of issues with
+ * cross-origin redirect handoff. If the popup is blocked, the user must allow popups for this
+ * site; see friendlyError in the auth page.
  */
-export async function signInWithGoogle(): Promise<SignInWithGoogleOutcome> {
+export async function signInWithGoogle(): Promise<AuthUser> {
   if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
     throw new Error("Firebase is not configured (missing NEXT_PUBLIC_FIREBASE_API_KEY).");
   }
-  try {
-    const { user } = await signInWithPopup(auth, googleProvider);
-    await createUserProfile(user);
-    return { kind: "signedIn", user: toAuthUser(user) };
-  } catch (err: unknown) {
-    if (getAuthErrorCode(err) === "auth/popup-blocked") {
-      try {
-        await signInWithRedirect(auth, googleProvider);
-        return { kind: "redirect" };
-      } catch (redirectErr) {
-        throw redirectErr;
-      }
-    }
-    throw err;
-  }
+  await setPersistence(auth, browserLocalPersistence);
+  const { user } = await signInWithPopup(auth, googleProvider);
+  await createUserProfile(user);
+  return toAuthUser(user);
 }
 
 /** Call once on app load after a Google redirect sign-in to create the Firestore user stub. */

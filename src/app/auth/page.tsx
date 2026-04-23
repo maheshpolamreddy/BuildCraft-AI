@@ -164,12 +164,9 @@ function PlatformEntryInner() {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      const outcome = await signInWithGoogle();
-      if (outcome.kind === "redirect") {
-        return;
-      }
-      setCurrentUser(outcome.user);
-      await logAction(outcome.user.uid, "auth.sign_in", { method: "google" });
+      const googleUser = await signInWithGoogle();
+      setCurrentUser(googleUser);
+      await logAction(googleUser.uid, "auth.sign_in", { method: "google" });
       userReturnedToAuth.current = false;
       if (!asDeveloper) setRole(null);
       setEmployerWizardOpen(false);
@@ -676,6 +673,15 @@ function ProductionAuthDomainReminder() {
         <span className="text-white/75">Authorized JavaScript origins</span> (use{" "}
         <code className="text-[10px] text-amber-100/90">{origin}</code>).
       </p>
+      <p className="mt-2 text-[11px] leading-snug text-amber-100/80">
+        <span className="font-semibold text-amber-200/95">Stuck on a white page at</span>{" "}
+        <code className="break-all text-[10px]">firebaseapp.com/__/auth/handler</code>
+        ? That is the <span className="text-white/80">tab-based</span> Google flow. This app uses
+        only a <span className="text-white/80">popup</span> for Google. Allow <span className="text-white/80">popups</span> for
+        this site (lock icon in the address bar → Site settings) and use{" "}
+        <span className="text-white/80">Continue with Google</span> again — do not rely on
+        &quot;open in this tab&quot; fallbacks, which break on many production hosts.
+      </p>
       <a
         href={firebaseSettingsUrl}
         target="_blank"
@@ -714,7 +720,11 @@ function friendlyError(msg: string, err?: unknown): string {
     );
   }
   if (code === "auth/popup-blocked") {
-    return "Your browser blocked the sign-in window. We are opening Google in this tab instead — complete sign-in there, then you will return here.";
+    return (
+      "Your browser blocked the sign-in window. " +
+      "Use the lock or site info icon in the address bar, allow popups for this site, " +
+      "then click Continue with Google again. (A tab-based redirect to firebaseapp.com often fails on production.)"
+    );
   }
   if (code === "auth/popup-closed-by-user") {
     return "The sign-in window was closed. Try again when you are ready.";
@@ -726,7 +736,12 @@ function friendlyError(msg: string, err?: unknown): string {
   if (msg.includes("weak-password"))            return "Password must be at least 6 characters.";
   if (msg.includes("invalid-email"))            return "Please enter a valid email address.";
   if (msg.includes("popup-closed"))             return "Sign-in popup was closed. Please try again.";
-  if (msg.includes("popup-blocked"))           return "Your browser blocked the sign-in window. We are opening Google in this tab instead — complete sign-in there, then you will return here.";
+  if (msg.includes("popup-blocked")) {
+    return (
+      "Your browser blocked the sign-in window. " +
+      "Allow popups for this site and try again — we do not use a tab redirect here because it can hang on the Firebase handler page in production."
+    );
+  }
   if (msg.includes("network-request-failed"))   return "Network error. Check your internet connection.";
   if (msg.includes("unauthorized-domain"))      return "This domain is not authorized in Firebase. Add it under Authentication → Settings → Authorized domains.";
   if (msg.includes("operation-not-allowed"))    return "This sign-in method is not enabled. Enable it in Firebase console under Authentication → Sign-in method.";

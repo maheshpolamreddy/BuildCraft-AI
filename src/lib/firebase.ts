@@ -28,7 +28,7 @@ if (typeof window !== "undefined") {
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
 // Use getAuth (not initializeAuth with partial deps): partial initializeAuth omits
-// popupRedirectResolver and triggers auth/argument-error on signInWithPopup / signInWithRedirect.
+// popupRedirectResolver and triggers auth/argument-error on signInWithPopup.
 // getAuth wires browser defaults (persistence + resolver) and avoids SSR/build assertion issues.
 export const auth = getAuth(app);
 
