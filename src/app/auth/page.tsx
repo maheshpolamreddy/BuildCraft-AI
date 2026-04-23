@@ -16,7 +16,6 @@ import {
   signUpWithEmail,
   signInWithEmail,
   signInWithGoogle,
-  signInWithGoogleInSameTab,
   isAuthPopupBlockedError,
 } from "@/lib/auth";
 import { logAction } from "@/lib/auditLog";
@@ -106,7 +105,51 @@ function PlatformEntryInner() {
     if (userReturnedToAuth.current) return;
     if (step !== 1) return;
     if (autoRoleStepSyncRef.current) return;
-    // Demo: profile is "hydrated" immediately in AuthProvider; no Firestore — advance once to role.
+
+    // Returning users: once Firestore hydration is done, go straight to the right app surface.
+    if (storeUser.uid !== "demo-guest" && projectCreatorHydrated) {
+      const s = useStore.getState();
+      const { userRoles, projectCreatorProfileCompleted, developerProfile } = s;
+      if (
+        asDeveloper &&
+        userRoles.includes("developer") &&
+        developerProfile &&
+        isDeveloperRegistrationComplete(developerProfile)
+      ) {
+        autoRoleStepSyncRef.current = true;
+        router.replace(returnTo ?? "/employee-dashboard");
+        return;
+      }
+      if (returnTo) {
+        if (
+          userRoles.includes("developer") &&
+          developerProfile &&
+          isDeveloperRegistrationComplete(developerProfile)
+        ) {
+          autoRoleStepSyncRef.current = true;
+          router.replace(returnTo);
+          return;
+        }
+        if (userRoles.includes("employer") && projectCreatorProfileCompleted === true) {
+          autoRoleStepSyncRef.current = true;
+          router.replace(returnTo);
+          return;
+        }
+      } else {
+        if (userRoles.includes("developer") && developerProfile && isDeveloperRegistrationComplete(developerProfile)) {
+          autoRoleStepSyncRef.current = true;
+          router.replace("/employee-dashboard");
+          return;
+        }
+        if (userRoles.includes("employer") && projectCreatorProfileCompleted === true) {
+          autoRoleStepSyncRef.current = true;
+          router.replace("/discovery");
+          return;
+        }
+      }
+    }
+
+    // New / incomplete users — advance to role selection after profile gate.
     if (storeUser.uid === "demo-guest") {
       if (!projectCreatorHydrated) return;
       autoRoleStepSyncRef.current = true;
@@ -118,7 +161,17 @@ function PlatformEntryInner() {
     autoRoleStepSyncRef.current = true;
     if (!asDeveloper) setRole(null);
     setStep(2);
-  }, [storePersistReady, authReady, storeUser, projectCreatorHydrated, step, asDeveloper, setRole]);
+  }, [
+    storePersistReady,
+    authReady,
+    storeUser,
+    projectCreatorHydrated,
+    step,
+    asDeveloper,
+    setRole,
+    router,
+    returnTo,
+  ]);
 
   /** True while we have a real Firebase user but Firestore user profile has not finished loading. */
   const isUserProfileLoading =
@@ -182,20 +235,6 @@ function PlatformEntryInner() {
         setAuthError(null);
         return;
       }
-      const msg = err instanceof Error ? err.message : "Google sign-in failed.";
-      setAuthError(friendlyError(msg, err));
-    } finally {
-      setAuthLoading(false);
-    }
-  }
-
-  async function handleGoogleInSameTab() {
-    setAuthError(null);
-    setAuthLoading(true);
-    try {
-      await signInWithGoogleInSameTab();
-    } catch (err: unknown) {
-      setGooglePopupBlocked(false);
       const msg = err instanceof Error ? err.message : "Google sign-in failed.";
       setAuthError(friendlyError(msg, err));
     } finally {
@@ -369,21 +408,25 @@ function PlatformEntryInner() {
                   {googlePopupBlocked && (
                     <div className="rounded-xl border border-sky-500/40 bg-sky-500/[0.08] p-3 space-y-2">
                       <p className="text-[11px] leading-relaxed text-sky-100/95">
-                        Your browser <span className="font-semibold text-white">blocked the sign-in window</span>
-                        (see the pop-up icon in the address bar). You can sign in
-                        in <span className="text-white">this tab</span> instead, or allow popups for this site and use
-                        the button above again.
+                        Your browser <span className="font-semibold text-white">blocked the sign-in window</span>{" "}
+                        (lock or popup icon in the address bar). Allow popups for this site, then use{" "}
+                        <span className="text-white">Continue with Google</span> again. This app uses a{" "}
+                        <span className="text-white">popup</span> (not a full-page redirect) so the session is not
+                        lost on Vercel.
                       </p>
                       <button
                         type="button"
-                        onClick={() => void handleGoogleInSameTab()}
+                        onClick={() => {
+                          setGooglePopupBlocked(false);
+                          void handleGoogleAuth();
+                        }}
                         disabled={authLoading}
                         className="w-full py-3 flex items-center justify-center gap-2 border border-sky-400/50 bg-sky-500/15 hover:bg-sky-500/25 text-sky-50 text-xs font-bold rounded-xl transition-all disabled:opacity-50"
                       >
                         {authLoading
                           ? <Loader2 className="w-4 h-4 animate-spin" />
                           : <Chrome className="w-4 h-4" />}
-                        Continue with Google in this tab
+                        Try again with Google
                       </button>
                     </div>
                   )}
@@ -725,13 +768,12 @@ function ProductionAuthDomainReminder() {
         <code className="text-[10px] text-amber-100/90">{origin}</code>).
       </p>
       <p className="mt-2 text-[11px] leading-snug text-amber-100/80">
-        <span className="font-semibold text-amber-200/95">Stuck on a white page at</span>{" "}
+        <span className="font-semibold text-amber-200/95">Stuck on</span>{" "}
         <code className="break-all text-[10px]">firebaseapp.com/__/auth/handler</code>
-        ? That is the <span className="text-white/80">tab-based</span> Google flow. This app uses
-        only a <span className="text-white/80">popup</span> for Google. Allow <span className="text-white/80">popups</span> for
-        this site (lock icon in the address bar → Site settings) and use{" "}
-        <span className="text-white/80">Continue with Google</span> again — do not rely on
-        &quot;open in this tab&quot; fallbacks, which break on many production hosts.
+        ? That usually means a <span className="text-white/80">full-page</span> or blocked OAuth
+        flow. This app only uses a <span className="text-white/80">popup</span> for Google — allow
+        popups for this site and use <span className="text-white/80">Continue with Google</span>{" "}
+        here (not a new tab to accounts.google.com).
       </p>
       <a
         href={firebaseSettingsUrl}
@@ -771,7 +813,7 @@ function friendlyError(msg: string, err?: unknown): string {
     );
   }
   if (code === "auth/popup-blocked") {
-    return "Your browser blocked the sign-in window. Use \"Continue with Google in this tab\" on the form, or allow popups for this site and try again.";
+    return "Your browser blocked the sign-in window. Allow popups for this site (address bar) and use Continue with Google again.";
   }
   if (code === "auth/popup-closed-by-user") {
     return "The sign-in window was closed. Try again when you are ready.";
@@ -784,7 +826,7 @@ function friendlyError(msg: string, err?: unknown): string {
   if (msg.includes("invalid-email"))            return "Please enter a valid email address.";
   if (msg.includes("popup-closed"))             return "Sign-in popup was closed. Please try again.";
   if (msg.includes("popup-blocked")) {
-    return "Your browser blocked the sign-in window. Use \"Continue with Google in this tab\" or allow popups and try again.";
+    return "Your browser blocked the sign-in window. Allow popups for this site and try Continue with Google again.";
   }
   if (msg.includes("network-request-failed"))   return "Network error. Check your internet connection.";
   if (msg.includes("unauthorized-domain"))      return "This domain is not authorized in Firebase. Add it under Authentication → Settings → Authorized domains.";

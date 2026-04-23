@@ -58,10 +58,12 @@ function clearStaleDeveloperStateForUid(uid: string | undefined) {
  *   `onAuthStateChanged`. If the listener is attached in parallel, the first callback is often
  *   `null` while redirect handling is still pending; our debounced sign-out can then clear the
  *   session and leave users stuck on `/auth` (no role step).
- * - Debounced null + `auth.currentUser` reconciliation in `flushSignedOut` for remaining
- *   transient `null` ticks after popups.
+ * - On `!user` from the callback, re-check `auth.currentUser` **synchronously** before
+ *   scheduling sign-out. Firebase can emit a transient `null` while the popup session is still
+ *   establishing on production; the `User` on `auth` is already the source of truth.
+ * - Debounced null + `auth.currentUser` in `flushSignedOut` for the remaining edge cases.
  */
-const NULL_TO_SIGNEDOUT_MS = 400;
+const NULL_TO_SIGNEDOUT_MS = 900;
 
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
@@ -178,6 +180,10 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
           pendingNullTimer = undefined;
         }
         if (!user) {
+          if (auth.currentUser) {
+            applySignedInUser(toAuthUser(auth.currentUser));
+            return;
+          }
           pendingNullTimer = setTimeout(() => {
             pendingNullTimer = undefined;
             flushSignedOut();

@@ -6,25 +6,9 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: "/auth",
-        headers: [
-          {
-            key: "Cross-Origin-Opener-Policy",
-            value: "same-origin-allow-popups",
-          },
-        ],
-      },
-      {
-        source: "/auth/:path*",
-        headers: [
-          {
-            key: "Cross-Origin-Opener-Policy",
-            value: "same-origin-allow-popups",
-          },
-        ],
-      },
-      {
-        source: "/",
+        // Required for `signInWithPopup` to postMessage the result back to the app on
+        // production (any page may open the OAuth window from shared layout components).
+        source: "/:path*",
         headers: [
           {
             key: "Cross-Origin-Opener-Policy",

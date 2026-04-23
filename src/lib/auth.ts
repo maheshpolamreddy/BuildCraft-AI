@@ -86,8 +86,8 @@ export async function signInWithEmail(email: string, password: string) {
 }
 
 /**
- * Google sign-in via **popup** (default). If the browser blocks it, the UI should offer
- * `signInWithGoogleInSameTab` (user must click; do not call redirect without a direct gesture).
+ * Google sign-in via **popup** (required in production; avoids full-page handler loops on Vercel).
+ * The UI should prompt the user to allow popups and retry — not switch to `signInWithRedirect`.
  */
 export async function signInWithGoogle(): Promise<AuthUser> {
   if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
@@ -100,8 +100,8 @@ export async function signInWithGoogle(): Promise<AuthUser> {
 }
 
 /**
- * Full-page Google OAuth. Call **only** from a button `onClick` (direct user activation).
- * Completes via `getRedirectResult` in AuthProvider when the app loads again on return.
+ * Optional escape hatch: full-page `signInWithRedirect` (not used in the app UI; avoid on Vercel
+ * if popups are fixed). `consumeGoogleRedirectResult` in `AuthProvider` still handles returns.
  */
 export async function signInWithGoogleInSameTab(): Promise<void> {
   if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
