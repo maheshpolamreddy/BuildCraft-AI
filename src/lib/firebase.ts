@@ -1,5 +1,7 @@
+"use client";
+
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, initializeAuth, browserLocalPersistence } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getAnalytics, isSupported } from "firebase/analytics";
 
@@ -13,11 +15,19 @@ const firebaseConfig = {
   measurementId:     process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID?.trim(),
 };
 
-// Prevent re-initialization during Next.js hot reloads
+// Client-only: ensures Auth is never initialized on the server; persistence is required for
+// signInWithRedirect + getRedirectResult to complete the session in the same browser.
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-export const auth = getAuth(app);
-export const db   = getFirestore(app);
+let auth: ReturnType<typeof getAuth>;
+try {
+  auth = initializeAuth(app, { persistence: browserLocalPersistence });
+} catch {
+  auth = getAuth(app);
+}
+export { auth };
+
+export const db = getFirestore(app);
 
 export const googleProvider = new GoogleAuthProvider();
 // Account picker on every sign-in; helps multi-account and redirect return flows.

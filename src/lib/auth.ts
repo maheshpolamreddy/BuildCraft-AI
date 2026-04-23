@@ -83,24 +83,30 @@ export type SignInWithGoogleResult =
   | { kind: "redirect" };
 
 /**
- * In production, use redirect-only. Popup-based sign-in often breaks on deployed hosts:
- * the OAuth window may open as a new tab, and strict Cross-Origin-Opener-Policy (e.g. on
- * Vercel) can block the postMessage back to the opener, so the user picks an account but
- * the app never receives the session. Full-page redirect avoids that entirely.
- * In development, we still use popup first for a faster local loop, then the same fallbacks.
+ * When popup flows fail, fall back to full-page Google redirect. Do not use this for
+ * explicit user actions like closing the popup.
  */
-function useGoogleRedirectOnly(): boolean {
-  return process.env.NODE_ENV === "production";
+function shouldFallbackToGoogleRedirect(code: string | undefined): boolean {
+  if (!code) return false;
+  if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+    return false;
+  }
+  return (
+    code === "auth/popup-blocked" ||
+    code === "auth/operation-not-supported-in-this-environment" ||
+    code === "auth/web-storage-unsupported" ||
+    code === "auth/internal-error"
+  );
 }
 
 /**
- * Google sign-in: in production, full-page redirect. In dev, popup first; if the browser
- * blocks the popup, fall back to same-window redirect.
+ * Google: try popup first (with COOP header on /auth; see next.config). If the browser
+ * or host blocks the popup/result handoff, use signInWithRedirect. Redirect also completes
+ * the session when getRedirectResult runs in AuthProvider.
  */
 export async function signInWithGoogle(): Promise<SignInWithGoogleResult> {
-  if (useGoogleRedirectOnly()) {
-    await signInWithRedirect(auth, googleProvider);
-    return { kind: "redirect" };
+  if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
+    throw new Error("Firebase is not configured (missing NEXT_PUBLIC_FIREBASE_API_KEY).");
   }
   try {
     const { user } = await signInWithPopup(auth, googleProvider);
@@ -108,12 +114,13 @@ export async function signInWithGoogle(): Promise<SignInWithGoogleResult> {
     return { kind: "signedIn", user: toAuthUser(user) };
   } catch (err: unknown) {
     const code = getAuthErrorCode(err);
-    if (
-      code === "auth/popup-blocked" ||
-      code === "auth/operation-not-supported-in-this-environment"
-    ) {
-      await signInWithRedirect(auth, googleProvider);
-      return { kind: "redirect" };
+    if (shouldFallbackToGoogleRedirect(code)) {
+      try {
+        await signInWithRedirect(auth, googleProvider);
+        return { kind: "redirect" };
+      } catch (redirectErr) {
+        throw redirectErr;
+      }
     }
     throw err;
   }
