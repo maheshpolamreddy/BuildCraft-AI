@@ -1,7 +1,7 @@
 "use client";
 
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, initializeAuth, browserLocalPersistence } from "firebase/auth";
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getAnalytics, isSupported } from "firebase/analytics";
 
@@ -15,17 +15,13 @@ const firebaseConfig = {
   measurementId:     process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID?.trim(),
 };
 
-// Client-only: ensures Auth is never initialized on the server; persistence is required for
-// signInWithRedirect + getRedirectResult to complete the session in the same browser.
+// Client-only module: do not import from Server Components.
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
-let auth: ReturnType<typeof getAuth>;
-try {
-  auth = initializeAuth(app, { persistence: browserLocalPersistence });
-} catch {
-  auth = getAuth(app);
-}
-export { auth };
+// Use getAuth (not initializeAuth with partial deps): partial initializeAuth omits
+// popupRedirectResolver and triggers auth/argument-error on signInWithPopup / signInWithRedirect.
+// getAuth wires browser defaults (persistence + resolver) and avoids SSR/build assertion issues.
+export const auth = getAuth(app);
 
 export const db = getFirestore(app);
 
