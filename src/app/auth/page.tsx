@@ -164,9 +164,12 @@ function PlatformEntryInner() {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      const googleUser = await signInWithGoogle();
-      setCurrentUser(googleUser);
-      await logAction(googleUser.uid, "auth.sign_in", { method: "google" });
+      const outcome = await signInWithGoogle();
+      if (outcome.kind === "redirect") {
+        return;
+      }
+      setCurrentUser(outcome.user);
+      await logAction(outcome.user.uid, "auth.sign_in", { method: "google" });
       userReturnedToAuth.current = false;
       if (!asDeveloper) setRole(null);
       setEmployerWizardOpen(false);
@@ -643,7 +646,7 @@ function firebaseErrorCode(err: unknown): string {
 function friendlyError(msg: string, err?: unknown): string {
   const code = firebaseErrorCode(err);
   if (code === "auth/popup-blocked") {
-    return "Your browser blocked the sign-in popup. Sign-in continues in this tab — follow the Google prompt.";
+    return "Your browser blocked the sign-in window. We are opening Google in this tab instead — complete sign-in there, then you will return here.";
   }
   if (code === "auth/popup-closed-by-user") {
     return "The sign-in window was closed. Try again when you are ready.";
@@ -655,7 +658,7 @@ function friendlyError(msg: string, err?: unknown): string {
   if (msg.includes("weak-password"))            return "Password must be at least 6 characters.";
   if (msg.includes("invalid-email"))            return "Please enter a valid email address.";
   if (msg.includes("popup-closed"))             return "Sign-in popup was closed. Please try again.";
-  if (msg.includes("popup-blocked"))           return "Your browser blocked the sign-in window. Sign-in continues in this tab — follow the Google prompt.";
+  if (msg.includes("popup-blocked"))           return "Your browser blocked the sign-in window. We are opening Google in this tab instead — complete sign-in there, then you will return here.";
   if (msg.includes("network-request-failed"))   return "Network error. Check your internet connection.";
   if (msg.includes("unauthorized-domain"))      return "This domain is not authorized in Firebase. Add it under Authentication → Settings → Authorized domains.";
   if (msg.includes("operation-not-allowed"))    return "This sign-in method is not enabled. Enable it in Firebase console under Authentication → Sign-in method.";

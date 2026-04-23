@@ -2,6 +2,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   getRedirectResult,
   signOut,
   updateProfile,
@@ -77,18 +78,33 @@ export async function signInWithEmail(email: string, password: string) {
   return toAuthUser(user);
 }
 
+export type SignInWithGoogleOutcome =
+  | { kind: "signedIn"; user: AuthUser }
+  | { kind: "redirect" };
+
 /**
- * Google sign-in via popup only (required for Vercel: redirect flow often returns to /auth
- * with no session if authorized domains / handler URL are wrong, and full-page reload races
- * route guards). Ensure COOP headers on /auth (next.config) and Firebase authorized domains.
+ * Prefer popup (best UX + works with COOP headers on /auth). If the browser blocks the popup,
+ * fall back to same-tab redirect so sign-in can still complete (AuthProvider consumes redirect).
  */
-export async function signInWithGoogle(): Promise<AuthUser> {
+export async function signInWithGoogle(): Promise<SignInWithGoogleOutcome> {
   if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
     throw new Error("Firebase is not configured (missing NEXT_PUBLIC_FIREBASE_API_KEY).");
   }
-  const { user } = await signInWithPopup(auth, googleProvider);
-  await createUserProfile(user);
-  return toAuthUser(user);
+  try {
+    const { user } = await signInWithPopup(auth, googleProvider);
+    await createUserProfile(user);
+    return { kind: "signedIn", user: toAuthUser(user) };
+  } catch (err: unknown) {
+    if (getAuthErrorCode(err) === "auth/popup-blocked") {
+      try {
+        await signInWithRedirect(auth, googleProvider);
+        return { kind: "redirect" };
+      } catch (redirectErr) {
+        throw redirectErr;
+      }
+    }
+    throw err;
+  }
 }
 
 /** Call once on app load after a Google redirect sign-in to create the Firestore user stub. */
