@@ -11,7 +11,7 @@ import AnimatedLogoOverlay from "@/components/AnimatedLogoOverlay";
 import { useRouter } from "next/navigation";
 import { useStore } from "@/store/useStore";
 import { signOutUser } from "@/lib/auth";
-import { isDeveloperRegistrationComplete } from "@/lib/developerProfile";
+import { consumeOpenMarketingHome, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
 
 // Smooth-scroll back to the very top of the page
 function GoHome() {
@@ -42,6 +42,7 @@ export default function LandingPage() {
    */
   useEffect(() => {
     if (!authReady) return;
+    if (consumeOpenMarketingHome()) return;
     if (!isLoggedIn) return;
     if (!isDeveloper) return;
     const isEmployer = userRoles.includes("employer");

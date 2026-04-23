@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { ChevronRight, Home } from "lucide-react";
 import clsx from "clsx";
 import { useStore } from "@/store/useStore";
+import { markOpenMarketingHome } from "@/lib/developerProfile";
 
 export function CreatorFlowBreadcrumb() {
   const pathname = usePathname();
@@ -25,10 +26,11 @@ export function CreatorFlowBreadcrumb() {
   return (
     <nav
       aria-label="Project creator flow"
-      className="flex flex-wrap items-center gap-x-0.5 gap-y-2 py-3 px-4 rounded-2xl border border-white/10 bg-white/[0.03] mb-6"
+      className="relative z-20 flex flex-wrap items-center gap-x-0.5 gap-y-2 py-3 px-4 rounded-2xl border border-white/10 bg-white/[0.03] mb-6"
     >
       <Link
         href="/"
+        onClick={() => markOpenMarketingHome()}
         className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-white/45 hover:text-white transition-colors shrink-0"
       >
         <Home className="w-3.5 h-3.5" />
@@ -115,11 +117,11 @@ export function DeveloperFlowBreadcrumb({
     <nav
       aria-label="Developer navigation"
       className={clsx(
-        "flex flex-wrap items-center gap-x-0.5 gap-y-2 py-2.5 px-4 border-b border-white/5 bg-black/20",
+        "relative z-20 flex flex-wrap items-center gap-x-0.5 gap-y-2 py-2.5 px-4 border-b border-white/5 bg-black/20",
         className,
       )}
     >
-      <Link href="/" className={linkCls(false)}>
+      <Link href="/" onClick={() => markOpenMarketingHome()} className={linkCls(false)}>
         Home
       </Link>
       <ChevronRight className="w-3.5 h-3.5 text-white/25 shrink-0" />

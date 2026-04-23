@@ -337,3 +337,26 @@ export async function updateDeveloperProfileField(
     throw err;
   }
 }
+
+// ── Marketing landing (breadcrumb Home) ─────────────────────────────────────
+const BC_ALLOW_MARKETING_LANDING = "buildcraft_allow_marketing_landing";
+
+/** Breadcrumb Home sets this so `/` skips the developer auto-redirect once. */
+export function markOpenMarketingHome(): void {
+  try {
+    sessionStorage.setItem(BC_ALLOW_MARKETING_LANDING, "1");
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Landing page: read and clear; if true, skip redirect to employee dashboard. */
+export function consumeOpenMarketingHome(): boolean {
+  try {
+    if (sessionStorage.getItem(BC_ALLOW_MARKETING_LANDING) !== "1") return false;
+    sessionStorage.removeItem(BC_ALLOW_MARKETING_LANDING);
+    return true;
+  } catch {
+    return false;
+  }
+}
