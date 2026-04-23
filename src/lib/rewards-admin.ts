@@ -35,7 +35,7 @@ export async function processCompletionRewardsAdmin(
   await ref.set(
     {
       verificationStatus: "project-verified",
-      tierLabel: "Tier 3",
+      tierLabel: "Tier 3 · Diamond",
       earnedBadges: prevBadges,
       completedProjectIds: ids,
       completedProjectsCount: ids.length,

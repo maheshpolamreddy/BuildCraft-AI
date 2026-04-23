@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, type RefObject } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ShieldCheck, User, Star, Activity, AlertTriangle, Briefcase,
-  FileText, CheckCircle2, Award, Clock,
+  FileText, CheckCircle2, Award, Clock, Gem,
   Shield, Lock, Edit3, BarChart2,
   Play, Loader2, Code2, LogOut,
   ArrowRight, Sparkles, Flag, AlertCircle,
@@ -136,9 +136,9 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 const TIER_CONFIG = {
-  "self-declared":     { tierNumber: 1, label: "Tier 1",    subtitle: "Self-declared",    color: "text-white/50",    border: "border-white/10",           icon: <Edit3 className="w-3.5 h-3.5" />, dots: 1 },
-  "assessment-passed": { tierNumber: 2, label: "Tier 2",    subtitle: "Assessment-passed", color: "text-yellow-400",  border: "border-yellow-500/30",      icon: <Award className="w-3.5 h-3.5" />, dots: 2 },
-  "project-verified":  { tierNumber: 3, label: "Tier 3",    subtitle: "Project-verified",  color: "text-emerald-400", border: "border-emerald-500/30",     icon: <ShieldCheck className="w-3.5 h-3.5" />, dots: 3 },
+  "self-declared":     { tierNumber: 1, label: "Tier 1",    subtitle: "Self-declared",       color: "text-white/50",    border: "border-white/10",           icon: <Edit3 className="w-3.5 h-3.5" />, dots: 1 },
+  "assessment-passed": { tierNumber: 2, label: "Tier 2",    subtitle: "Skill test passed",   color: "text-yellow-400",  border: "border-yellow-500/30",      icon: <Award className="w-3.5 h-3.5" />, dots: 2 },
+  "project-verified":  { tierNumber: 3, label: "Tier 3",    subtitle: "Diamond · Hired build", color: "text-cyan-200", border: "border-cyan-400/45",       icon: <Gem className="w-3.5 h-3.5" strokeWidth={2.2} />, dots: 3 },
 } as const;
 
 function tierKeyFromProfile(status: string | undefined): keyof typeof TIER_CONFIG {
@@ -148,7 +148,7 @@ function tierKeyFromProfile(status: string | undefined): keyof typeof TIER_CONFI
   return "self-declared";
 }
 
-const DOT_COLORS = ["bg-emerald-500", "bg-yellow-500", "bg-emerald-500"];
+const DOT_COLORS = ["bg-white/45", "bg-yellow-500", "bg-cyan-400"];
 
 type ProfileCompletionInput = {
   fullName: string;
@@ -193,12 +193,6 @@ function profileCompletion(p: ProfileCompletionInput | null) {
 }
 
 const PROFILE_BASE_COMPLETE_THRESHOLD = 95;
-
-/** True when all profile fields are filled; excludes verification tier bonus (so Tier 2 can unlock after skill test). */
-function isProfileComplete(p: DevProfileType | null): boolean {
-  if (!p) return false;
-  return profileCompletionBase(p) >= PROFILE_BASE_COMPLETE_THRESHOLD;
-}
 
 /** Unlock a skill test if any profile skill overlaps catalog tags (substring match). */
 function skillTagsMatch(tags: string[], userSkills: string[]): boolean {
@@ -317,6 +311,78 @@ const SKILL_ASSESSMENT_CATALOG: SkillAssessmentCatalogEntry[] = [
   },
 ];
 
+type ScrollRailMetrics = { pctTop: number; pctHeight: number; scrollable: boolean };
+
+function useScrollRailMetrics(scrollRef: RefObject<HTMLElement | null>): ScrollRailMetrics {
+  const [m, setM] = useState<ScrollRailMetrics>({ pctTop: 0, pctHeight: 0, scrollable: false });
+  const update = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const { scrollTop, scrollHeight, clientHeight } = el;
+    if (scrollHeight <= clientHeight + 2) {
+      setM({ pctTop: 0, pctHeight: 0, scrollable: false });
+      return;
+    }
+    const maxScroll = scrollHeight - clientHeight;
+    const visibleRatio = clientHeight / scrollHeight;
+    const thumbPct = Math.max(visibleRatio * 100, 10);
+    const scrollRatio = maxScroll > 0 ? scrollTop / maxScroll : 0;
+    const pctTop = scrollRatio * (100 - thumbPct);
+    setM({ pctTop, pctHeight: thumbPct, scrollable: true });
+  }, [scrollRef]);
+  useEffect(() => {
+    const el = scrollRef.current;
+    update();
+    if (!el) return undefined;
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    window.addEventListener("resize", update);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [scrollRef, update]);
+  return m;
+}
+
+function ScrollGlowRail({
+  metrics,
+  variant,
+}: {
+  metrics: ScrollRailMetrics;
+  variant: "sidebar" | "panel";
+}) {
+  const thumbGradient =
+    variant === "sidebar"
+      ? "from-cyan-200/95 via-indigo-400/90 to-violet-500/85"
+      : "from-sky-300/90 via-indigo-400/95 to-fuchsia-400/80";
+  const shimmerGradient =
+    variant === "sidebar"
+      ? "from-transparent via-indigo-400/55 to-transparent"
+      : "from-transparent via-cyan-400/45 to-transparent";
+  return (
+    <div
+      className="pointer-events-none absolute right-0 top-0 z-20 flex h-full w-3 shrink-0 justify-center"
+      aria-hidden
+    >
+      <div className="relative h-full w-full overflow-hidden rounded-full opacity-90">
+        <div className="absolute inset-y-2 left-1/2 w-px -translate-x-1/2 rounded-full bg-gradient-to-b from-white/[0.03] via-white/15 to-white/[0.03]" />
+        <div
+          className={`dashboard-rail-shimmer absolute left-1/2 top-0 h-[42%] w-[5px] -translate-x-1/2 rounded-full bg-gradient-to-b ${shimmerGradient} blur-[1px] shadow-[0_0_18px_rgba(129,140,248,0.35)]`}
+        />
+        {metrics.scrollable ? (
+          <div
+            className={`absolute left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-gradient-to-b ${thumbGradient} shadow-[0_0_16px_rgba(99,102,241,0.75),0_0_28px_rgba(34,211,238,0.25)] transition-[top,height] duration-150 ease-out`}
+            style={{ top: `${metrics.pctTop}%`, height: `${metrics.pctHeight}%` }}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Component ────────────────────────────────────────────────────────────
 export default function EmployeeDashboard() {
   const router = useRouter();
@@ -349,6 +415,10 @@ export default function EmployeeDashboard() {
     Record<string, boolean>
   >({});
   const rewardsHealAttempted = useRef<Set<string>>(new Set());
+  const sidebarScrollRef = useRef<HTMLDivElement>(null);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+  const sidebarRail = useScrollRailMetrics(sidebarScrollRef);
+  const mainRail = useScrollRailMetrics(mainScrollRef);
 
   const userName = developerProfile?.fullName || currentUser?.displayName || "Developer";
   const userSkills = developerProfile?.skills ?? [];
@@ -615,31 +685,40 @@ export default function EmployeeDashboard() {
     currentUser?.uid,
   ]);
 
-  const needsProfileAfterSkillPass = useMemo(() => {
+  /** Tier 2 is automatic on pass; this nudges profile depth for matching quality. */
+  const suggestProfileCompletionForMatching = useMemo(() => {
     if (!developerProfile) return false;
-    const passed = (developerProfile.passedSkillAssessments?.length ?? 0) > 0;
-    return passed && !isProfileComplete(developerProfile) && developerProfile.verificationStatus === "self-declared";
+    const tier2plus =
+      developerProfile.verificationStatus === "assessment-passed" ||
+      developerProfile.verificationStatus === "project-verified";
+    return tier2plus && profileCompletionBase(developerProfile) < PROFILE_BASE_COMPLETE_THRESHOLD;
   }, [developerProfile]);
 
   const completionPct = useMemo(() => profileCompletion(developerProfile ?? null), [developerProfile]);
   const profileBasePct = useMemo(() => profileCompletionBase(developerProfile ?? null), [developerProfile]);
   const passedIdsKey = developerProfile?.passedSkillAssessments?.join("|") ?? "";
 
-  // Skill test passed first, then profile fields reach 95% → Tier 2 (bar hits 100% after +5 tier bonus)
+  // Legacy backfill: had passed assessments but never got Tier 2 (old rule required 95% profile first).
   useEffect(() => {
     const uid = currentUser?.uid;
     if (!uid || uid === "demo-guest" || !developerProfile) return;
     if (!passedIdsKey) return;
     if (developerProfile.verificationStatus !== "self-declared") return;
-    if (profileBasePct < PROFILE_BASE_COMPLETE_THRESHOLD) return;
     let cancelled = false;
-    updateDeveloperProfileField(uid, { verificationStatus: "assessment-passed" })
+    updateDeveloperProfileField(uid, {
+      verificationStatus: "assessment-passed",
+      tierLabel: "Tier 2",
+    })
       .then(() => {
-        if (!cancelled) patchDeveloperProfile({ verificationStatus: "assessment-passed" });
+        if (!cancelled) {
+          patchDeveloperProfile({ verificationStatus: "assessment-passed", tierLabel: "Tier 2" });
+        }
       })
       .catch(() => {});
-    return () => { cancelled = true; };
-  }, [passedIdsKey, profileBasePct, developerProfile?.verificationStatus, currentUser?.uid, patchDeveloperProfile]);
+    return () => {
+      cancelled = true;
+    };
+  }, [passedIdsKey, developerProfile?.verificationStatus, currentUser?.uid, patchDeveloperProfile]);
 
   const setQuizChoice = (assessmentId: string, qIndex: number, choiceIndex: number) => {
     setQuizAnswers(prev => {
@@ -669,9 +748,12 @@ export default function EmployeeDashboard() {
     setAssessmentFeedback(null);
     try {
       const next = [...prev, assessmentId];
-      const merged: DevProfileType = { ...developerProfile, passedSkillAssessments: next };
       const updates: Partial<DevProfileType> = { passedSkillAssessments: next };
-      if (isProfileComplete(merged)) updates.verificationStatus = "assessment-passed";
+      // Tier 2: any passed skill assessment. Never downgrade Tier 3 (completed client project).
+      if (developerProfile.verificationStatus !== "project-verified") {
+        updates.verificationStatus = "assessment-passed";
+        updates.tierLabel = "Tier 2";
+      }
       await updateDeveloperProfileField(uid, updates);
       patchDeveloperProfile(updates);
       await logAction(uid, "analysis.generated", { type: "skill_assessment_passed", assessmentId }).catch(() => {});
@@ -903,20 +985,46 @@ export default function EmployeeDashboard() {
   }
 
   return (
-    <div className="min-h-screen relative flex">
+    <div className="min-h-screen relative flex overflow-x-hidden bg-[#030303]">
       <div className="fixed top-1/4 left-1/4 w-[500px] h-[500px] bg-white/[0.02] rounded-full blur-[150px] pointer-events-none -z-10" />
       <div className="fixed bottom-0 right-0 w-[600px] h-[600px] bg-white/[0.01] rounded-full blur-[180px] pointer-events-none -z-10" />
 
       {/* ── Sidebar ────────────────────────────────────────────────────────── */}
-      <aside className="w-72 border-r border-white/5 bg-[#050505]/80 backdrop-blur-xl flex flex-col p-6 sticky top-0 h-screen overflow-y-auto">
+      <aside className="relative w-72 shrink-0 border-r border-white/5 bg-[#050505]/80 backdrop-blur-xl sticky top-0 h-screen flex flex-col shadow-[inset_-1px_0_0_rgba(255,255,255,0.04)]">
+        <div
+          ref={sidebarScrollRef}
+          className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col p-6"
+        >
         {/* Avatar + name — live from developerProfile */}
         <Link href="/developer/profile" className="flex items-center gap-3 mb-6 group">
-          <div className="w-14 h-14 rounded-full border-2 border-white/20 group-hover:border-indigo-500/50 overflow-hidden bg-white/5 flex items-center justify-center shrink-0 transition-all duration-300 shadow-lg">
-            {developerProfile?.photoURL ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={developerProfile.photoURL} alt={userName} className="w-full h-full object-cover" />
-            ) : (
-              <User className="w-6 h-6 text-white/40" />
+          <div className="relative shrink-0">
+            {developerProfile?.verificationStatus === "project-verified" && (
+              <div
+                className="pointer-events-none absolute -inset-1 rounded-full bg-gradient-to-br from-cyan-400/50 via-white/25 to-amber-300/45 opacity-90 blur-[3px] animate-pulse"
+                aria-hidden
+              />
+            )}
+            <div
+              className={`relative w-14 h-14 rounded-full overflow-hidden bg-white/5 flex items-center justify-center transition-all duration-300 shadow-lg ${
+                developerProfile?.verificationStatus === "project-verified"
+                  ? "border-2 border-cyan-400/70 ring-2 ring-amber-400/30 ring-offset-2 ring-offset-[#050505]"
+                  : "border-2 border-white/20 group-hover:border-indigo-500/50"
+              }`}
+            >
+              {developerProfile?.photoURL ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={developerProfile.photoURL} alt={userName} className="w-full h-full object-cover" />
+              ) : (
+                <User className="w-6 h-6 text-white/40" />
+              )}
+            </div>
+            {developerProfile?.verificationStatus === "project-verified" && (
+              <div
+                className="absolute -bottom-0.5 -right-0.5 flex h-6 w-6 items-center justify-center rounded-lg border border-cyan-400/60 bg-gradient-to-br from-cyan-500/30 to-amber-500/25 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.55)]"
+                title="Tier 3 · Diamond verified"
+              >
+                <Gem className="h-3.5 w-3.5" strokeWidth={2.4} aria-hidden />
+              </div>
             )}
           </div>
           <div className="min-w-0 flex-1">
@@ -960,7 +1068,7 @@ export default function EmployeeDashboard() {
                   <div
                     className={`relative flex w-full min-h-[4.5rem] items-center gap-3 rounded-full border-2 px-4 py-3 shadow-inner ${
                       tier3Glow
-                        ? "border-amber-400/55 bg-gradient-to-br from-[#1a1208] via-[#0c0c0c] to-[#140a1a] shadow-[0_0_32px_-10px_rgba(251,191,36,0.35)]"
+                        ? "border-cyan-400/50 bg-gradient-to-br from-cyan-950/50 via-[#08080f] to-amber-950/35 shadow-[0_0_36px_-8px_rgba(34,211,238,0.4)]"
                         : tier === "assessment-passed"
                           ? "border-yellow-500/45 bg-[#0a0a0a]"
                           : "border-white/20 bg-[#0a0a0a]"
@@ -968,21 +1076,21 @@ export default function EmployeeDashboard() {
                   >
                     {tier3Glow && (
                       <div
-                        className="pointer-events-none absolute inset-0 rounded-full bg-gradient-to-r from-amber-500/[0.07] via-transparent to-purple-500/[0.07]"
+                        className="pointer-events-none absolute inset-0 rounded-full bg-gradient-to-r from-cyan-500/[0.12] via-transparent to-amber-400/[0.1]"
                         aria-hidden
                       />
                     )}
                     <div
                       className={`relative z-10 flex h-12 min-w-[3rem] shrink-0 items-center justify-center rounded-xl border-2 text-3xl font-black tabular-nums leading-none text-white ${
                         tier3Glow
-                          ? "border-amber-400/60 bg-amber-500/25 text-amber-50"
+                          ? "border-cyan-400/55 bg-gradient-to-br from-cyan-500/30 to-amber-500/20 text-cyan-50 shadow-[0_0_20px_rgba(34,211,238,0.25)]"
                           : tier === "assessment-passed"
                             ? "border-yellow-500/40 bg-yellow-500/10 text-yellow-100"
                             : "border-white/25 bg-white/[0.08] text-white"
                       }`}
-                      aria-label={`Verification tier ${tierNum}`}
+                      aria-label={tier3Glow ? "Tier 3 Diamond verified developer" : `Verification tier ${tierNum}`}
                     >
-                      {tierNum}
+                      {tier3Glow ? <Gem className="h-7 w-7" strokeWidth={2.2} aria-hidden /> : tierNum}
                     </div>
                     <div className="relative z-10 min-w-0 flex-1 text-left">
                       <p className={`text-[11px] font-black uppercase tracking-[0.22em] ${cfg.color}`}>
@@ -997,7 +1105,7 @@ export default function EmployeeDashboard() {
                   {/* Bottom-center tab / notch */}
                   <div
                     className={`pointer-events-none absolute bottom-0 left-1/2 z-20 h-2.5 w-10 -translate-x-1/2 translate-y-px rounded-t-md border border-b-0 bg-[#050505] sm:w-12 ${
-                      tier3Glow ? "border-amber-400/35" : "border-white/20"
+                      tier3Glow ? "border-cyan-400/40" : "border-white/20"
                     }`}
                     aria-hidden
                   />
@@ -1033,8 +1141,9 @@ export default function EmployeeDashboard() {
                     />
                   </div>
                   {tier3Glow && typeof developerProfile?.completedProjectsCount === "number" && (
-                    <p className="mt-2 border-t border-white/10 pt-2 text-[9px] font-bold text-amber-200/90">
-                      Verified completions: {developerProfile.completedProjectsCount}
+                    <p className="mt-2 border-t border-white/10 pt-2 text-[9px] font-bold text-cyan-200/90">
+                      Diamond verified · {developerProfile.completedProjectsCount} completed hire
+                      {developerProfile.completedProjectsCount === 1 ? "" : "s"}
                     </p>
                   )}
                 </div>
@@ -1139,10 +1248,16 @@ export default function EmployeeDashboard() {
             </div>
           )}
         </div>
+        </div>
+        <ScrollGlowRail metrics={sidebarRail} variant="sidebar" />
       </aside>
 
       {/* ── Main Content ───────────────────────────────────────────────────── */}
-      <main className="flex-grow overflow-y-auto flex flex-col">
+      <main className="relative flex-grow min-w-0 min-h-0 h-screen flex flex-col bg-[#030303]/40">
+        <div
+          ref={mainScrollRef}
+          className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col"
+        >
         <DeveloperFlowBreadcrumb className="px-10 pt-4 shrink-0 border-b border-white/5 bg-[#030303]/50" />
         <div className="p-10 max-w-5xl space-y-8 flex-1">
 
@@ -1592,7 +1707,9 @@ export default function EmployeeDashboard() {
                 <div className="p-5 bg-white/5 border border-white/10 rounded-2xl flex items-start gap-4">
                   <Shield className="w-5 h-5 text-white/40 shrink-0 mt-0.5" />
                   <p className="text-xs text-white/60 font-light leading-relaxed">
-                    <strong className="text-white">How it works:</strong> Each test activates only when your profile skills overlap that topic. Pass the quiz, then <strong className="text-white">fill every profile section (95% “base” completion)</strong> to unlock <strong className="text-yellow-400">Tier 2 · Assessment-passed</strong> — the bar then shows 100% including the tier bonus. Tier 3 comes from delivering a BuildCraft project.
+                    <strong className="text-white">How it works:</strong> Each test unlocks from skills on your profile. <strong className="text-yellow-400">Pass any quiz once</strong> and you are promoted to{" "}
+                    <strong className="text-yellow-400">Tier 2</strong> immediately. Finish your profile to 95%+ for stronger client matching (extra completion points).{" "}
+                    <strong className="text-cyan-300">Tier 3 · Diamond</strong> is earned when a client hires you through BuildCraft and the project reaches full completion (dual approval).
                   </p>
                 </div>
 
@@ -1609,17 +1726,18 @@ export default function EmployeeDashboard() {
                   </div>
                 )}
 
-                {needsProfileAfterSkillPass && (
+                {suggestProfileCompletionForMatching && (
                   <div className="p-5 rounded-2xl border border-indigo-500/30 bg-indigo-500/10 flex flex-col sm:flex-row sm:items-center gap-4">
                     <Award className="w-6 h-6 text-indigo-400 shrink-0" />
                     <div className="flex-1">
-                      <p className="text-sm font-bold text-white">Complete your profile to finalize verification</p>
+                      <p className="text-sm font-bold text-white">Polish your profile for better matches</p>
                       <p className="text-xs text-white/60 font-light mt-1">
-                        You passed at least one skill test. Finish every profile checklist item (photo, pay range, portfolio, etc.) until <strong className="text-white">base completion is 95%</strong> — then Tier 2 activates automatically. Base now: <strong className="text-indigo-300">{profileBasePct}%</strong> · bar with tier: <strong className="text-white/80">{completionPct}%</strong>
+                        Your tier is already unlocked from skill tests or deliveries. Raising <strong className="text-white">base profile completion to 95%</strong> helps clients trust you faster. Base now:{" "}
+                        <strong className="text-indigo-300">{profileBasePct}%</strong> · with tier bonus: <strong className="text-white/80">{completionPct}%</strong>
                       </p>
                     </div>
                     <Link href="/developer/profile" className="shrink-0 px-5 py-3 border border-indigo-500/40 text-indigo-200 font-black uppercase tracking-widest text-[10px] rounded-xl hover:bg-indigo-500/20 text-center">
-                      Complete profile
+                      Edit profile
                     </Link>
                   </div>
                 )}
@@ -1810,12 +1928,15 @@ export default function EmployeeDashboard() {
                       <p className="text-[9px] text-white/30 uppercase tracking-widest font-bold mb-2">Skills</p>
                       <div className="flex flex-wrap gap-1.5">
                         {developerProfile!.skills.map(s => {
-                          const tierColor = developerProfile?.verificationStatus === "project-verified" ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
-                            : developerProfile?.verificationStatus === "assessment-passed" ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/20"
-                            : "text-white/60 bg-white/5 border-white/10";
+                          const tierColor = developerProfile?.verificationStatus === "project-verified"
+                            ? "text-cyan-300 bg-cyan-500/10 border-cyan-400/25"
+                            : developerProfile?.verificationStatus === "assessment-passed"
+                              ? "text-yellow-400 bg-yellow-500/10 border-yellow-500/20"
+                              : "text-white/60 bg-white/5 border-white/10";
+                          const TierIcon = developerProfile?.verificationStatus === "project-verified" ? Gem : ShieldCheck;
                           return (
                             <span key={s} className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold border ${tierColor}`}>
-                              <ShieldCheck className="w-3 h-3" /> {s}
+                              <TierIcon className="w-3 h-3 shrink-0" strokeWidth={developerProfile?.verificationStatus === "project-verified" ? 2.4 : 2} /> {s}
                             </span>
                           );
                         })}
@@ -1931,7 +2052,7 @@ export default function EmployeeDashboard() {
                     { task: "Add past project description", done: (developerProfile?.projectDescriptions?.length ?? 0) > 0,        points: 10 },
                     { task: "Set availability & pay",     done: (developerProfile?.payMin ?? 0) > 0,                               points: 10 },
                     { task: "Pick preferred project types", done: (developerProfile?.preferredTypes?.length ?? 0) > 0,             points: 5  },
-                    { task: "Upgrade skill verification", done: developerProfile?.verificationStatus !== "self-declared",           points: 5  },
+                    { task: "Reach Tier 2+ (skill test or Diamond hire)", done: developerProfile?.verificationStatus !== "self-declared", points: 5 },
                   ];
                   return (
                     <div className="glass-panel p-6 rounded-2xl border border-white/10">
@@ -1970,6 +2091,8 @@ export default function EmployeeDashboard() {
             )}
           </AnimatePresence>
         </div>
+        </div>
+        <ScrollGlowRail metrics={mainRail} variant="panel" />
       </main>
     </div>
   );

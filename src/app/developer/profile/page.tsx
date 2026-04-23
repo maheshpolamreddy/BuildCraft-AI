@@ -9,7 +9,7 @@ import {
   Loader2, Plus, X, Shield, Sparkles, Terminal, Layers,
   Zap, Star, AlertCircle, Camera, ImagePlus, Trash2,
   Save, ArrowLeft, Edit3, ShieldCheck, Check, ExternalLink,
-  Activity, TrendingUp, Globe, Github, RefreshCw,
+  Activity, TrendingUp, Globe, Github, RefreshCw, Gem,
 } from "lucide-react";
 import { useStore } from "@/store/useStore";
 import {
@@ -49,9 +49,9 @@ const ROLE_ICONS: Record<PrimaryRole, React.ReactNode> = {
 };
 
 const TIER_CONFIG = {
-  "self-declared":      { label: "Tier 1 · Self-Declared",    color: "text-white/50", bg: "bg-white/5 border-white/10",            icon: <Edit3 className="w-3.5 h-3.5" /> },
-  "assessment-passed":  { label: "Tier 2 · Assessment-Passed", color: "text-yellow-400", bg: "bg-yellow-500/10 border-yellow-500/30", icon: <Award className="w-3.5 h-3.5" /> },
-  "project-verified":   { label: "Tier 3 · Project-Verified",  color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30", icon: <ShieldCheck className="w-3.5 h-3.5" /> },
+  "self-declared":      { label: "Tier 1 · Self-Declared",     color: "text-white/50",    bg: "bg-white/5 border-white/10",              icon: <Edit3 className="w-3.5 h-3.5" /> },
+  "assessment-passed":  { label: "Tier 2 · Skill test passed", color: "text-yellow-400",  bg: "bg-yellow-500/10 border-yellow-500/30",   icon: <Award className="w-3.5 h-3.5" /> },
+  "project-verified":   { label: "Tier 3 · Diamond verified",  color: "text-cyan-200",    bg: "bg-cyan-500/10 border-cyan-400/35",      icon: <Gem className="w-3.5 h-3.5" strokeWidth={2.2} /> },
 };
 
 const ALL_SKILLS = [
@@ -307,7 +307,19 @@ export default function DeveloperProfilePage() {
             {/* Photo */}
             <div className="flex flex-col items-center gap-3">
               <div className="relative group">
-                <div className="w-28 h-28 rounded-full border-2 border-indigo-500/40 overflow-hidden bg-white/5 flex items-center justify-center shadow-[0_0_30px_rgba(99,102,241,0.2)] transition-all duration-300">
+                {tier === "project-verified" && (
+                  <div
+                    className="pointer-events-none absolute -inset-1 rounded-full bg-gradient-to-br from-cyan-400/45 via-white/20 to-amber-300/40 opacity-90 blur-[4px]"
+                    aria-hidden
+                  />
+                )}
+                <div
+                  className={`relative w-28 h-28 rounded-full overflow-hidden bg-white/5 flex items-center justify-center transition-all duration-300 ${
+                    tier === "project-verified"
+                      ? "border-2 border-cyan-400/60 shadow-[0_0_32px_rgba(34,211,238,0.35)] ring-2 ring-amber-400/25 ring-offset-2 ring-offset-[#0a0a0a]"
+                      : "border-2 border-indigo-500/40 shadow-[0_0_30px_rgba(99,102,241,0.2)]"
+                  }`}
+                >
                   {profile.photoURL ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={profile.photoURL} alt={profile.fullName} className="w-full h-full object-cover" />
@@ -321,7 +333,13 @@ export default function DeveloperProfilePage() {
                   <Camera className="w-6 h-6 text-white" />
                 </button>
                 {/* Tier badge */}
-                <div className={`absolute -bottom-1 -right-1 flex items-center gap-1 px-2 py-1 rounded-full border text-[9px] font-black uppercase tracking-widest ${tierCfg.bg} ${tierCfg.color}`}>
+                <div
+                  className={`absolute -bottom-1 -right-1 flex items-center gap-1 border text-[9px] font-black uppercase tracking-widest ${
+                    tier === "project-verified"
+                      ? "rounded-lg px-1.5 py-1 border-cyan-400/55 bg-gradient-to-br from-cyan-500/30 to-amber-500/20 text-cyan-50 shadow-[0_0_14px_rgba(34,211,238,0.45)]"
+                      : `rounded-full px-2 py-1 ${tierCfg.bg} ${tierCfg.color}`
+                  }`}
+                >
                   {tierCfg.icon}
                 </div>
               </div>
@@ -357,10 +375,34 @@ export default function DeveloperProfilePage() {
               )}
             </div>
 
-            {/* Tier badge */}
-            <div className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${tierCfg.bg} ${tierCfg.color}`}>
+            {/* Tier status (assigned by platform) */}
+            <div
+              className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold ${
+                tier === "project-verified"
+                  ? "border-cyan-400/40 bg-gradient-to-r from-cyan-500/15 to-amber-500/10 text-cyan-100"
+                  : `${tierCfg.bg} ${tierCfg.color}`
+              }`}
+            >
               {tierCfg.icon} {tierCfg.label}
             </div>
+            {typeof profile.completedProjectsCount === "number" && profile.completedProjectsCount > 0 && tier === "project-verified" && (
+              <p className="text-center text-[10px] text-cyan-200/70 font-medium">
+                {profile.completedProjectsCount} verified hire{profile.completedProjectsCount === 1 ? "" : "s"} on BuildCraft
+              </p>
+            )}
+            {Array.isArray(profile.earnedBadges) && profile.earnedBadges.length > 0 && (
+              <div className="flex flex-wrap justify-center gap-1.5">
+                {profile.earnedBadges.map((b) => (
+                  <span
+                    key={b}
+                    className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[8px] font-black uppercase tracking-widest text-white/50"
+                  >
+                    {b === "Project Verified" ? <Gem className="h-3 w-3 text-cyan-300" strokeWidth={2.2} /> : null}
+                    {b}
+                  </span>
+                ))}
+              </div>
+            )}
 
             {/* Profile completion */}
             <div className="space-y-2">
@@ -594,21 +636,31 @@ export default function DeveloperProfilePage() {
                         </div>
                       </FormField>
 
-                      <FormField label="Skill Verification Tier">
-                        <div className="space-y-2">
-                          {(["self-declared", "assessment-passed", "project-verified"] as const).map(v => {
-                            const cfg = TIER_CONFIG[v];
-                            return (
-                              <button key={v} onClick={() => update("verificationStatus", v)}
-                                className={`w-full flex items-center gap-3 p-4 rounded-xl border text-left transition-all ${profile.verificationStatus === v ? `${cfg.bg} ${cfg.color}` : "bg-white/5 border-white/10 text-white/50 hover:border-white/20"}`}>
-                                {cfg.icon}
-                                <span className="text-sm font-bold">{cfg.label}</span>
-                                {profile.verificationStatus === v && <Check className="w-4 h-4 ml-auto" />}
-                              </button>
-                            );
-                          })}
+                      <Section title="Verification tier" icon={<ShieldCheck className="w-5 h-5 text-cyan-400" />}>
+                        <p className="text-xs text-white/45 font-light leading-relaxed mb-4">
+                          Tiers are <strong className="text-white/70">automatic</strong> — you cannot set them manually. Pass any unlocked skill test for{" "}
+                          <strong className="text-yellow-400">Tier 2</strong>. When a client hires you here and the project is fully completed (dual approval), you earn{" "}
+                          <strong className="text-cyan-300">Tier 3 · Diamond</strong> with the diamond badge on your dashboard.
+                        </p>
+                        <div
+                          className={`flex items-center gap-3 p-4 rounded-xl border ${
+                            profile.verificationStatus === "project-verified"
+                              ? "border-cyan-400/35 bg-gradient-to-r from-cyan-500/10 to-amber-500/5"
+                              : profile.verificationStatus === "assessment-passed"
+                                ? `${TIER_CONFIG["assessment-passed"].bg} ${TIER_CONFIG["assessment-passed"].color}`
+                                : `${TIER_CONFIG["self-declared"].bg} ${TIER_CONFIG["self-declared"].color}`
+                          }`}
+                        >
+                          {TIER_CONFIG[profile.verificationStatus].icon}
+                          <div className="min-w-0 flex-1">
+                            <p className={`text-sm font-black ${TIER_CONFIG[profile.verificationStatus].color}`}>
+                              {TIER_CONFIG[profile.verificationStatus].label}
+                            </p>
+                            <p className="text-[10px] text-white/35 mt-1 font-medium">Current status · synced from BuildCraft</p>
+                          </div>
+                          <Check className="w-4 h-4 shrink-0 text-white/30" aria-hidden />
                         </div>
-                      </FormField>
+                      </Section>
                     </div>
                   </Section>
                 )}

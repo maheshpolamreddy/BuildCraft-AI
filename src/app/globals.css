@@ -129,3 +129,32 @@
 .float-animation {
   animation: float 6s ease-in-out infinite;
 }
+
+/* Dashboard: hide native scrollbars, keep scrolling */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+@keyframes dashboard-rail-shimmer {
+  0% {
+    transform: translateY(-120%);
+    opacity: 0.25;
+  }
+  45% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(220%);
+    opacity: 0.25;
+  }
+}
+
+.dashboard-rail-shimmer {
+  animation: dashboard-rail-shimmer 3.8s ease-in-out infinite;
+}

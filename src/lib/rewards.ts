@@ -16,9 +16,10 @@ export async function awardProjectVerifiedBadge(developerUid: string): Promise<v
 
   const updates: Partial<DeveloperProfile> = {};
 
+  // Promote to Tier 3 when a hired project completes (server calls this). Never downgrade.
   if (profile.verificationStatus !== "project-verified") {
     updates.verificationStatus = "project-verified";
-    updates.tierLabel = "Tier 3";
+    updates.tierLabel = "Tier 3 · Diamond";
   }
 
   if (Object.keys(updates).length > 0) {
@@ -80,7 +81,7 @@ export async function processCompletionRewards(
       earnedBadges: badges,
       completedProjectIds: ids,
       completedProjectsCount: count,
-      tierLabel: "Tier 3",
+      tierLabel: "Tier 3 · Diamond",
     });
   } catch (e) {
     console.warn("[rewards] profile upgrade failed:", e);
