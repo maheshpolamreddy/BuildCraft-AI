@@ -53,23 +53,22 @@ function clearStaleDeveloperStateForUid(uid: string | undefined) {
  * Mounts once at the root layout. Subscribes to Firebase auth state and keeps
  * the Zustand store in sync so every page knows who is signed in.
  *
- * Production hardening (Google popup on Vercel):
- * - Listener registers immediately (not blocked behind getRedirectResult) so the first
- *   auth tick is not missed after OAuth.
- * - Debounced null + auth.currentUser reconciliation avoids transient `null` from wiping
- *   the session right after a successful Google sign-in (common race on deployed hosts).
+ * Production hardening (Google on Vercel):
+ * - **Await** `getRedirectResult` (via `consumeGoogleRedirectResult`) *before* registering
+ *   `onAuthStateChanged`. If the listener is attached in parallel, the first callback is often
+ *   `null` while redirect handling is still pending; our debounced sign-out can then clear the
+ *   session and leave users stuck on `/auth` (no role step).
+ * - Debounced null + `auth.currentUser` reconciliation in `flushSignedOut` for remaining
+ *   transient `null` ticks after popups.
  */
+const NULL_TO_SIGNEDOUT_MS = 400;
+
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let previousUid: string | null = null;
     let cancelled = false;
     let pendingNullTimer: ReturnType<typeof setTimeout> | undefined;
-
-    void consumeGoogleRedirectResult().then((fromRedirect) => {
-      if (fromRedirect && !cancelled) {
-        void logAction(fromRedirect.uid, "auth.sign_in", { method: "google", via: "redirect" });
-      }
-    });
+    let unsubscribe: (() => void) | undefined;
 
     function applySignedInUser(user: AuthUser) {
       clearStaleDeveloperStateForUid(user.uid);
@@ -166,25 +165,33 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
       previousUid = null;
     }
 
-    const unsubscribe = onAuthChange((user) => {
-      if (pendingNullTimer) {
-        clearTimeout(pendingNullTimer);
-        pendingNullTimer = undefined;
+    void (async () => {
+      const fromRedirect = await consumeGoogleRedirectResult();
+      if (fromRedirect && !cancelled) {
+        void logAction(fromRedirect.uid, "auth.sign_in", { method: "google", via: "redirect" });
       }
-      if (!user) {
-        pendingNullTimer = setTimeout(() => {
+      if (cancelled) return;
+
+      unsubscribe = onAuthChange((user) => {
+        if (pendingNullTimer) {
+          clearTimeout(pendingNullTimer);
           pendingNullTimer = undefined;
-          flushSignedOut();
-        }, 120);
-        return;
-      }
-      applySignedInUser(user);
-    });
+        }
+        if (!user) {
+          pendingNullTimer = setTimeout(() => {
+            pendingNullTimer = undefined;
+            flushSignedOut();
+          }, NULL_TO_SIGNEDOUT_MS);
+          return;
+        }
+        applySignedInUser(user);
+      });
+    })();
 
     return () => {
       cancelled = true;
       if (pendingNullTimer) clearTimeout(pendingNullTimer);
-      unsubscribe();
+      unsubscribe?.();
     };
   }, []);
 
