@@ -5,8 +5,7 @@ import Threads from "@/components/Threads";
 import { motion } from "framer-motion";
 import {
   Building2, User, Lock, ArrowRight, Mail, CheckCircle2,
-  ChevronRight, Fingerprint,
-  Eye, EyeOff, Loader2, AlertCircle, Chrome, Phone, Globe, Briefcase,
+  ChevronRight, Eye, EyeOff, Loader2, AlertCircle, Chrome, Phone, Globe, Briefcase,
 } from "lucide-react";
 import Logo from "@/components/Logo";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -22,6 +21,11 @@ import { logAction } from "@/lib/auditLog";
 import { updateUserProfile } from "@/lib/firestore";
 import { getDeveloperProfile, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
 import { sanitizeInternalReturnPath } from "@/lib/safePaths";
+
+const IS_PROD = process.env.NODE_ENV === "production";
+const IS_DEV = !IS_PROD;
+/** In production, never expose internal auth errors, Firebase messages, or popup-blocked hints. */
+const PROD_GOOGLE_ERR = "Sign in could not be completed. Please try again.";
 
 function PlatformEntryInner() {
   const router  = useRouter();
@@ -41,7 +45,7 @@ function PlatformEntryInner() {
   const [name,       setName]       = useState("");
   const [showPass,   setShowPass]   = useState(false);
   const [authError,  setAuthError]  = useState<string | null>(null);
-  /** Shown when signInWithPopup returns auth/popup-blocked; second button uses full-page redirect. */
+  /** Dev only: popup-blocked helper UI (hidden in production). */
   const [googlePopupBlocked, setGooglePopupBlocked] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [postRoleLoading, setPostRoleLoading] = useState(false);
@@ -181,7 +185,7 @@ function PlatformEntryInner() {
 
   async function handleEmailAuth() {
     if (!email.trim() || !password.trim()) {
-      setAuthError("Please fill in all fields.");
+      setAuthError(IS_PROD ? PROD_GOOGLE_ERR : "Please fill in all fields.");
       return;
     }
     setAuthLoading(true);
@@ -198,7 +202,7 @@ function PlatformEntryInner() {
       setGooglePopupBlocked(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Authentication failed.";
-      setAuthError(friendlyError(msg, err));
+      setAuthError(IS_PROD ? PROD_GOOGLE_ERR : friendlyError(msg, err));
     } finally {
       setAuthLoading(false);
     }
@@ -231,12 +235,16 @@ function PlatformEntryInner() {
       setEmployerWizardOpen(false);
     } catch (err: unknown) {
       if (isAuthPopupBlockedError(err)) {
-        setGooglePopupBlocked(true);
-        setAuthError(null);
+        if (IS_DEV) {
+          setGooglePopupBlocked(true);
+          setAuthError(null);
+        } else {
+          setAuthError(PROD_GOOGLE_ERR);
+        }
         return;
       }
       const msg = err instanceof Error ? err.message : "Google sign-in failed.";
-      setAuthError(friendlyError(msg, err));
+      setAuthError(IS_PROD ? PROD_GOOGLE_ERR : friendlyError(msg, err));
     } finally {
       setAuthLoading(false);
     }
@@ -346,7 +354,11 @@ function PlatformEntryInner() {
           className="w-full max-w-[500px] premium-card rounded-[2.5rem] relative overflow-hidden ring-1 ring-white/5 flex flex-col shadow-[0_40px_100px_-20px_rgba(0,0,0,0.8)] backdrop-blur-3xl bg-black/40 group mx-auto [isolation:isolate]"
         >
           {/* Main Auth Card */}
-          <div className="w-full p-8 md:p-12 relative flex min-h-[600px] flex-col justify-start z-10">
+          <div
+            className={`w-full p-8 md:p-12 relative flex flex-col justify-start z-10 ${
+              IS_PROD && step === 1 ? "min-h-0" : "min-h-[600px]"
+            }`}
+          >
             <div className="absolute top-0 right-0 w-96 h-96 bg-blue-500/10 rounded-full blur-[100px] pointer-events-none z-0" />
             <div className="absolute bottom-0 left-0 w-96 h-96 bg-purple-500/10 rounded-full blur-[100px] pointer-events-none z-0" />
 
@@ -359,29 +371,62 @@ function PlatformEntryInner() {
             <div className="h-px w-24 bg-gradient-to-r from-transparent via-white/20 to-transparent mt-4" />
           </div>
 
-          {/* Progress Bar */}
-          <div className="flex gap-2 mb-10 relative z-10 w-full max-w-[180px] mx-auto">
-            {Array.from({ length: totalSteps }).map((_, i) => (
-              <div key={i} className={`h-1 flex-1 rounded-full transition-all duration-500 ${step > i ? "bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]" : "bg-white/10"}`} />
-            ))}
-          </div>
+          {/* Progress: hidden on production step 1 (Google-only, minimal) */}
+          {(IS_DEV || step > 1) && (
+            <div className="flex gap-2 mb-10 relative z-10 w-full max-w-[180px] mx-auto">
+              {Array.from({ length: totalSteps }).map((_, i) => (
+                <div key={i} className={`h-1 flex-1 rounded-full transition-all duration-500 ${step > i ? "bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.5)]" : "bg-white/10"}`} />
+              ))}
+            </div>
+          )}
 
           <div className="relative z-20 flex w-full min-h-[20rem] flex-1 flex-col">
 
             {isUserProfileLoading ? (
               <div className="flex min-h-[20rem] flex-1 flex-col items-center justify-center gap-4 py-10 px-4">
                 <Loader2 className="h-10 w-10 shrink-0 animate-spin text-white/50" aria-hidden />
-                <p className="text-sm font-light text-white/60">Loading your account…</p>
-                <p className="text-xs text-center text-white/40 max-w-sm">
-                  Preparing your workspace. This only takes a moment.
-                </p>
+                <p className="text-sm font-light text-white/60">Signing you in…</p>
+                {IS_DEV && (
+                  <p className="text-xs text-center text-white/40 max-w-sm">
+                    Preparing your workspace. This only takes a moment.
+                  </p>
+                )}
               </div>
             ) : (
               <>
             {/* ── Step 1: Firebase Auth — avoid remounting the whole card on step change
                 (keyed AnimatePresence was leaving the role step body blank until refresh). */}
 
-            {step === 1 && (
+            {step === 1 && IS_PROD && (
+              <div className="space-y-8 flex-1 flex flex-col">
+                <div className="text-center space-y-3">
+                  <h1 className="text-3xl font-black tracking-tighter leading-tight text-white drop-shadow-[0_0_1px_rgba(255,255,255,0.4)]">
+                    Welcome
+                  </h1>
+                  <p className="text-[#888] text-sm font-light">Sign in to continue</p>
+                </div>
+                <div className="max-w-md mx-auto w-full">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleGoogleAuth();
+                    }}
+                    disabled={authLoading}
+                    className="w-full py-4 flex items-center justify-center gap-3 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/30 transition-all rounded-2xl text-sm font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {authLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Chrome className="w-5 h-5" />}
+                    Continue with Google
+                  </button>
+                  {authError && (
+                    <p className="mt-4 text-center text-xs text-red-400/90" role="alert">
+                      {authError}
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {step === 1 && IS_DEV && (
               <div className="space-y-8 flex-1 flex flex-col">
                 <div className="text-center space-y-3">
                   <h1 className="text-3xl font-black tracking-tighter leading-tight text-white drop-shadow-[0_0_1px_rgba(255,255,255,0.4)]">
@@ -395,9 +440,11 @@ function PlatformEntryInner() {
                 </div>
 
                 <div className="space-y-4 max-w-md mx-auto">
-                  {/* Google */}
                   <button
-                    onClick={handleGoogleAuth}
+                    type="button"
+                    onClick={() => {
+                      void handleGoogleAuth();
+                    }}
                     disabled={authLoading}
                     className="w-full py-4 flex items-center justify-center gap-3 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/30 transition-all rounded-2xl text-sm font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -410,9 +457,7 @@ function PlatformEntryInner() {
                       <p className="text-[11px] leading-relaxed text-sky-100/95">
                         Your browser <span className="font-semibold text-white">blocked the sign-in window</span>{" "}
                         (lock or popup icon in the address bar). Allow popups for this site, then use{" "}
-                        <span className="text-white">Continue with Google</span> again. This app uses a{" "}
-                        <span className="text-white">popup</span> (not a full-page redirect) so the session is not
-                        lost on Vercel.
+                        <span className="text-white">Continue with Google</span> again.
                       </p>
                       <button
                         type="button"
@@ -431,7 +476,7 @@ function PlatformEntryInner() {
                     </div>
                   )}
 
-                  <ProductionAuthDomainReminder />
+                  <AuthSignInDebugPanel />
 
                   <div className="flex items-center gap-3">
                     <div className="flex-1 h-px bg-white/10" />
@@ -439,7 +484,6 @@ function PlatformEntryInner() {
                     <div className="flex-1 h-px bg-white/10" />
                   </div>
 
-                  {/* Email fields */}
                   <div className="space-y-3">
                     {authMode === "sign-up" && (
                       <div className="relative">
@@ -730,17 +774,15 @@ function PlatformEntryInner() {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /**
- * Deployed hosts (e.g. *.vercel.app) must be allowlisted or Google completes OAuth but
- * Firebase never attaches a session — localhost works because Firebase always allows localhost.
+ * Development-only: OAuth / Firebase checklist and links. Never shown in production builds.
  */
-function ProductionAuthDomainReminder() {
+function AuthSignInDebugPanel() {
   const [origin, setOrigin] = useState<string | null>(null);
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
-  if (process.env.NODE_ENV !== "production") return null;
+  if (process.env.NODE_ENV !== "development") return null;
   if (!origin) return null;
-  if (/^(https?:\/\/)?(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) return null;
 
   const pid = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
   const firebaseSettingsUrl = pid
@@ -750,7 +792,7 @@ function ProductionAuthDomainReminder() {
   return (
     <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2.5 text-left">
       <p className="text-[10px] font-bold uppercase tracking-wider text-amber-200/90 mb-1">
-        Production sign-in checklist
+        Development — sign-in checklist
       </p>
       <p className="text-[11px] leading-snug text-white/55">
         Add this exact origin to{" "}
