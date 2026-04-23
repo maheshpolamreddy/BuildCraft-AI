@@ -2,6 +2,7 @@ import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   getRedirectResult,
   setPersistence,
   browserLocalPersistence,
@@ -38,6 +39,11 @@ function getAuthErrorCode(err: unknown): string | undefined {
     return typeof c === "string" ? c : undefined;
   }
   return undefined;
+}
+
+/** `signInWithPopup` failed because the browser blocked the OAuth window. */
+export function isAuthPopupBlockedError(err: unknown): boolean {
+  return getAuthErrorCode(err) === "auth/popup-blocked";
 }
 
 // ── Profile creation ──────────────────────────────────────────────────────────
@@ -80,11 +86,8 @@ export async function signInWithEmail(email: string, password: string) {
 }
 
 /**
- * Google sign-in uses **popup only**. We intentionally do not use `signInWithRedirect` as a
- * fallback: on Vercel, that flow often opens `*.firebaseapp.com/__/auth/handler` and **hangs**
- * (blank page + loading bar) while returning to the app — a known class of issues with
- * cross-origin redirect handoff. If the popup is blocked, the user must allow popups for this
- * site; see friendlyError in the auth page.
+ * Google sign-in via **popup** (default). If the browser blocks it, the UI should offer
+ * `signInWithGoogleInSameTab` (user must click; do not call redirect without a direct gesture).
  */
 export async function signInWithGoogle(): Promise<AuthUser> {
   if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
@@ -94,6 +97,18 @@ export async function signInWithGoogle(): Promise<AuthUser> {
   const { user } = await signInWithPopup(auth, googleProvider);
   await createUserProfile(user);
   return toAuthUser(user);
+}
+
+/**
+ * Full-page Google OAuth. Call **only** from a button `onClick` (direct user activation).
+ * Completes via `getRedirectResult` in AuthProvider when the app loads again on return.
+ */
+export async function signInWithGoogleInSameTab(): Promise<void> {
+  if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
+    throw new Error("Firebase is not configured (missing NEXT_PUBLIC_FIREBASE_API_KEY).");
+  }
+  await setPersistence(auth, browserLocalPersistence);
+  await signInWithRedirect(auth, googleProvider);
 }
 
 /** Call once on app load after a Google redirect sign-in to create the Firestore user stub. */

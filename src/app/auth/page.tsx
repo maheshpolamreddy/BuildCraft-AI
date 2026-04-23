@@ -16,6 +16,8 @@ import {
   signUpWithEmail,
   signInWithEmail,
   signInWithGoogle,
+  signInWithGoogleInSameTab,
+  isAuthPopupBlockedError,
 } from "@/lib/auth";
 import { logAction } from "@/lib/auditLog";
 import { updateUserProfile } from "@/lib/firestore";
@@ -40,6 +42,8 @@ function PlatformEntryInner() {
   const [name,       setName]       = useState("");
   const [showPass,   setShowPass]   = useState(false);
   const [authError,  setAuthError]  = useState<string | null>(null);
+  /** Shown when signInWithPopup returns auth/popup-blocked; second button uses full-page redirect. */
+  const [googlePopupBlocked, setGooglePopupBlocked] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [postRoleLoading, setPostRoleLoading] = useState(false);
   const [employerFullName, setEmployerFullName] = useState("");
@@ -138,6 +142,7 @@ function PlatformEntryInner() {
       userReturnedToAuth.current = false;
       if (!asDeveloper) setRole(null);
       setEmployerWizardOpen(false);
+      setGooglePopupBlocked(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Authentication failed.";
       setAuthError(friendlyError(msg, err));
@@ -161,6 +166,7 @@ function PlatformEntryInner() {
   }, [step, name]);
 
   async function handleGoogleAuth() {
+    setGooglePopupBlocked(false);
     setAuthLoading(true);
     setAuthError(null);
     try {
@@ -171,6 +177,25 @@ function PlatformEntryInner() {
       if (!asDeveloper) setRole(null);
       setEmployerWizardOpen(false);
     } catch (err: unknown) {
+      if (isAuthPopupBlockedError(err)) {
+        setGooglePopupBlocked(true);
+        setAuthError(null);
+        return;
+      }
+      const msg = err instanceof Error ? err.message : "Google sign-in failed.";
+      setAuthError(friendlyError(msg, err));
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function handleGoogleInSameTab() {
+    setAuthError(null);
+    setAuthLoading(true);
+    try {
+      await signInWithGoogleInSameTab();
+    } catch (err: unknown) {
+      setGooglePopupBlocked(false);
       const msg = err instanceof Error ? err.message : "Google sign-in failed.";
       setAuthError(friendlyError(msg, err));
     } finally {
@@ -341,6 +366,28 @@ function PlatformEntryInner() {
                     Continue with Google
                   </button>
 
+                  {googlePopupBlocked && (
+                    <div className="rounded-xl border border-sky-500/40 bg-sky-500/[0.08] p-3 space-y-2">
+                      <p className="text-[11px] leading-relaxed text-sky-100/95">
+                        Your browser <span className="font-semibold text-white">blocked the sign-in window</span>
+                        (see the pop-up icon in the address bar). You can sign in
+                        in <span className="text-white">this tab</span> instead, or allow popups for this site and use
+                        the button above again.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void handleGoogleInSameTab()}
+                        disabled={authLoading}
+                        className="w-full py-3 flex items-center justify-center gap-2 border border-sky-400/50 bg-sky-500/15 hover:bg-sky-500/25 text-sky-50 text-xs font-bold rounded-xl transition-all disabled:opacity-50"
+                      >
+                        {authLoading
+                          ? <Loader2 className="w-4 h-4 animate-spin" />
+                          : <Chrome className="w-4 h-4" />}
+                        Continue with Google in this tab
+                      </button>
+                    </div>
+                  )}
+
                   <ProductionAuthDomainReminder />
 
                   <div className="flex items-center gap-3">
@@ -410,7 +457,11 @@ function PlatformEntryInner() {
                   </button>
 
                   <button
-                    onClick={() => { setAuthMode(authMode === "sign-in" ? "sign-up" : "sign-in"); setAuthError(null); }}
+                    onClick={() => {
+                      setAuthMode(authMode === "sign-in" ? "sign-up" : "sign-in");
+                      setAuthError(null);
+                      setGooglePopupBlocked(false);
+                    }}
                     className="w-full text-center text-xs text-white/40 hover:text-white transition-colors py-2"
                   >
                     {authMode === "sign-in"
@@ -720,11 +771,7 @@ function friendlyError(msg: string, err?: unknown): string {
     );
   }
   if (code === "auth/popup-blocked") {
-    return (
-      "Your browser blocked the sign-in window. " +
-      "Use the lock or site info icon in the address bar, allow popups for this site, " +
-      "then click Continue with Google again. (A tab-based redirect to firebaseapp.com often fails on production.)"
-    );
+    return "Your browser blocked the sign-in window. Use \"Continue with Google in this tab\" on the form, or allow popups for this site and try again.";
   }
   if (code === "auth/popup-closed-by-user") {
     return "The sign-in window was closed. Try again when you are ready.";
@@ -737,10 +784,7 @@ function friendlyError(msg: string, err?: unknown): string {
   if (msg.includes("invalid-email"))            return "Please enter a valid email address.";
   if (msg.includes("popup-closed"))             return "Sign-in popup was closed. Please try again.";
   if (msg.includes("popup-blocked")) {
-    return (
-      "Your browser blocked the sign-in window. " +
-      "Allow popups for this site and try again — we do not use a tab redirect here because it can hang on the Firebase handler page in production."
-    );
+    return "Your browser blocked the sign-in window. Use \"Continue with Google in this tab\" or allow popups and try again.";
   }
   if (msg.includes("network-request-failed"))   return "Network error. Check your internet connection.";
   if (msg.includes("unauthorized-domain"))      return "This domain is not authorized in Firebase. Add it under Authentication → Settings → Authorized domains.";
