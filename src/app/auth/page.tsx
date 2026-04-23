@@ -14,10 +14,10 @@ import type { EmployerProfile } from "@/store/useStore";
 import {
   signUpWithEmail,
   signInWithEmail,
-  signInWithGoogle,
-  signInWithGoogleInSameTab,
-  isAuthPopupBlockedError,
+  processGoogleUser,
 } from "@/lib/auth";
+import { signInWithPopup } from "firebase/auth";
+import { auth, googleProvider } from "@/lib/firebase";
 import { logAction } from "@/lib/auditLog";
 import { updateUserProfile } from "@/lib/firestore";
 import { getDeveloperProfile, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
@@ -218,22 +218,18 @@ function PlatformEntryInner() {
     setEmployerWebsite((prev) => (prev.trim() ? prev : ep.website));
   }, [step, name]);
 
-  async function handleGoogleAuth() {
-    setGooglePopupBlocked(false);
+  async function handleGoogleAuth(popupPromise: Promise<any>) {
     setAuthLoading(true);
     setAuthError(null);
     try {
-      const googleUser = await signInWithGoogle();
+      const { user } = await popupPromise;
+      const googleUser = await processGoogleUser(user);
       setCurrentUser(googleUser);
       await logAction(googleUser.uid, "auth.sign_in", { method: "google" });
       userReturnedToAuth.current = false;
       if (!asDeveloper) setRole(null);
       setEmployerWizardOpen(false);
     } catch (err: unknown) {
-      if (isAuthPopupBlockedError(err)) {
-        void signInWithGoogleInSameTab();
-        return;
-      }
       const msg = err instanceof Error ? err.message : "Google sign-in failed.";
       setAuthError(friendlyError(msg, err));
     } finally {
@@ -398,7 +394,9 @@ function PlatformEntryInner() {
                   <button
                     type="button"
                     onClick={() => {
-                      void handleGoogleAuth();
+                      if (authLoading) return;
+                      const popupPromise = signInWithPopup(auth, googleProvider);
+                      void handleGoogleAuth(popupPromise);
                     }}
                     disabled={authLoading}
                     className="w-full py-4 flex items-center justify-center gap-3 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/30 transition-all rounded-2xl text-sm font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
@@ -406,30 +404,6 @@ function PlatformEntryInner() {
                     {authLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Chrome className="w-5 h-5" />}
                     Continue with Google
                   </button>
-
-                  {googlePopupBlocked && (
-                    <div className="rounded-xl border border-sky-500/40 bg-sky-500/[0.08] p-3 space-y-2">
-                      <p className="text-[11px] leading-relaxed text-sky-100/95">
-                        Your browser <span className="font-semibold text-white">blocked the sign-in window</span>{" "}
-                        (lock or popup icon in the address bar). Allow popups for this site, then use{" "}
-                        <span className="text-white">Continue with Google</span> again.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setGooglePopupBlocked(false);
-                          void handleGoogleAuth();
-                        }}
-                        disabled={authLoading}
-                        className="w-full py-3 flex items-center justify-center gap-2 border border-sky-400/50 bg-sky-500/15 hover:bg-sky-500/25 text-sky-50 text-xs font-bold rounded-xl transition-all disabled:opacity-50"
-                      >
-                        {authLoading
-                          ? <Loader2 className="w-4 h-4 animate-spin" />
-                          : <Chrome className="w-4 h-4" />}
-                        Try again with Google
-                      </button>
-                    </div>
-                  )}
 
                   <div className="flex items-center gap-3">
                     <div className="flex-1 h-px bg-white/10" />

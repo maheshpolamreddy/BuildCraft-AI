@@ -89,13 +89,17 @@ export async function signInWithEmail(email: string, password: string) {
  * Google sign-in via **popup** (required in production; avoids full-page handler loops on Vercel).
  * The UI should prompt the user to allow popups and retry — not switch to `signInWithRedirect`.
  */
+export async function processGoogleUser(user: User): Promise<AuthUser> {
+  await createUserProfile(user);
+  return toAuthUser(user);
+}
+
 export async function signInWithGoogle(): Promise<AuthUser> {
   if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
     throw new Error("Firebase is not configured (missing NEXT_PUBLIC_FIREBASE_API_KEY).");
   }
   const { user } = await signInWithPopup(auth, googleProvider);
-  await createUserProfile(user);
-  return toAuthUser(user);
+  return processGoogleUser(user);
 }
 
 /**
