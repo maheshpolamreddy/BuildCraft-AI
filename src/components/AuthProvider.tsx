@@ -169,10 +169,14 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
     void (async () => {
       const fromRedirect = await consumeGoogleRedirectResult();
-      if (fromRedirect && !cancelled) {
+      if (cancelled) return;
+
+      if (fromRedirect) {
+        // User came back from Google redirect — apply immediately so the auth
+        // page can react without waiting for onAuthStateChanged.
+        applySignedInUser(fromRedirect);
         void logAction(fromRedirect.uid, "auth.sign_in", { method: "google", via: "redirect" });
       }
-      if (cancelled) return;
 
       unsubscribe = onAuthChange((user) => {
         if (pendingNullTimer) {

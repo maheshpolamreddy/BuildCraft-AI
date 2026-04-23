@@ -117,16 +117,15 @@ export async function signInWithGoogleInSameTab(): Promise<void> {
 export async function consumeGoogleRedirectResult(): Promise<AuthUser | null> {
   try {
     const result = await getRedirectResult(auth);
-    if (!result?.user) return null;
+    if (!result?.user) {
+      console.info("[auth] getRedirectResult: no pending redirect result.");
+      return null;
+    }
+    console.info("[auth] getRedirectResult: got user", result.user.uid);
     await createUserProfile(result.user);
     return toAuthUser(result.user);
   } catch (err) {
-    // Log at error level in prod so Vercel logs show OAuth redirect failures.
-    const code = getAuthErrorCode(err);
-    if (code === "auth/redirect-cancelled-by-user") {
-      return null;
-    }
-    console.error("[auth] getRedirectResult failed:", err);
+    console.error("[auth] getRedirectResult FAILED:", err);
     return null;
   }
 }
