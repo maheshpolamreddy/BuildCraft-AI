@@ -627,6 +627,29 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     );
   }, [savedProjectId, currentUser?.uid]);
 
+  // Heal projectExecution.developerUid when projects/{id} already has developer (stale null from early client init)
+  useEffect(() => {
+    if (!savedProjectId || !project?.developerUid || !projExec) return;
+    if (projExec.developerUid === project.developerUid) return;
+    if (projExec.developerUid) return;
+    const creatorUid = project.creatorUid || currentUser?.uid;
+    if (!creatorUid) return;
+    void initProjectExecution({
+      projectId: savedProjectId,
+      savedProjectId,
+      projectName: project.name,
+      creatorUid,
+      developerUid: project.developerUid,
+    }).catch((e) => console.warn("[ProjectRoom] heal execution developerUid:", e));
+  }, [
+    savedProjectId,
+    project?.developerUid,
+    project?.name,
+    project?.creatorUid,
+    projExec?.developerUid,
+    currentUser?.uid,
+  ]);
+
   // Heal top-level developerUid when legacy rows only stored it under project.* (Firestore rules use both)
   useEffect(() => {
     if (!savedProjectId || !authReady) return;
@@ -2919,6 +2942,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                   isDeveloper={isDeveloper}
                   completionUnlocked={completionSectionUnlocked}
                   hasAssignedDeveloper={Boolean(project?.developerUid) || hiringState === "accepted"}
+                  projectDeveloperUid={project?.developerUid ?? null}
                   projectName={projectName}
                   executionLoadError={projExecSubError}
                   onEnsureExecution={ensureProjectExecutionDoc}

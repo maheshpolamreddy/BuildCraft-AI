@@ -7,7 +7,12 @@
 import { db } from "./firebase";
 import { listenWhenAuthed } from "./auth";
 import {
-  doc, setDoc, getDoc, updateDoc, onSnapshot, serverTimestamp,
+  doc,
+  setDoc,
+  getDoc,
+  updateDoc,
+  onSnapshot,
+  serverTimestamp,
 } from "firebase/firestore";
 
 export type ProjectStatus =
@@ -90,11 +95,15 @@ export async function initProjectExecution(data: {
   const ref = doc(db, COL, data.projectId);
   const snap = await getDoc(ref);
   if (snap.exists()) {
+    // Never write null developerUid when the client hasn't loaded project.developerUid yet —
+    // that would wipe a value set by hire-accept (Admin) and break the completion flow.
     await updateDoc(ref, {
-      developerUid: data.developerUid ?? null,
-      hireToken: data.hireToken ?? null,
-      prdId: data.prdId ?? null,
       updatedAt: serverTimestamp(),
+      ...(data.developerUid != null && String(data.developerUid).trim() !== ""
+        ? { developerUid: data.developerUid }
+        : {}),
+      ...(data.hireToken !== undefined ? { hireToken: data.hireToken } : {}),
+      ...(data.prdId !== undefined ? { prdId: data.prdId } : {}),
     });
     return;
   }
@@ -229,10 +238,16 @@ export async function submitRating(
 export function canSubmitForCompletion(
   pe: ProjectExecution,
   milestonesReadyForCompletion: boolean,
+  /** From `projects` doc when `projectExecution.developerUid` is stale */
+  projectDeveloperUid?: string | null,
 ): { ok: boolean; reason: string } {
   if (pe.status === "completed") return { ok: false, reason: "Project already completed" };
   if (pe.status === "review") return { ok: false, reason: "Already submitted for review" };
-  if (!pe.developerUid) return { ok: false, reason: "No developer assigned" };
+  const devUid =
+    (pe.developerUid && String(pe.developerUid).trim()) ||
+    (projectDeveloperUid && String(projectDeveloperUid).trim()) ||
+    "";
+  if (!devUid) return { ok: false, reason: "No developer assigned" };
   if (!milestonesReadyForCompletion) {
     return {
       ok: false,

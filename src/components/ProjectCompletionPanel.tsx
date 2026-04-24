@@ -43,6 +43,8 @@ interface Props {
   completionUnlocked: boolean;
   /** Developer assigned / hire accepted */
   hasAssignedDeveloper: boolean;
+  /** `projects.developerUid` — used when projectExecution doc is missing developerUid */
+  projectDeveloperUid?: string | null;
   projectName: string;
   /** Firestore subscription or init failed (e.g. rules) — show retry instead of endless spinner */
   executionLoadError?: string | null;
@@ -63,6 +65,7 @@ export function ProjectCompletionPanel({
   isDeveloper,
   completionUnlocked,
   hasAssignedDeveloper,
+  projectDeveloperUid = null,
   projectName,
   executionLoadError,
   onEnsureExecution,
@@ -167,7 +170,7 @@ export function ProjectCompletionPanel({
   const statusLabel = getStatusLabel(status);
   const statusColor = getStatusColor(status);
   const workflowLocked = !completionUnlocked && status !== "review" && status !== "completed";
-  const submitCheck = canSubmitForCompletion(pe, completionUnlocked);
+  const submitCheck = canSubmitForCompletion(pe, completionUnlocked, projectDeveloperUid);
   const approveCheck = canCreatorApprove(pe, clientAcceptsDeliverables);
   const checklistComplete = Object.values(devChecklist).every(Boolean);
   const deployUrlValid = isValidDeploymentUrl(deployUrl);
@@ -382,10 +385,17 @@ export function ProjectCompletionPanel({
 
       {/* Deliverables Section */}
       <div className="rounded-2xl border border-white/10 bg-white/[0.02] overflow-hidden">
-        <div className="px-5 py-3 border-b border-white/5 flex items-center justify-between">
-          <h3 className="text-xs font-black uppercase tracking-widest text-white/60 flex items-center gap-2">
-            <FileText className="w-4 h-4" /> Deliverables ({pe.deliverables.length})
-          </h3>
+        <div className="px-5 py-3 border-b border-white/5 flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-xs font-black uppercase tracking-widest text-white/60 flex items-center gap-2">
+              <FileText className="w-4 h-4" /> Deliverables ({pe.deliverables.length})
+            </h3>
+            <p className="text-[10px] text-white/35 mt-1 max-w-xl">
+              Formal handoff list (optional). Approved work also lives under{" "}
+              <strong className="text-white/45">Tasks &amp; Milestones</strong> — that is why the sidebar can show
+              tasks done while this list is empty.
+            </p>
+          </div>
           {(isDeveloper && status === "in_progress" && completionUnlocked) && (
             <button
               onClick={() => setView(view === "submit" ? "status" : "submit")}

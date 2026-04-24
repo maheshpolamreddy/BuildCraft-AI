@@ -24,12 +24,13 @@ export async function initProjectExecutionAdmin(
   const ref = db.collection("projectExecution").doc(data.projectId);
   const snap = await ref.get();
   if (snap.exists) {
-    await ref.update({
-      developerUid: data.developerUid ?? null,
-      hireToken: data.hireToken ?? null,
-      prdId: data.prdId ?? null,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    const patch: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
+    if (data.developerUid != null && String(data.developerUid).trim() !== "") {
+      patch.developerUid = data.developerUid;
+    }
+    if (data.hireToken !== undefined) patch.hireToken = data.hireToken;
+    if (data.prdId !== undefined) patch.prdId = data.prdId;
+    await ref.update(patch);
     return;
   }
   await ref.set({
