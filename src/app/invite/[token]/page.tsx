@@ -74,39 +74,40 @@ function InvitePageInner() {
   }, [token]);
 
   const runPostAcceptForDeveloper = useCallback(
-    async (req: HireRequest) => {
+    async (req: HireRequest, navProjectId?: string | null) => {
       const u = auth.currentUser;
-      if (!u || u.uid !== req.developerUid) return;
-      try {
-        await createOrGetChat({
-          chatId:         req.token,
-          projectName:    req.projectName,
-          creatorUid:     req.creatorUid,
-          creatorName:    req.creatorName,
-          creatorEmail:   req.creatorEmail,
-          developerUid:   req.developerUid,
-          developerName:  req.developerName,
-          developerEmail: req.developerEmail,
-        });
-        const line = `${req.developerName} accepted your hire invitation for “${req.projectName}”. Let’s align on next steps here in chat.`;
-        await sendChatMessage(req.token, {
-          text:       line,
-          senderUid:  u.uid,
-          senderName: req.developerName,
-        });
+      const routePid = (navProjectId?.trim() || req.projectId?.trim() || "") || null;
+      if (u && u.uid === req.developerUid) {
         try {
-          sessionStorage.setItem(
-            chatStorageKey("developer", u.uid, req.projectId),
-            req.token,
-          );
-        } catch {
-          /* */
+          await createOrGetChat({
+            chatId:         req.token,
+            projectName:    req.projectName,
+            creatorUid:     req.creatorUid,
+            creatorName:    req.creatorName,
+            creatorEmail:   req.creatorEmail,
+            developerUid:   req.developerUid,
+            developerName:  req.developerName,
+            developerEmail: req.developerEmail,
+          });
+          const line = `${req.developerName} accepted your hire invitation for “${req.projectName}”. Let’s align on next steps here in chat.`;
+          await sendChatMessage(req.token, {
+            text:       line,
+            senderUid:  u.uid,
+            senderName: req.developerName,
+          });
+          try {
+            if (routePid) {
+              sessionStorage.setItem(chatStorageKey("developer", u.uid, routePid), req.token);
+            }
+          } catch {
+            /* */
+          }
+        } catch (e) {
+          console.warn("[invite] post-accept chat:", e);
         }
-      } catch (e) {
-        console.warn("[invite] post-accept chat:", e);
       }
-      if (req.projectId) {
-        router.replace(`/workspace/${encodeURIComponent(req.projectId)}?tab=chat`);
+      if (routePid) {
+        router.replace(`/workspace/${encodeURIComponent(routePid)}?tab=chat`);
       } else {
         router.push("/discovery");
       }
@@ -138,26 +139,31 @@ function InvitePageInner() {
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ token, action: act }),
       });
+      const payload = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        hint?: string;
+        projectId?: string;
+      };
       if (!res.ok) {
         try {
           sessionStorage.removeItem(`buildcraft:inviteAuto:${token}:${act}`);
         } catch {
           /* */
         }
-        const d = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          hint?: string;
-        };
-        const err = typeof d.error === "string" ? d.error : "Something went wrong";
-        const hint = typeof d.hint === "string" ? d.hint : "";
+        const err = typeof payload.error === "string" ? payload.error : "Something went wrong";
+        const hint = typeof payload.hint === "string" ? payload.hint : "";
         setError([err, hint].filter(Boolean).join("\n\n"));
         setState("error");
         return;
       }
       if (act === "accept") {
+        const apiPid =
+          typeof payload.projectId === "string" && payload.projectId.trim()
+            ? payload.projectId.trim()
+            : null;
         const fresh = await getHireRequest(token);
-        if (fresh) await runPostAcceptForDeveloper(fresh);
-        else await runPostAcceptForDeveloper(request);
+        const reqRow = fresh ?? request;
+        await runPostAcceptForDeveloper(reqRow, apiPid);
         return;
       }
       setState("rejected");

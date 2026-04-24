@@ -4,6 +4,10 @@ import type { NextConfig } from "next";
 const FIREBASE_PROJECT = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() ?? "";
 
 const nextConfig: NextConfig = {
+  experimental: {
+    /** Smaller dev + prod client bundles for framer-motion imports */
+    optimizePackageImports: ["framer-motion"],
+  },
   /**
    * Proxy Firebase's auth handler through your own domain when
    * NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN is your Vercel host (not *.firebaseapp.com).

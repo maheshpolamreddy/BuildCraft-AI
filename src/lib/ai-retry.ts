@@ -9,6 +9,17 @@ export function isTimeoutLikeError(err: unknown): boolean {
   );
 }
 
+/** OpenRouter HTTP 402 / affordability strings — used for automatic max_tokens backoff. */
+export function isPaymentOrQuotaError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const any = err as Error & { status?: number };
+  if (any.status === 402) return true;
+  const m = err.message;
+  if (/payment required|more credits|fewer max_tokens|can only afford/i.test(m)) return true;
+  if (/^402\s/.test(m)) return true;
+  return /\b402\b/.test(m);
+}
+
 function isConnectionLikeError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return (
@@ -43,24 +54,57 @@ export function isRetryableWithFallback(err: unknown): boolean {
   return false;
 }
 
+/**
+ * When OpenRouter (or similar) returns 402, retry with smaller max_tokens caps until one succeeds.
+ */
+export function completionMaxTokensRetrySequence(requested: number): number[] {
+  const tiers = [16_384, 8192, 6144, 4096, 3072, 2048, 1536, 1024, 768, 512, 400, 256];
+  const r = Math.floor(requested);
+  if (!Number.isFinite(r) || r <= 256) return [];
+  return tiers.filter((t) => t < r);
+}
+
 /** One retry after a short delay — helps transient timeouts and connection blips. */
 export async function runChatWithRetry(
   nim: OpenAI,
   params: Parameters<OpenAI["chat"]["completions"]["create"]>[0],
 ): Promise<string> {
-  const exec = async () => {
-    const c = await nim.chat.completions.create({ ...params, stream: false });
+  const exec = async (max_tokens?: number) => {
+    const p = max_tokens !== undefined ? { ...params, max_tokens } : params;
+    const c = await nim.chat.completions.create({ ...p, stream: false });
     return c.choices[0]?.message?.content ?? "";
   };
+
+  const tryPaymentBackoff = async (firstErr: unknown): Promise<string> => {
+    if (!isPaymentOrQuotaError(firstErr)) throw firstErr;
+    const requested = typeof params.max_tokens === "number" ? params.max_tokens : 2048;
+    for (const cap of completionMaxTokensRetrySequence(requested)) {
+      try {
+        return await exec(cap);
+      } catch (e2) {
+        if (!isPaymentOrQuotaError(e2)) throw e2;
+      }
+    }
+    throw firstErr;
+  };
+
   try {
     return await exec();
   } catch (err) {
+    if (isPaymentOrQuotaError(err)) {
+      return tryPaymentBackoff(err);
+    }
     if (isCompactServerlessAiChain()) {
       throw err;
     }
     if (isTransientChatError(err)) {
       await new Promise((r) => setTimeout(r, 700));
-      return await exec();
+      try {
+        return await exec();
+      } catch (err2) {
+        if (isPaymentOrQuotaError(err2)) return tryPaymentBackoff(err2);
+        throw err2;
+      }
     }
     throw err;
   }

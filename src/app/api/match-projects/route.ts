@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readJsonBody } from "@/lib/read-json-body";
-import { messageForAiRouteFailure } from "@/lib/map-ai-route-error";
+import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
 import { rankProjectOpportunities } from "@/lib/ml-matching/project-opportunities";
 
 export const maxDuration = 30;
@@ -58,6 +58,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ projects });
   } catch (err) {
     console.error("[match-projects] error:", err);
-    return NextResponse.json({ error: messageForAiRouteFailure(err) }, { status: 500 });
+    return NextResponse.json(
+      { error: messageForAiRouteFailure(err) },
+      { status: httpStatusForAiFailure(err) },
+    );
   }
 }

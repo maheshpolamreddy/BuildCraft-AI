@@ -4,6 +4,7 @@
  */
 
 import type OpenAI from "openai";
+import type { ChatCompletion } from "openai/resources/chat/completions";
 import {
   getNimClient,
   getSecondaryNimClient,
@@ -17,7 +18,12 @@ import {
   getAiStructuredJsonModelId,
   getAiCodeGenerationModelId,
 } from "@/lib/nim-client";
-import { isRetryableWithFallback, runChatWithRetry } from "@/lib/ai-retry";
+import {
+  isRetryableWithFallback,
+  runChatWithRetry,
+  completionMaxTokensRetrySequence,
+  isPaymentOrQuotaError,
+} from "@/lib/ai-retry";
 import { cloudflareWorkersAiChat } from "@/lib/cloudflare-workers-ai";
 import { isCompactServerlessAiChain } from "@/lib/vercel-ai";
 
@@ -128,12 +134,26 @@ export async function orchestrateChatCompletion(
     runChatWithRetry(client, { ...params, stream: false, model });
 
   if (effectivePrimaryOnly) {
-    const c = await primary.chat.completions.create({
-      ...params,
-      stream: false,
-      model: modelPrimary,
-    });
-    return (c.choices[0]?.message?.content ?? "").trim();
+    const runPrimary = async (max_tokens?: number) => {
+      const base = { ...params, model: modelPrimary, stream: false as const };
+      const p = max_tokens !== undefined ? { ...base, max_tokens } : base;
+      const c = (await primary.chat.completions.create(p)) as ChatCompletion;
+      return (c.choices[0]?.message?.content ?? "").trim();
+    };
+    try {
+      return await runPrimary();
+    } catch (err) {
+      if (!isPaymentOrQuotaError(err)) throw err;
+      const requested = typeof params.max_tokens === "number" ? params.max_tokens : 2048;
+      for (const cap of completionMaxTokensRetrySequence(requested)) {
+        try {
+          return await runPrimary(cap);
+        } catch (e2) {
+          if (!isPaymentOrQuotaError(e2)) throw e2;
+        }
+      }
+      throw err;
+    }
   }
 
   const improveContent = async (content: string): Promise<string> => {

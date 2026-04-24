@@ -99,6 +99,68 @@ function attemptInitializeApp(): boolean {
   return false;
 }
 
+const E2E_CUSTOM_TOKEN_APP = "[buildcraft-e2e-custom-token]";
+
+/**
+ * Auth for `/api/e2e/custom-token` only. Uses explicit service account credentials when set
+ * so tokens are minted for the same Firebase project as the client app. If only Application
+ * Default Credentials exist (e.g. Vercel) they often target a different GCP project than
+ * `NEXT_PUBLIC_FIREBASE_PROJECT_ID`; in that case this returns null unless credentials match.
+ */
+export function getAdminAuthForE2ECustomToken(): Auth | null {
+  const expectedProject = resolveProjectIdForAdmin();
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT?.trim();
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+  const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY?.trim();
+
+  if (raw || (clientEmail && privateKeyRaw && expectedProject)) {
+    try {
+      const existing = getApps().find((a) => a.name === E2E_CUSTOM_TOKEN_APP);
+      if (existing) return getAuth(existing);
+
+      if (raw) {
+        const parsed = JSON.parse(raw) as { project_id?: string; private_key?: string };
+        if (parsed.private_key) {
+          parsed.private_key = normalizeServiceAccountPrivateKey(String(parsed.private_key));
+        }
+        const app = initializeApp(
+          { credential: cert(parsed as Parameters<typeof cert>[0]) },
+          E2E_CUSTOM_TOKEN_APP,
+        );
+        return getAuth(app);
+      }
+
+      const privateKey = normalizeServiceAccountPrivateKey(privateKeyRaw!);
+      const app = initializeApp(
+        {
+          credential: cert({
+            projectId: expectedProject!,
+            clientEmail: clientEmail!,
+            privateKey,
+          }),
+        },
+        E2E_CUSTOM_TOKEN_APP,
+      );
+      return getAuth(app);
+    } catch (e) {
+      console.error("[firebase-admin] E2E custom-token admin init failed:", e);
+      return null;
+    }
+  }
+
+  const shared = getAdminAuthSafe();
+  if (!shared || !expectedProject) return shared;
+  const actual = shared.app.options.projectId;
+  if (actual && actual !== expectedProject) {
+    console.error(
+      "[firebase-admin] E2E custom-token: shared Admin project mismatch",
+      JSON.stringify({ actual, expected: expectedProject }),
+    );
+    return null;
+  }
+  return shared;
+}
+
 export function getBuildCraftRuntimeEnvironment(): "production" | "preview" | "development" {
   const v = process.env.VERCEL_ENV;
   if (v === "production") return "production";

@@ -1,4 +1,4 @@
-import { isTimeoutLikeError } from "@/lib/ai-retry";
+import { isTimeoutLikeError, isPaymentOrQuotaError } from "@/lib/ai-retry";
 import { AI_ORCHESTRATION_CONFIG_ERROR } from "@/lib/ai-provider-registry";
 import { NIM_KEY_ERROR } from "@/lib/nim-client";
 
@@ -18,6 +18,7 @@ export function httpStatusForAiFailure(err: unknown): number {
   if (err instanceof Error && err.message === NIM_KEY_ERROR) return 503;
   if (isTimeoutLikeError(err)) return 504;
   if (isConnectionLike(err)) return 503;
+  if (isPaymentOrQuotaError(err)) return 402;
   return 500;
 }
 
@@ -43,7 +44,7 @@ export function messageForAiRouteFailure(err: unknown): string {
     return "The AI request timed out. Try again in a moment, or use a shorter description.";
   }
 
-  if (/^402\b|\b402\b|payment required|more credits|fewer max_tokens|can only afford/i.test(m)) {
+  if (isPaymentOrQuotaError(err)) {
     return (
       "Your AI provider rejected the request due to credits or token limits (HTTP 402). " +
       "Add credits at your provider (e.g. OpenRouter → Settings → Credits), " +

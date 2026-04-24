@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getNimClient } from "@/lib/nim-client";
 import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
 import { readJsonBody } from "@/lib/read-json-body";
-import { messageForAiRouteFailure } from "@/lib/map-ai-route-error";
+import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
 import { savePRD, type PRDMilestone } from "@/lib/prd";
 import { setPrdOnRequest } from "@/lib/hireRequests";
 import { getAiGenerationFirestore, hashAiInputs, setAiGenerationFirestore } from "@/lib/ai-generation-cache";
@@ -178,6 +178,9 @@ Return ONLY valid JSON with this exact structure:
     return NextResponse.json(responseBody);
   } catch (err) {
     console.error("[generate-prd]", err);
-    return NextResponse.json({ error: messageForAiRouteFailure(err) }, { status: 500 });
+    return NextResponse.json(
+      { error: messageForAiRouteFailure(err) },
+      { status: httpStatusForAiFailure(err) },
+    );
   }
 }

@@ -2,15 +2,17 @@ import { test, expect } from "./fixtures";
 import fs from "fs";
 import path from "path";
 
+const gotoOpts = { waitUntil: "domcontentloaded" as const };
+
 test.describe("Auth surfaces", () => {
   test("unauthenticated user is redirected from discovery to auth", async ({ page }) => {
-    await page.goto("/discovery");
-    await page.waitForURL(/\/auth/, { timeout: 60_000 });
+    await page.goto("/discovery", gotoOpts);
+    await page.waitForURL(/\/auth/, { timeout: 45_000 });
     await expect(page.getByTestId("auth-email")).toBeVisible();
   });
 
   test("auth page exposes email sign-in controls", async ({ page }) => {
-    await page.goto("/auth");
+    await page.goto("/auth", gotoOpts);
     await expect(page.getByTestId("auth-email")).toBeVisible();
     await expect(page.getByTestId("auth-password")).toBeVisible();
     await expect(page.getByTestId("auth-email-submit")).toBeVisible();
@@ -28,10 +30,10 @@ test.describe("Optional password login (no secret)", () => {
   });
 
   test("email/password sign-in reaches discovery or role step", async ({ page }) => {
-    await page.goto("/auth");
+    await page.goto("/auth", gotoOpts);
     await page.getByTestId("auth-email").fill(process.env.E2E_CREATOR_EMAIL!);
     await page.getByTestId("auth-password").fill(process.env.E2E_CREATOR_PASSWORD!);
     await page.getByTestId("auth-email-submit").click();
-    await expect(page).toHaveURL(/\/(discovery|auth)/, { timeout: 120_000 });
+    await expect(page).toHaveURL(/\/(discovery|auth)/, { timeout: 90_000 });
   });
 });

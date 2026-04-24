@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getNimClient, NIM_KEY_ERROR } from "@/lib/nim-client";
 import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
 import { readJsonBody } from "@/lib/read-json-body";
-import { messageForAiRouteFailure } from "@/lib/map-ai-route-error";
+import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
 
 export const maxDuration = 180;
 
@@ -68,6 +68,9 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json(result);
   } catch (err) {
-    return NextResponse.json({ error: messageForAiRouteFailure(err) }, { status: 500 });
+    return NextResponse.json(
+      { error: messageForAiRouteFailure(err) },
+      { status: httpStatusForAiFailure(err) },
+    );
   }
 }

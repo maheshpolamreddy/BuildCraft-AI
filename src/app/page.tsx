@@ -1,17 +1,17 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import { ArrowRight, Shield, Zap, Search, Layers, UserCheck, ShieldCheck, Code2 as Code2Icon, LogOut, ChevronUp, Command } from "lucide-react";
-import Link from "next/link";
 import type { SVGProps } from "react";
-import Threads from "@/components/Threads";
 import Logo from "@/components/Logo";
 import AnimatedLogoOverlay from "@/components/AnimatedLogoOverlay";
-import { useRouter } from "next/navigation";
 import { useStore } from "@/store/useStore";
 import { signOutUser } from "@/lib/auth";
 import { consumeOpenMarketingHome, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
+
+const Threads = dynamic(() => import("@/components/Threads"), { ssr: false });
 
 // Smooth-scroll back to the very top of the page
 function GoHome() {
@@ -29,7 +29,6 @@ function GoHome() {
 }
 
 export default function LandingPage() {
-  const router = useRouter();
   const { authReady, currentUser, developerProfile, project, userRoles, role, reset } = useStore();
   const [showLogoEasterEgg, setShowLogoEasterEgg] = useState(false);
 
@@ -49,10 +48,11 @@ export default function LandingPage() {
     const choseDeveloperLast = role === "employee";
     if (!isEmployer || choseDeveloperLast) {
       if (!project) {
-        router.replace("/employee-dashboard");
+        /* Full navigation avoids App Router client flight fetch failures in dev (Turbopack / stale HMR). */
+        window.location.replace("/employee-dashboard");
       }
     }
-  }, [authReady, isLoggedIn, isDeveloper, userRoles, role, project, router]);
+  }, [authReady, isLoggedIn, isDeveloper, userRoles, role, project]);
 
   /** Decide where "Start Building" should go based on the user's current progress */
   function getStartBuildingHref(): string {
@@ -80,7 +80,7 @@ export default function LandingPage() {
       console.warn("Logout failed:", err);
     } finally {
       reset();
-      router.push("/");
+      window.location.assign("/");
     }
   }
 
@@ -133,16 +133,16 @@ export default function LandingPage() {
               { label: "How it Works", href: "#" },
               { label: "Trust Center", href: "#compliance" },
             ].map((link) => (
-              <Link 
-                key={link.label} 
-                href={link.href} 
+              <a
+                key={link.label}
+                href={link.href}
                 className="relative text-[9px] font-black uppercase tracking-[0.3em] text-white/30 hover:text-white transition-all duration-500 group/link whitespace-nowrap"
               >
                 {link.label}
                 <motion.span 
                   className="absolute -bottom-1 left-0 right-0 h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent scale-x-0 group-hover/link:scale-x-100 transition-transform duration-500" 
                 />
-              </Link>
+              </a>
             ))}
           </nav>
 
@@ -156,22 +156,22 @@ export default function LandingPage() {
                   <LogOut className="w-4 h-4" />
                 </button>
               ) : (
-                <Link 
-                  href="/auth" 
+                <a
+                  href="/auth"
                   className="px-6 py-3 bg-white/10 border border-white/10 text-white font-black uppercase tracking-[0.2em] text-[9px] rounded-[1.2rem] transition-all hover:bg-white hover:text-black hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-black/20"
                 >
                   Sign In
-                </Link>
+                </a>
               )}
 
-              {/* Dynamic Sleek CTA */}
-              <button
-                onClick={() => router.push(getStartBuildingHref())}
+              {/* Native <a> = full document navigation; avoids Turbopack client flight fetch failures */}
+              <a
+                href={getStartBuildingHref()}
                 className="px-7 py-3 bg-white text-black font-black uppercase tracking-[0.2em] text-[10px] rounded-[1.2rem] shadow-xl shadow-white/10 hover:bg-blue-50 hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center gap-2 group/cta"
               >
                 {getStartBuildingLabel()}
                 <ArrowRight className="w-3.5 h-3.5 group-hover/cta:translate-x-1 transition-transform" />
-              </button>
+              </a>
             </div>
           </div>
         </motion.header>
@@ -200,22 +200,22 @@ export default function LandingPage() {
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-8">
-            <button
-              onClick={() => router.push(getStartBuildingHref())}
+            <a
+              href={getStartBuildingHref()}
               className="w-full sm:w-auto px-8 py-5 silver-gradient text-black font-black uppercase tracking-[0.15em] text-xs rounded-xl shadow-[0_0_20px_rgba(255,255,255,0.1)] hover:shadow-[0_0_40px_rgba(255,255,255,0.2)] transition-all flex items-center justify-center gap-3 group"
             >
               {getStartBuildingLabel()} <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-            </button>
+            </a>
             {/* Developer CTA only shown to non-developers (logged out or not yet registered) */}
             {!isDeveloper && (
-              <Link href={isLoggedIn ? "/developer" : "/auth?as=developer"} className="w-full sm:w-auto px-8 py-5 glass-panel font-bold uppercase tracking-[0.15em] text-xs rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:border-blue-500/50 transition-all flex items-center justify-center gap-3">
+              <a href={isLoggedIn ? "/developer" : "/auth?as=developer"} className="w-full sm:w-auto px-8 py-5 glass-panel font-bold uppercase tracking-[0.15em] text-xs rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:border-blue-500/50 transition-all flex items-center justify-center gap-3">
                 <Code2Icon className="w-4 h-4" /> I&apos;m a Developer
-              </Link>
+              </a>
             )}
             {isDeveloper && (
-              <Link href="/employee-dashboard" className="w-full sm:w-auto px-8 py-5 glass-panel font-bold uppercase tracking-[0.15em] text-xs rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:border-blue-500/50 transition-all flex items-center justify-center gap-3">
+              <a href="/employee-dashboard" className="w-full sm:w-auto px-8 py-5 glass-panel font-bold uppercase tracking-[0.15em] text-xs rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:border-blue-500/50 transition-all flex items-center justify-center gap-3">
                 <UserCheck className="w-4 h-4" /> Go to My Dashboard
-              </Link>
+              </a>
             )}
           </div>
         </motion.div>
@@ -527,12 +527,12 @@ export default function LandingPage() {
           <h2 className="text-5xl md:text-7xl font-black shiny-silver-text tracking-tighter pb-2">Ready to Start Your Project?</h2>
           <p className="text-[#888] text-xl font-light">Join the platform that turns simple ideas into real, scalable apps.</p>
           <div className="pt-8">
-            <button
-              onClick={() => router.push(getStartBuildingHref())}
+            <a
+              href={getStartBuildingHref()}
               className="inline-flex items-center justify-center gap-3 px-10 py-5 silver-gradient text-black font-black uppercase tracking-[0.2em] text-sm rounded-2xl shadow-[0_0_30px_rgba(255,255,255,0.15)] hover:shadow-[0_0_50px_rgba(255,255,255,0.3)] transition-all transform hover:-translate-y-1"
             >
               {project ? "Continue Your Project" : "Create Your First Project"} <Zap className="w-5 h-5" />
-            </button>
+            </a>
           </div>
         </div>
 
@@ -568,10 +568,10 @@ export default function LandingPage() {
           <div className="space-y-6">
             <h4 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Platform</h4>
             <nav className="flex flex-col gap-4">
-              <Link href="/discovery" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Discovery Hub</Link>
-              <Link href="/architecture" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Architecture</Link>
-              <Link href="/project-room" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Project Room</Link>
-              <Link href="/employee-dashboard" className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500/50 hover:text-blue-400 transition-colors">Developer Portal</Link>
+              <a href="/discovery" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Discovery Hub</a>
+              <a href="/architecture" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Architecture</a>
+              <a href="/project-room" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Project Room</a>
+              <a href="/employee-dashboard" className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500/50 hover:text-blue-400 transition-colors">Developer Portal</a>
             </nav>
           </div>
 
@@ -579,10 +579,10 @@ export default function LandingPage() {
           <div className="space-y-6">
             <h4 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Resources</h4>
             <nav className="flex flex-col gap-4">
-              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">API Docs</Link>
-              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Trust Center</Link>
-              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Dispute Resolution</Link>
-              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Brand Assets</Link>
+              <a href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">API Docs</a>
+              <a href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Trust Center</a>
+              <a href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Dispute Resolution</a>
+              <a href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Brand Assets</a>
             </nav>
           </div>
 
@@ -590,9 +590,9 @@ export default function LandingPage() {
           <div className="space-y-6">
             <h4 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Company</h4>
             <nav className="flex flex-col gap-4">
-              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">About Us</Link>
-              <Link href="/privacy" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Privacy Policy</Link>
-              <Link href="/terms" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Terms of Service</Link>
+              <a href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">About Us</a>
+              <a href="/privacy" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Privacy Policy</a>
+              <a href="/terms" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Terms of Service</a>
               <button 
                 onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
                 className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/30 hover:text-white transition-all group/bt"

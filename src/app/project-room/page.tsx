@@ -1149,10 +1149,11 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     setMatchDetail(null);
     try {
       // 1. Fetch real developer profiles from Firestore (retry once if empty due to auth-token timing)
-      let { profiles, queryError } = await getAllDeveloperProfiles(30);
+      const matchProfileBudget = 250;
+      let { profiles, queryError } = await getAllDeveloperProfiles(matchProfileBudget);
       if (!profiles.length && !queryError && auth.currentUser) {
         await new Promise(r => setTimeout(r, 800));
-        ({ profiles, queryError } = await getAllDeveloperProfiles(30));
+        ({ profiles, queryError } = await getAllDeveloperProfiles(matchProfileBudget));
       }
       if (!profiles.length) {
         setMatchError(true);
@@ -2096,6 +2097,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                               </div>
                             </div>
                             <button
+                              type="button"
+                              data-testid="hire-pending-cancel"
                               onClick={async () => {
                                 try {
                                   await deleteDoc(doc(db, "hireRequests", r.token));

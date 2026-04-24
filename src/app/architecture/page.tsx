@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import { useStore } from "@/store/useStore";
 import {
   updateProject,
+  saveProject,
   getUserProjects,
   getProjectsByEmail,
   deleteProject,
@@ -1374,15 +1375,37 @@ export default function ArchitectureView() {
 
   const handleLockAndProceed = async () => {
     patchProject({ locked: true });
+    const st = useStore.getState();
+    const lockedProject = st.project ? { ...st.project, locked: true as const } : null;
+    if (!lockedProject) {
+      router.push("/project-room");
+      return;
+    }
 
-    // Persist the locked plan to Firestore
-    if (currentUser && project && savedProjectId) {
+    let effectiveId = st.savedProjectId;
+    if (currentUser && !effectiveId) {
       try {
-        const lockedProject = { ...project, locked: true };
-        await updateProject(savedProjectId, lockedProject, approvedTools);
+        const newId = await saveProject(
+          currentUser.uid,
+          lockedProject,
+          approvedTools,
+          currentUser.email ?? undefined,
+        );
+        if (newId) {
+          effectiveId = newId;
+          setSavedProjectId(newId);
+        }
+      } catch (err) {
+        console.warn("[Firestore] lock-time save failed:", err);
+      }
+    }
+
+    if (currentUser && effectiveId) {
+      try {
+        await updateProject(effectiveId, lockedProject, approvedTools);
         await logAction(currentUser.uid, "project.locked", {
-          projectName: project.name,
-          docId: savedProjectId,
+          projectName: lockedProject.name,
+          docId: effectiveId,
           approvedToolCount: Object.values(approvedTools).filter(Boolean).length,
         });
       } catch (err) {
@@ -1390,7 +1413,11 @@ export default function ArchitectureView() {
       }
     }
 
-    router.push("/project-room");
+    router.push(
+      effectiveId
+        ? `/project-room?projectId=${encodeURIComponent(effectiveId)}`
+        : "/project-room",
+    );
   };
 
   const generateCode = async (template: ComponentTemplate) => {

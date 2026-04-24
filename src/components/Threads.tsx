@@ -1,7 +1,10 @@
 "use client";
 
-import React, { useEffect, useRef } from 'react';
-import { Renderer, Program, Mesh, Triangle, Color } from 'ogl';
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Renderer, Program, Mesh, Triangle, Color } from "ogl";
+
+/** Internal framebuffer scale: 1 = full res (heavy). ~0.5 halves pixels (≈4× cheaper) with negligible visual loss on a blurred background. */
+const RENDER_SCALE = 0.55;
 
 interface ThreadsProps {
   color?: [number, number, number];
@@ -141,6 +144,16 @@ void main() {
 }
 `;
 
+function StaticThreadsBackdrop(props: React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      className="absolute inset-0 bg-gradient-to-br from-[#0a1628] via-[#050505] to-[#081a14]"
+      aria-hidden
+      {...props}
+    />
+  );
+}
+
 const Threads: React.FC<ThreadsProps> = ({
   color = [1, 1, 1],
   amplitude = 1,
@@ -150,12 +163,26 @@ const Threads: React.FC<ThreadsProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const animationFrameId = useRef<number>(0);
+  const [staticBackdrop, setStaticBackdrop] = useState(false);
+
+  useLayoutEffect(() => {
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const apply = () => setStaticBackdrop(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (staticBackdrop || !containerRef.current) return;
     const container = containerRef.current;
 
-    const renderer = new Renderer({ alpha: true });
+    const renderer = new Renderer({
+      alpha: true,
+      antialias: false,
+      dpr: 1,
+      powerPreference: "low-power",
+    });
     const gl = renderer.gl;
     gl.clearColor(0, 0, 0, 0);
     gl.enable(gl.BLEND);
@@ -183,12 +210,19 @@ const Threads: React.FC<ThreadsProps> = ({
     function resize() {
       if (!container) return;
       const { clientWidth, clientHeight } = container;
-      renderer.setSize(clientWidth, clientHeight);
-      program.uniforms.iResolution.value.r = clientWidth;
-      program.uniforms.iResolution.value.g = clientHeight;
-      program.uniforms.iResolution.value.b = clientWidth / clientHeight;
+      const w = Math.max(1, Math.floor(clientWidth * RENDER_SCALE));
+      const h = Math.max(1, Math.floor(clientHeight * RENDER_SCALE));
+      renderer.setSize(w, h);
+      Object.assign(gl.canvas.style, {
+        width: "100%",
+        height: "100%",
+        display: "block",
+      });
+      program.uniforms.iResolution.value.r = w;
+      program.uniforms.iResolution.value.g = h;
+      program.uniforms.iResolution.value.b = w / h;
     }
-    window.addEventListener('resize', resize);
+    window.addEventListener("resize", resize);
     resize();
 
     const currentMouse = [0.5, 0.5];
@@ -203,11 +237,31 @@ const Threads: React.FC<ThreadsProps> = ({
       targetMouse = [0.5, 0.5];
     }
     if (enableMouseInteraction) {
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseout', handleMouseLeave);
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseout", handleMouseLeave);
     }
 
+    let visible = document.visibilityState !== "hidden";
+    const onVis = () => {
+      const nowVisible = document.visibilityState !== "hidden";
+      if (nowVisible === visible) return;
+      visible = nowVisible;
+      if (!visible) {
+        if (animationFrameId.current) {
+          cancelAnimationFrame(animationFrameId.current);
+          animationFrameId.current = 0;
+        }
+      } else if (!animationFrameId.current) {
+        animationFrameId.current = requestAnimationFrame(update);
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+
     function update(t: number) {
+      if (!visible) {
+        animationFrameId.current = 0;
+        return;
+      }
       if (enableMouseInteraction) {
         const smoothing = 0.02;
         currentMouse[0] += smoothing * (targetMouse[0] - currentMouse[0]);
@@ -226,17 +280,22 @@ const Threads: React.FC<ThreadsProps> = ({
     animationFrameId.current = requestAnimationFrame(update);
 
     return () => {
+      document.removeEventListener("visibilitychange", onVis);
       if (animationFrameId.current) cancelAnimationFrame(animationFrameId.current);
-      window.removeEventListener('resize', resize);
+      window.removeEventListener("resize", resize);
 
       if (enableMouseInteraction) {
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseout', handleMouseLeave);
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseout", handleMouseLeave);
       }
       if (container.contains(gl.canvas)) container.removeChild(gl.canvas);
-      gl.getExtension('WEBGL_lose_context')?.loseContext();
+      gl.getExtension("WEBGL_lose_context")?.loseContext();
     };
-  }, [color, amplitude, distance, enableMouseInteraction]);
+  }, [color, amplitude, distance, enableMouseInteraction, staticBackdrop]);
+
+  if (staticBackdrop) {
+    return <StaticThreadsBackdrop className="w-full h-full relative" {...rest} />;
+  }
 
   return <div ref={containerRef} className="w-full h-full relative" {...rest} />;
 };

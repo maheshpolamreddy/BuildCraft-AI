@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { signInWithCustomToken } from "firebase/auth";
+import { browserLocalPersistence, setPersistence, signInWithCustomToken } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import { sanitizeInternalReturnPath } from "@/lib/safePaths";
 
 const ENABLED = process.env.NEXT_PUBLIC_ENABLE_E2E_SIGNIN === "true";
 
@@ -16,7 +17,7 @@ declare global {
 export function E2ESignInClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const returnTo = searchParams.get("returnTo")?.trim() || "/discovery";
+  const returnTo = sanitizeInternalReturnPath(searchParams.get("returnTo"), "/discovery");
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -32,6 +33,7 @@ export function E2ESignInClient() {
     let cancelled = false;
     void (async () => {
       try {
+        await setPersistence(auth, browserLocalPersistence);
         await signInWithCustomToken(auth, token);
         delete window.__E2E_CUSTOM_TOKEN__;
         if (!cancelled) router.replace(returnTo || "/discovery");

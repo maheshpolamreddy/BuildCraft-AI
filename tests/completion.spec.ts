@@ -6,6 +6,8 @@ import { readLastProjectId } from "./helpers/project-state";
 const creatorAuth = path.join(process.cwd(), "tests", ".auth", "creator.json");
 const developerAuth = path.join(process.cwd(), "tests", ".auth", "developer.json");
 
+const quickGoto = { waitUntil: "domcontentloaded" as const };
+
 test.beforeEach(() => {
   test.skip(process.env.E2E_SKIP_COMPLETION === "1", "E2E_SKIP_COMPLETION=1");
   test.skip(!fs.existsSync(creatorAuth) || !fs.existsSync(developerAuth), "Auth storage missing.");
@@ -14,7 +16,6 @@ test.beforeEach(() => {
 
 /**
  * Completes all milestone tasks (dev submit → creator approve), then runs completion workflow.
- * Long-running: depends on AI-generated milestone count.
  */
 test.describe.serial("Completion & Tier 3", () => {
   test("all tasks approved → deploy → dev submit → creator approve → tier banner", async ({
@@ -22,7 +23,7 @@ test.describe.serial("Completion & Tier 3", () => {
     baseURL,
   }) => {
     const pid = readLastProjectId()!;
-    test.setTimeout(900_000);
+    test.setTimeout(480_000);
 
     const devCtx = await browser.newContext({
       storageState: developerAuth,
@@ -36,31 +37,31 @@ test.describe.serial("Completion & Tier 3", () => {
     const creatorPage = await creatorCtx.newPage();
 
     async function syncAllTasks() {
-      for (let round = 0; round < 80; round++) {
+      for (let round = 0; round < 50; round++) {
         await devPage.bringToFront();
-        await devPage.goto(`/developer/workspace/${encodeURIComponent(pid)}`);
+        await devPage.goto(`/developer/workspace/${encodeURIComponent(pid)}`, quickGoto);
         await devPage.getByTestId("project-room-tab-milestones").click();
-        const mark = devPage.locator("[data-testid^=\"task-mark-complete-\"]").first();
+        const mark = devPage.locator('[data-testid^="task-mark-complete-"]').first();
         if ((await mark.count()) === 0) break;
         await mark.click();
-        await devPage.waitForTimeout(400);
+        await devPage.waitForTimeout(250);
 
         await creatorPage.bringToFront();
-        await creatorPage.goto(`/project-room?projectId=${encodeURIComponent(pid)}`);
+        await creatorPage.goto(`/project-room?projectId=${encodeURIComponent(pid)}`, quickGoto);
         await creatorPage.getByTestId("project-room-tab-milestones").click();
-        const appr = creatorPage.locator("[data-testid^=\"task-approve-\"]").first();
+        const appr = creatorPage.locator('[data-testid^="task-approve-"]').first();
         if ((await appr.count()) === 0) continue;
         await appr.click();
-        await creatorPage.waitForTimeout(400);
+        await creatorPage.waitForTimeout(250);
       }
     }
 
     await syncAllTasks();
 
-    await devPage.goto(`/developer/workspace/${encodeURIComponent(pid)}`);
+    await devPage.goto(`/developer/workspace/${encodeURIComponent(pid)}`, quickGoto);
     await devPage.getByTestId("project-room-tab-completion").click();
 
-    await expect(devPage.getByTestId("completion-deployment-url")).toBeVisible({ timeout: 180_000 });
+    await expect(devPage.getByTestId("completion-deployment-url")).toBeVisible({ timeout: 120_000 });
     await devPage.getByTestId("completion-deployment-url").fill("https://e2e-example.vercel.app");
     await devPage.getByTestId("completion-deployment-save").click();
 
@@ -73,12 +74,12 @@ test.describe.serial("Completion & Tier 3", () => {
 
     await devPage.getByTestId("completion-dev-submit").click();
 
-    await creatorPage.goto(`/project-room?projectId=${encodeURIComponent(pid)}`);
+    await creatorPage.goto(`/project-room?projectId=${encodeURIComponent(pid)}`, quickGoto);
     await creatorPage.getByTestId("project-room-tab-completion").click();
     await creatorPage.getByRole("checkbox", { name: /confirm acceptance/i }).check();
     await creatorPage.getByTestId("completion-creator-approve").click();
 
-    await expect(creatorPage.getByTestId("completion-tier3-reward")).toBeVisible({ timeout: 300_000 });
+    await expect(creatorPage.getByTestId("completion-tier3-reward")).toBeVisible({ timeout: 180_000 });
 
     await devCtx.close();
     await creatorCtx.close();

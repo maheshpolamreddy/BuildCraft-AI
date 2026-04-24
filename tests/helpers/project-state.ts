@@ -14,6 +14,13 @@ export function readLastProjectId(): string | null {
   return fs.readFileSync(p, "utf8").trim() || null;
 }
 
+/** Firebase Auth uid for E2E_DEVELOPER_EMAIL (written by global-setup). */
+export function readE2EDeveloperUid(): string | null {
+  const p = path.join(STATE_DIR, "e2e-developer-uid.txt");
+  if (!fs.existsSync(p)) return null;
+  return fs.readFileSync(p, "utf8").trim() || null;
+}
+
 export function readSavedProjectIdFromZustandLocalStorage(raw: string | null): string | null {
   if (!raw) return null;
   try {

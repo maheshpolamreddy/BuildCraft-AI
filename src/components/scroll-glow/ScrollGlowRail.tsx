@@ -63,18 +63,27 @@ export function useWindowScrollRailMetrics(): ScrollRailMetrics {
     setM({ pctTop, pctHeight: thumbPct, scrollable: true });
   }, []);
   useEffect(() => {
+    let scheduled: number | null = null;
+    const schedule = () => {
+      if (scheduled != null) return;
+      scheduled = requestAnimationFrame(() => {
+        scheduled = null;
+        update();
+      });
+    };
     const raf = requestAnimationFrame(() => {
       update();
     });
-    window.addEventListener("scroll", update, { passive: true });
-    window.addEventListener("resize", update);
-    const ro = new ResizeObserver(update);
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    const ro = new ResizeObserver(schedule);
     ro.observe(document.documentElement);
     if (document.body) ro.observe(document.body);
     return () => {
       cancelAnimationFrame(raf);
-      window.removeEventListener("scroll", update);
-      window.removeEventListener("resize", update);
+      if (scheduled != null) cancelAnimationFrame(scheduled);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
       ro.disconnect();
     };
   }, [update]);

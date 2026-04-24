@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useLayoutEffect, useEffect, Suspense, useRef } from "react";
-import Threads from "@/components/Threads";
+import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import {
   Building2, User, Lock, ArrowRight, Mail, CheckCircle2,
@@ -22,6 +22,8 @@ import { logAction } from "@/lib/auditLog";
 import { updateUserProfile } from "@/lib/firestore";
 import { getDeveloperProfile, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
 import { sanitizeInternalReturnPath } from "@/lib/safePaths";
+
+const Threads = dynamic(() => import("@/components/Threads"), { ssr: false });
 
 const PROD_GOOGLE_ERR = "Sign in could not be completed. Please try again.";
 
