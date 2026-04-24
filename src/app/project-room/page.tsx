@@ -233,14 +233,15 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     }
   }, [currentUser, project?.creatorEmail, project?.creatorUid, setProject]);
 
-  // Diagnostic for dev/troubleshooting:
-  console.debug("[ProjectRoom] Role Debug:", { 
-    isCreator, 
-    isDeveloper, 
-    curUid: currentUser?.uid, 
-    projCreator: project?.creatorUid, 
-    projDev: project?.developerUid 
-  });
+  if (process.env.NODE_ENV === "development") {
+    console.debug("[ProjectRoom] Role Debug:", {
+      isCreator,
+      isDeveloper,
+      curUid: currentUser?.uid,
+      projCreator: project?.creatorUid,
+      projDev: project?.developerUid,
+    });
+  }
 
   const [loadingProject, setLoadingProject] = useState(!!routeProjectId);
   const [projectLoadFailed, setProjectLoadFailed] = useState(false);
@@ -1072,23 +1073,47 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     }).catch(() => {});
   }, [activeTab, currentUser?.uid, activeChatId, projectHireReqs]);
 
-  // ── Persist active thread in URL + sessionStorage (reopen later) ───────────
+  // ── Persist active thread in URL + sessionStorage when on Chat; sync tab in URL otherwise ─
   useEffect(() => {
-    if (!currentUser?.uid || !activeChatId || activeTab !== "chat") return;
-    try {
-      sessionStorage.setItem(
-        chatStorageKey(chatParticipantRole, currentUser.uid, chatScopeProjectId),
-        activeChatId,
-      );
-    } catch {
-      /* */
-    }
+    if (!currentUser?.uid || !pathname) return;
     const params = new URLSearchParams(searchParams.toString());
-    if (params.get("chat") === activeChatId && params.get("tab") === "chat") return;
-    params.set("tab", "chat");
-    params.set("chat", activeChatId);
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }, [activeChatId, activeTab, currentUser?.uid, pathname, router, searchParams, chatParticipantRole, chatScopeProjectId]);
+
+    // Chat tab before activeChatId is resolved — keep existing ?chat= for the restore effect.
+    if (activeTab === "chat" && !activeChatId) return;
+
+    if (activeTab === "chat" && activeChatId) {
+      try {
+        sessionStorage.setItem(
+          chatStorageKey(chatParticipantRole, currentUser.uid, chatScopeProjectId),
+          activeChatId,
+        );
+      } catch {
+        /* */
+      }
+      if (params.get("chat") === activeChatId && params.get("tab") === "chat") return;
+      params.set("tab", "chat");
+      params.set("chat", activeChatId);
+    } else {
+      if (params.get("tab") === activeTab && !params.has("chat")) return;
+      params.set("tab", activeTab);
+      if (activeTab !== "chat") params.delete("chat");
+    }
+
+    const qs = params.toString();
+    const next = qs ? `${pathname}?${qs}` : pathname;
+    const cur = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
+    if (next === cur) return;
+    router.replace(next, { scroll: false });
+  }, [
+    activeChatId,
+    activeTab,
+    currentUser?.uid,
+    pathname,
+    router,
+    searchParams,
+    chatParticipantRole,
+    chatScopeProjectId,
+  ]);
 
   // ── Presence on chat tab (so offline pings work) ────────────────────────────
   useEffect(() => {

@@ -10,6 +10,7 @@ const SAFE_PATH_PREFIXES = [
   "/project-room",
   "/employee-dashboard",
   "/developer",
+  "/workspace",
   "/creator",
   "/invite",
   "/privacy",
