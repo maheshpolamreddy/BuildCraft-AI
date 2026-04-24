@@ -2,23 +2,26 @@
  * Server-only projectExecution writes (hire accept on Vercel must not use the browser Firebase SDK).
  */
 
-import { adminDb } from "@/lib/firebase-admin";
+import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 
 function emptyApproval() {
   return { approved: false, approvedAt: null, notes: "" };
 }
 
-export async function initProjectExecutionAdmin(data: {
-  projectId: string;
-  savedProjectId: string;
-  projectName: string;
-  creatorUid: string;
-  developerUid?: string | null;
-  hireToken?: string | null;
-  prdId?: string | null;
-}): Promise<void> {
-  const ref = adminDb.collection("projectExecution").doc(data.projectId);
+export async function initProjectExecutionAdmin(
+  db: Firestore,
+  data: {
+    projectId: string;
+    savedProjectId: string;
+    projectName: string;
+    creatorUid: string;
+    developerUid?: string | null;
+    hireToken?: string | null;
+    prdId?: string | null;
+  },
+): Promise<void> {
+  const ref = db.collection("projectExecution").doc(data.projectId);
   const snap = await ref.get();
   if (snap.exists) {
     await ref.update({

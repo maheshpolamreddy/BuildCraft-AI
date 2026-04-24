@@ -2,19 +2,20 @@
  * Server-only completion rewards (Admin SDK). Client cannot write another user's developerProfiles.
  */
 
+import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
-import { adminDb } from "./firebase-admin";
 
 const PROJECT_VERIFIED_BADGE = "Project Verified";
 
 export async function processCompletionRewardsAdmin(
+  db: Firestore,
   developerUid: string,
   projectName: string,
   projectId: string,
 ): Promise<void> {
   if (!developerUid?.trim() || !projectId?.trim()) return;
 
-  const ref = adminDb.collection("developerProfiles").doc(developerUid);
+  const ref = db.collection("developerProfiles").doc(developerUid);
   const snap = await ref.get();
   const data = snap.exists ? (snap.data() as Record<string, unknown>) : {};
 

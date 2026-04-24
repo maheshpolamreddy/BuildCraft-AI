@@ -94,9 +94,12 @@ export async function processGoogleUser(user: User): Promise<AuthUser> {
   return toAuthUser(user);
 }
 
+const CLIENT_SIGNIN_UNAVAILABLE =
+  "Sign-in is temporarily unavailable. Please try again later.";
+
 export async function signInWithGoogle(): Promise<AuthUser> {
   if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
-    throw new Error("Firebase is not configured (missing NEXT_PUBLIC_FIREBASE_API_KEY).");
+    throw new Error(CLIENT_SIGNIN_UNAVAILABLE);
   }
   const { user } = await signInWithPopup(auth, googleProvider);
   return processGoogleUser(user);
@@ -108,7 +111,7 @@ export async function signInWithGoogle(): Promise<AuthUser> {
  */
 export async function signInWithGoogleInSameTab(): Promise<void> {
   if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY?.trim()) {
-    throw new Error("Firebase is not configured (missing NEXT_PUBLIC_FIREBASE_API_KEY).");
+    throw new Error(CLIENT_SIGNIN_UNAVAILABLE);
   }
   await signInWithRedirect(auth, googleProvider);
 }

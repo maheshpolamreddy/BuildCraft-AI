@@ -3,10 +3,10 @@ import { getHireRequestAdmin } from "@/lib/hire-requests-admin";
 import type { HireRequest } from "@/lib/hireRequests";
 import { sendHireAccepted, transactionalEmailConfigured } from "@/lib/email";
 import {
-  adminDb,
-  FirebaseAdminConfigurationError,
+  getAdminDbSafe,
   firebaseAdminUnavailableMessage,
   isFirestoreCredentialsError,
+  SERVER_CONFIG_USER_FACING_ERROR,
 } from "@/lib/firebase-admin";
 import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
@@ -50,9 +50,9 @@ async function resolveProjectDocIdForHire(
   }
 }
 
-async function runRejectTransaction(token: string): Promise<void> {
-  await adminDb.runTransaction(async (t) => {
-    const hireRef = adminDb.collection("hireRequests").doc(token);
+async function runRejectTransaction(db: Firestore, token: string): Promise<void> {
+  await db.runTransaction(async (t) => {
+    const hireRef = db.collection("hireRequests").doc(token);
     const hireSnap = await t.get(hireRef);
     if (!hireSnap.exists) {
       throw Object.assign(new Error("Invite not found"), { code: "NOT_FOUND" });
@@ -73,12 +73,13 @@ async function runRejectTransaction(token: string): Promise<void> {
  * No partial accept: if this throws, Firestore stays unchanged.
  */
 async function runAcceptTransaction(
+  db: Firestore,
   token: string,
   hire: HireRequest,
   projectDocId: string,
 ): Promise<void> {
-  await adminDb.runTransaction(async (t) => {
-    const hireRef = adminDb.collection("hireRequests").doc(token);
+  await db.runTransaction(async (t) => {
+    const hireRef = db.collection("hireRequests").doc(token);
     const hireSnap = await t.get(hireRef);
     if (!hireSnap.exists) {
       throw Object.assign(new Error("Invite not found"), { code: "NOT_FOUND" });
@@ -88,7 +89,7 @@ async function runAcceptTransaction(
       throw Object.assign(new Error(`This invite is already ${hr.status}`), { code: "CONFLICT" });
     }
 
-    const projRef = adminDb.collection("projects").doc(projectDocId);
+    const projRef = db.collection("projects").doc(projectDocId);
     const projSnap = await t.get(projRef);
     if (!projSnap.exists) {
       throw Object.assign(new Error("Project not found"), { code: "NOT_FOUND" });
@@ -99,9 +100,9 @@ async function runAcceptTransaction(
       throw Object.assign(new Error("Project creator does not match this invite"), { code: "FORBIDDEN" });
     }
 
-    const chatRef = adminDb.collection("chats").doc(token);
+    const chatRef = db.collection("chats").doc(token);
     const chatSnap = await t.get(chatRef);
-    const wsRef = adminDb.collection("projectWorkspaces").doc(projectDocId);
+    const wsRef = db.collection("projectWorkspaces").doc(projectDocId);
     const wsSnap = await t.get(wsRef);
 
     t.update(hireRef, {
@@ -165,6 +166,11 @@ function mapTransactionError(err: unknown): NextResponse {
 }
 
 export async function POST(req: NextRequest) {
+  const db = getAdminDbSafe();
+  if (!db) {
+    return NextResponse.json({ error: SERVER_CONFIG_USER_FACING_ERROR }, { status: 503 });
+  }
+
   try {
     const { token, action } = await req.json();
 
@@ -172,7 +178,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });
     }
 
-    const requestRow = await getHireRequestAdmin(token);
+    const requestRow = await getHireRequestAdmin(db, token);
     if (!requestRow) {
       return NextResponse.json({ error: "Invite not found" }, { status: 404 });
     }
@@ -182,32 +188,16 @@ export async function POST(req: NextRequest) {
 
     if (action === "reject") {
       try {
-        await runRejectTransaction(token);
+        await runRejectTransaction(db, token);
       } catch (err) {
         return mapTransactionError(err);
       }
       return NextResponse.json({ success: true, status: "rejected" });
     }
 
-    if (!transactionalEmailConfigured()) {
-      return NextResponse.json(
-        {
-          error:
-            "Email is not configured. Set GMAIL_USER + GMAIL_APP_PASSWORD, or BREVO_* / RESEND_* — see .env.example.",
-          hint:
-            "Vercel: add these variables for Production (and Preview if needed), then redeploy.",
-        },
-        { status: 503 },
-      );
-    }
-
     let effectiveProjectId = requestRow.projectId?.trim() || null;
     if (!effectiveProjectId) {
-      effectiveProjectId = await resolveProjectDocIdForHire(
-        adminDb,
-        requestRow.creatorUid,
-        requestRow.projectName,
-      );
+      effectiveProjectId = await resolveProjectDocIdForHire(db, requestRow.creatorUid, requestRow.projectName);
     }
 
     if (!effectiveProjectId) {
@@ -221,25 +211,29 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      await runAcceptTransaction(token, requestRow, effectiveProjectId);
+      await runAcceptTransaction(db, token, requestRow, effectiveProjectId);
     } catch (err) {
       console.error("[hire-respond] accept transaction:", err);
       return mapTransactionError(err);
     }
 
-    const emailResult = await sendHireAccepted({
-      creatorEmail: requestRow.creatorEmail,
-      creatorName: requestRow.creatorName,
-      developerName: requestRow.developerName,
-      projectName: requestRow.projectName,
-      dashboardUrl: `${appBaseUrl()}/project-room?tab=chat&chat=${encodeURIComponent(token)}`,
-    });
-    if (!emailResult.ok) {
-      console.error("[hire-respond] sendHireAccepted failed:", emailResult.error);
+    if (transactionalEmailConfigured()) {
+      const emailResult = await sendHireAccepted({
+        creatorEmail: requestRow.creatorEmail,
+        creatorName: requestRow.creatorName,
+        developerName: requestRow.developerName,
+        projectName: requestRow.projectName,
+        dashboardUrl: `${appBaseUrl()}/project-room?tab=chat&chat=${encodeURIComponent(token)}`,
+      });
+      if (!emailResult.ok) {
+        console.warn("[hire-respond] sendHireAccepted failed (non-blocking):", emailResult.error);
+      }
+    } else {
+      console.warn("[hire-respond] Email not configured; skipping hire-accepted message.");
     }
 
     try {
-      await initProjectExecutionAdmin({
+      await initProjectExecutionAdmin(db, {
         projectId: effectiveProjectId,
         savedProjectId: effectiveProjectId,
         projectName: requestRow.projectName,
@@ -248,7 +242,7 @@ export async function POST(req: NextRequest) {
         hireToken: token,
       });
     } catch (e) {
-      console.warn("[hire-respond] project execution init error:", e);
+      console.warn("[hire-respond] project execution init error (non-blocking):", e);
     }
 
     fetch(`${appBaseUrl()}/api/generate-prd`, {
@@ -273,28 +267,23 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     console.error("[hire-respond]", err);
-    if (err instanceof FirebaseAdminConfigurationError || isFirestoreCredentialsError(err)) {
+    if (isFirestoreCredentialsError(err)) {
       return NextResponse.json({ error: firebaseAdminUnavailableMessage(err) }, { status: 503 });
     }
     const code =
       typeof err === "object" && err !== null && "code" in err
         ? String((err as { code: string }).code)
         : "";
-    const message = err instanceof Error ? err.message : String(err);
     if (code === "permission-denied") {
-      return NextResponse.json(
-        {
-          error:
-            "Database permission denied. Deploy updated Firestore rules, then try again.",
-        },
-        { status: 503 },
-      );
+      return NextResponse.json({ error: SERVER_CONFIG_USER_FACING_ERROR }, { status: 503 });
     }
     return NextResponse.json(
       {
         error:
           process.env.NODE_ENV === "development"
-            ? `Internal server error: ${message}`
+            ? err instanceof Error
+              ? err.message
+              : String(err)
             : "Unable to accept offer. Please try again.",
       },
       { status: 500 },

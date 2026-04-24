@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  adminDb,
-  FirebaseAdminConfigurationError,
+  getAdminDbSafe,
   firebaseAdminUnavailableMessage,
   isFirestoreCredentialsError,
+  SERVER_CONFIG_USER_FACING_ERROR,
 } from "@/lib/firebase-admin";
 
 export async function GET(req: NextRequest) {
+  const db = getAdminDbSafe();
+  if (!db) {
+    return NextResponse.json({ error: SERVER_CONFIG_USER_FACING_ERROR }, { status: 503 });
+  }
+
   try {
     const projectId = req.nextUrl.searchParams.get("id");
     const uid = req.nextUrl.searchParams.get("uid");
@@ -14,7 +19,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Missing id or uid" }, { status: 400 });
     }
 
-    const projSnap = await adminDb.collection("projects").doc(projectId).get();
+    const projSnap = await db.collection("projects").doc(projectId).get();
     if (!projSnap.exists) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
@@ -25,7 +30,7 @@ export async function GET(req: NextRequest) {
     let isDeveloper = data.developerUid === uid;
 
     if (!isCreator && !isDeveloper) {
-      const hireSnap = await adminDb
+      const hireSnap = await db
         .collection("hireRequests")
         .where("projectId", "==", projectId)
         .where("developerUid", "==", uid)
@@ -38,7 +43,7 @@ export async function GET(req: NextRequest) {
       }
       isDeveloper = true;
 
-      await adminDb
+      await db
         .collection("projects")
         .doc(projectId)
         .update({ developerUid: uid })
@@ -48,9 +53,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ project: data });
   } catch (err) {
     console.error("[load-project]", err);
-    if (err instanceof FirebaseAdminConfigurationError || isFirestoreCredentialsError(err)) {
+    if (isFirestoreCredentialsError(err)) {
       return NextResponse.json({ error: firebaseAdminUnavailableMessage(err) }, { status: 503 });
     }
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json({ error: "Unable to load project. Please try again." }, { status: 500 });
   }
 }

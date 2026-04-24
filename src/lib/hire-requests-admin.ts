@@ -1,11 +1,11 @@
 // Server-only hire request reads via Firebase Admin (no browser session on Vercel).
 
-import { adminDb } from "@/lib/firebase-admin";
-import type { HireRequest } from "@/lib/hireRequests";
+import type { Firestore } from "firebase-admin/firestore";
 import { Timestamp } from "firebase-admin/firestore";
+import type { HireRequest } from "@/lib/hireRequests";
 
-export async function getHireRequestAdmin(token: string): Promise<HireRequest | null> {
-  const ref = adminDb.collection("hireRequests").doc(token);
+export async function getHireRequestAdmin(db: Firestore, token: string): Promise<HireRequest | null> {
+  const ref = db.collection("hireRequests").doc(token);
   const snap = await ref.get();
   if (!snap.exists) return null;
   const data = snap.data()!;

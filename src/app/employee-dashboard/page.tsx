@@ -789,7 +789,9 @@ function EmployeeDashboardInner() {
       if (!ok) {
         const raw = String(data?.error || "").trim();
         const looksLikeServerConfig =
-          /firebase admin|firestore|credentials|service account|not configured|FIREBASE_/i.test(raw);
+          /firebase admin|firestore|credentials|service account|not configured|FIREBASE_|system configuration incomplete|server setup|sign-in is temporarily unavailable/i.test(
+            raw,
+          );
         throw new Error(
           looksLikeServerConfig
             ? "Unable to accept offer right now. Please try again later or contact support if this continues."

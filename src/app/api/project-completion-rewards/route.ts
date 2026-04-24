@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { DocumentData } from "firebase-admin/firestore";
 import {
-  adminAuth,
-  adminDb,
-  FirebaseAdminConfigurationError,
+  getAdminAuthSafe,
+  getAdminDbSafe,
   firebaseAdminUnavailableMessage,
   isFirestoreCredentialsError,
+  SERVER_CONFIG_USER_FACING_ERROR,
 } from "@/lib/firebase-admin";
 import { processCompletionRewardsAdmin } from "@/lib/rewards-admin";
 
@@ -15,6 +15,12 @@ function projectDocSaysCompleted(data: DocumentData): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  const db = getAdminDbSafe();
+  const auth = getAdminAuthSafe();
+  if (!db || !auth) {
+    return NextResponse.json({ error: SERVER_CONFIG_USER_FACING_ERROR }, { status: 503 });
+  }
+
   try {
     const body = await req.json();
     const idToken = typeof body.idToken === "string" ? body.idToken : "";
@@ -25,10 +31,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing idToken or projectId" }, { status: 400 });
     }
 
-    const decoded = await adminAuth.verifyIdToken(idToken);
+    const decoded = await auth.verifyIdToken(idToken);
     const uid = decoded.uid;
 
-    const projSnap = await adminDb.collection("projects").doc(projectId).get();
+    const projSnap = await db.collection("projects").doc(projectId).get();
     if (!projSnap.exists) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
@@ -48,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     let completed = projectDocSaysCompleted(data);
     if (!completed) {
-      const execSnap = await adminDb.collection("projectExecution").doc(projectId).get();
+      const execSnap = await db.collection("projectExecution").doc(projectId).get();
       const st = execSnap.exists ? String((execSnap.data() as { status?: string })?.status ?? "") : "";
       completed = st === "completed";
     }
@@ -64,15 +70,14 @@ export async function POST(req: NextRequest) {
     const displayName =
       projectNameFallback || (typeof nested?.name === "string" ? nested.name : "") || "Project";
 
-    await processCompletionRewardsAdmin(developerUid, displayName, projectId);
+    await processCompletionRewardsAdmin(db, developerUid, displayName, projectId);
 
     return NextResponse.json({ ok: true, developerUid });
   } catch (e) {
     console.error("[project-completion-rewards]", e);
-    if (e instanceof FirebaseAdminConfigurationError || isFirestoreCredentialsError(e)) {
+    if (isFirestoreCredentialsError(e)) {
       return NextResponse.json({ error: firebaseAdminUnavailableMessage(e) }, { status: 503 });
     }
-    const msg = e instanceof Error ? e.message : "Internal error";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: "Unable to process rewards. Please try again." }, { status: 500 });
   }
 }
