@@ -481,12 +481,14 @@ export function ProjectCompletionPanel({
           <div className="space-y-2">
             <div className="flex gap-2">
               <input
+                data-testid="completion-deployment-url"
                 value={deployUrl}
                 onChange={(e) => setDeployUrl(e.target.value)}
                 placeholder="https://your-project.vercel.app"
                 className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm placeholder-white/20 focus:outline-none focus:border-indigo-500/50"
               />
               <button
+                data-testid="completion-deployment-save"
                 type="button"
                 onClick={() => void handleDeployUrlSave()}
                 disabled={!deployUrl.trim() || !isValidDeploymentUrl(deployUrl)}
@@ -553,6 +555,7 @@ export function ProjectCompletionPanel({
                 className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-white/20 focus:outline-none focus:border-indigo-500/50 resize-none"
               />
               <button
+                data-testid="completion-dev-submit"
                 type="button"
                 onClick={() => void handleDevSubmit()}
                 disabled={!deployUrl.trim() || !deployUrlValid || !checklistComplete || submitting}
@@ -613,6 +616,7 @@ export function ProjectCompletionPanel({
 
           <div className="flex gap-3">
             <button
+              data-testid="completion-creator-approve"
               type="button"
               onClick={() => void handleCreatorApprove()}
               disabled={!approveCheck.ok || submitting}
@@ -673,7 +677,10 @@ export function ProjectCompletionPanel({
           {rewardResult && (
             <div className="space-y-2 pt-2">
               {(rewardResult.badgeUpgraded || rewardResult.tier3) && (
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-bold">
+                <div
+                  data-testid="completion-tier3-reward"
+                  className="flex items-center gap-2 p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-yellow-400 text-xs font-bold"
+                >
                   <Award className="w-4 h-4" /> Developer upgraded to Tier 3 — {BADGE_PROJECT_VERIFIED} badge unlocked. Matching priority boosted.
                 </div>
               )}

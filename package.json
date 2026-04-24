@@ -7,6 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:install": "playwright install chromium",
     "vercel:sync-dev-env": "node scripts/sync-prod-env-to-preview.mjs",
     "deploy:firestore": "node ./node_modules/firebase-tools/lib/bin/firebase.js deploy --only firestore:rules",
     "login:firebase": "node ./node_modules/firebase-tools/lib/bin/firebase.js login"
@@ -31,6 +34,7 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/nodemailer": "^7.0.11",

@@ -5,24 +5,62 @@ import { readJsonBody } from "@/lib/read-json-body";
 import { messageForAiRouteFailure } from "@/lib/map-ai-route-error";
 import { savePRD, type PRDMilestone } from "@/lib/prd";
 import { setPrdOnRequest } from "@/lib/hireRequests";
+import { getAiGenerationFirestore, hashAiInputs, setAiGenerationFirestore } from "@/lib/ai-generation-cache";
 
 export const maxDuration = 180;
+
+type PrdApiResponse = {
+  success: true;
+  prdId: string;
+  prd: {
+    overview: string;
+    scope: string;
+    features: string[];
+    techStack: string[];
+    milestones: PRDMilestone[];
+    risks: string[];
+    id: string;
+    version: string;
+  };
+};
 
 export async function POST(req: NextRequest) {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
 
   try {
+    const body = parsed.body as Record<string, unknown>;
     const {
       projectName, projectIdea, projectSummary, techStack,
       creatorUid, developerUid, hireToken: hireTokenRaw,
-    } = parsed.body as Record<string, unknown>;
+    } = body;
 
     const hireToken = String(hireTokenRaw ?? "");
+    const savedProjectId = typeof body.savedProjectId === "string" ? body.savedProjectId.trim() : "";
 
     const stack = Array.isArray(techStack) ? (techStack as string[]) : [];
     const idea = String(projectIdea ?? "").trim();
     const summary = String(projectSummary ?? "").trim();
+    const scopeId = savedProjectId || hireToken.trim() || String(creatorUid ?? "anon");
+    const stackSig = [...stack].map((s) => String(s).trim().toLowerCase()).sort().join(",");
+    const inputHash = await hashAiInputs(
+      "prd",
+      String(projectName ?? ""),
+      idea,
+      summary,
+      stackSig,
+      hireToken,
+      String(creatorUid ?? ""),
+    );
+
+    const cached = await getAiGenerationFirestore<PrdApiResponse>(scopeId, "prd", inputHash);
+    if (cached?.success && cached.prdId && cached.prd) {
+      if (hireToken.trim()) {
+        await setPrdOnRequest(hireToken, cached.prdId).catch(() => {});
+      }
+      return NextResponse.json(cached);
+    }
+
     const projectBrief =
       [summary && `Summary (from creator):\n${summary}`, idea && `Project idea (from creator):\n${idea}`]
         .filter(Boolean)
@@ -122,7 +160,7 @@ Return ONLY valid JSON with this exact structure:
       await setPrdOnRequest(hireToken, prdId);
     }
 
-    return NextResponse.json({
+    const responseBody: PrdApiResponse = {
       success: true,
       prdId,
       prd: {
@@ -135,7 +173,9 @@ Return ONLY valid JSON with this exact structure:
         id: prdId,
         version: "v1.0",
       },
-    });
+    };
+    await setAiGenerationFirestore(scopeId, "prd", inputHash, responseBody);
+    return NextResponse.json(responseBody);
   } catch (err) {
     console.error("[generate-prd]", err);
     return NextResponse.json({ error: messageForAiRouteFailure(err) }, { status: 500 });

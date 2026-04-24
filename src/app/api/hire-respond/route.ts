@@ -256,6 +256,7 @@ export async function POST(req: NextRequest) {
         creatorUid: requestRow.creatorUid,
         developerUid: requestRow.developerUid,
         hireToken: token,
+        savedProjectId: effectiveProjectId,
       }),
     }).catch((err) => console.error("[hire-respond] PRD generation failed:", err));
 

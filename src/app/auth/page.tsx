@@ -423,6 +423,7 @@ function PlatformEntryInner() {
                     <div className="relative">
                       <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
                       <input
+                        data-testid="auth-email"
                         type="email"
                         placeholder="Email address"
                         value={email}
@@ -434,6 +435,7 @@ function PlatformEntryInner() {
                     <div className="relative">
                       <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
                       <input
+                        data-testid="auth-password"
                         type={showPass ? "text" : "password"}
                         placeholder="Password"
                         value={password}
@@ -458,6 +460,7 @@ function PlatformEntryInner() {
                   )}
 
                   <button
+                    data-testid="auth-email-submit"
                     onClick={handleEmailAuth}
                     disabled={authLoading}
                     className="w-full py-4 silver-gradient text-black rounded-2xl font-black uppercase tracking-[0.2em] text-xs transition-all shadow-[0_0_30px_rgba(255,255,255,0.2)] hover:shadow-[0_0_50px_rgba(255,255,255,0.4)] flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -499,6 +502,7 @@ function PlatformEntryInner() {
                 <div className="flex flex-col gap-4">
                   {/* Employer Role */}
                   <motion.div 
+                    data-testid="auth-role-employer"
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => setRole("employer")} 
@@ -531,6 +535,7 @@ function PlatformEntryInner() {
 
                   {/* Employee Role */}
                   <motion.div 
+                    data-testid="auth-role-developer"
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => setRole("employee")} 
@@ -564,6 +569,7 @@ function PlatformEntryInner() {
                 <div className="flex justify-between pt-4">
                   <button onClick={handleBack} className="px-8 py-5 text-[#888] hover:text-white text-xs font-bold uppercase tracking-widest transition-colors">Back</button>
                   <button
+                    data-testid="auth-role-continue"
                     type="button"
                     disabled={!role || postRoleLoading}
                     onClick={async () => {
@@ -675,6 +681,7 @@ function PlatformEntryInner() {
                 <div className="flex justify-between pt-4 max-w-lg mx-auto w-full">
                   <button type="button" onClick={handleBack} className="px-8 py-5 text-[#888] hover:text-white text-xs font-bold uppercase tracking-widest transition-colors">Back</button>
                   <button
+                    data-testid="auth-employer-discovery"
                     type="button"
                     onClick={() => void completeEmployerFlow()}
                     className="px-12 py-5 silver-gradient text-black rounded-2xl font-black uppercase tracking-[0.2em] text-xs transition-all shadow-[0_0_30px_rgba(255,255,255,0.2)] hover:shadow-[0_0_50px_rgba(255,255,255,0.4)] flex items-center justify-center gap-3 group"

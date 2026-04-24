@@ -3,6 +3,13 @@ import { getNimClient, NIM_KEY_ERROR } from "@/lib/nim-client";
 import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
 import { readJsonBody } from "@/lib/read-json-body";
 import { messageForAiRouteFailure } from "@/lib/map-ai-route-error";
+import {
+  getAiGenerationFirestore,
+  getRedisAiCache,
+  hashAiInputs,
+  setAiGenerationFirestore,
+  setRedisAiCache,
+} from "@/lib/ai-generation-cache";
 
 export const maxDuration = 180;
 
@@ -50,10 +57,29 @@ export async function POST(req: NextRequest) {
   const b = parsed.body as Record<string, unknown>;
   const name = (typeof b.projectName === "string" ? b.projectName : "My App").trim();
   const idea = (typeof b.projectIdea === "string" ? b.projectIdea : "").trim();
+  const projectId =
+    typeof b.projectId === "string" && b.projectId.trim() ? b.projectId.trim() : undefined;
 
   try {
     if (!getNimClient()) {
       return NextResponse.json({ error: NIM_KEY_ERROR }, { status: 503 });
+    }
+
+    const inputHash = await hashAiInputs("milestones", name, idea);
+    if (projectId) {
+      const fsHit = await getAiGenerationFirestore<Record<string, unknown>>(projectId, "milestones", inputHash);
+      if (fsHit && Array.isArray((fsHit as { milestones?: unknown }).milestones)) {
+        const m = (fsHit as { milestones: unknown[] }).milestones;
+        if (m.length > 0) return NextResponse.json(fsHit);
+      }
+    }
+    const redisHit = await getRedisAiCache<Record<string, unknown>>("milestones", [name, idea]);
+    if (redisHit && Array.isArray((redisHit as { milestones?: unknown }).milestones)) {
+      const m = (redisHit as { milestones: unknown[] }).milestones;
+      if (m.length > 0) {
+        if (projectId) await setAiGenerationFirestore(projectId, "milestones", inputHash, redisHit);
+        return NextResponse.json(redisHit);
+      }
     }
 
     let raw = await orchestrateChatCompletion(
@@ -81,7 +107,12 @@ export async function POST(req: NextRequest) {
     } catch {
       throw new Error("Model returned invalid JSON");
     }
-    return NextResponse.json(data);
+    const payload = data as Record<string, unknown>;
+    await setRedisAiCache("milestones", [name, idea], payload);
+    if (projectId) {
+      await setAiGenerationFirestore(projectId, "milestones", inputHash, payload);
+    }
+    return NextResponse.json(payload);
   } catch (err) {
     return NextResponse.json({ error: messageForAiRouteFailure(err) }, { status: 500 });
   }

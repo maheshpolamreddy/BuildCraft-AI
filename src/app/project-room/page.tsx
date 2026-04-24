@@ -753,7 +753,11 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
        fetch("/api/generate-milestones", {
          method: "POST",
          headers: { "Content-Type": "application/json" },
-         body: JSON.stringify({ projectName: project.name, projectIdea: project.idea }),
+         body: JSON.stringify({
+           projectName: project.name,
+           projectIdea: project.idea,
+           projectId: savedProjectId,
+         }),
        })
          .then((r) => parseJsonResponse(r))
          .then(async ({ ok, data }) => {
@@ -797,7 +801,11 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     fetch("/api/generate-milestones", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectName: project.name, projectIdea: project.idea }),
+      body: JSON.stringify({
+        projectName: project.name,
+        projectIdea: project.idea,
+        projectId: savedProjectId,
+      }),
     })
       .then((r) => parseJsonResponse(r))
       .then(async ({ ok, data }) => {
@@ -946,6 +954,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
           creatorUid:     acceptedHire.creatorUid,
           developerUid:   acceptedHire.developerUid,
           hireToken:      acceptedHire.token,
+          ...(workspaceProjectId ? { savedProjectId: workspaceProjectId } : {}),
         }),
       });
       const { ok, data } = await parseJsonResponse(res);
@@ -1689,7 +1698,11 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
             { id: "deploy",     label: "CI/CD Deploy",    icon: <Rocket className="w-5 h-5" />,       badge: completionSectionUnlocked ? "Ready" : null },
             { id: "audit",      label: "Audit Log",       icon: <History className="w-5 h-5" /> },
           ] as const).filter(t => visibleTabs.includes(t.id)).map(tab => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id as Tab)}
+            <button
+              key={tab.id}
+              type="button"
+              data-testid={`project-room-tab-${tab.id}`}
+              onClick={() => setActiveTab(tab.id as Tab)}
               className={`flex items-center gap-3 w-full p-3 font-bold rounded-xl transition-all relative overflow-hidden group ${
                 activeTab === tab.id 
                   ? "text-white bg-gradient-to-r from-purple-500/15 to-transparent border border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.05)]" 
@@ -1888,8 +1901,12 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                                 )}
                                 {task.status === "completed_by_developer" && isCreator && !workspaceProjectCompleted && (
                                   <div className="flex flex-col gap-2">
-                                    <button type="button" onClick={e => { e.stopPropagation(); void approveTask(task, m.id); }}
-                                      className="px-3 py-1.5 bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-black text-[10px] uppercase tracking-widest rounded-lg hover:bg-emerald-500/30 transition-all flex items-center gap-1">
+                                    <button
+                                      data-testid={`task-approve-${task.id}`}
+                                      type="button"
+                                      onClick={e => { e.stopPropagation(); void approveTask(task, m.id); }}
+                                      className="px-3 py-1.5 bg-emerald-500/20 border border-emerald-500/50 text-emerald-400 font-black text-[10px] uppercase tracking-widest rounded-lg hover:bg-emerald-500/30 transition-all flex items-center gap-1"
+                                    >
                                       <CheckCircle className="w-3 h-3" /> Approve
                                     </button>
                                     <button type="button" onClick={e => { e.stopPropagation(); void rejectTask(task, m.id); }}
@@ -1899,8 +1916,12 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                                   </div>
                                 )}
                                 {(task.status === "pending" || task.status === "in-progress" || task.status === "validating" || task.status === "reopened") && isDeveloper && !workspaceProjectCompleted && (
-                                  <button type="button" onClick={e => { e.stopPropagation(); void markTaskCompleted(m.id, task, task.status === "reopened" ? "Addressed feedback and re-completed work." : "Marked complete by developer in workspace."); }}
-                                    className="px-4 py-2 border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-emerald-500/20 transition-all flex items-center gap-2">
+                                  <button
+                                    data-testid={`task-mark-complete-${task.id}`}
+                                    type="button"
+                                    onClick={e => { e.stopPropagation(); void markTaskCompleted(m.id, task, task.status === "reopened" ? "Addressed feedback and re-completed work." : "Marked complete by developer in workspace."); }}
+                                    className="px-4 py-2 border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-emerald-500/20 transition-all flex items-center gap-2"
+                                  >
                                     <Play className="w-3 h-3" /> Mark as completed
                                   </button>
                                 )}
@@ -2132,8 +2153,13 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                         {matchedDevs.length} matches found
                       </span>
                     )}
-                    <button onClick={runMatchingEngine} disabled={matchLoading}
-                      className="flex items-center gap-1.5 px-3 py-2 bg-white/5 border border-white/10 text-white/50 hover:text-white rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all disabled:opacity-30">
+                    <button
+                      data-testid="talent-rerun-match"
+                      type="button"
+                      onClick={runMatchingEngine}
+                      disabled={matchLoading}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-white/5 border border-white/10 text-white/50 hover:text-white rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all disabled:opacity-30"
+                    >
                       <RotateCcw className={`w-3 h-3 ${matchLoading ? "animate-spin" : ""}`} /> Re-run
                     </button>
                   </div>
@@ -2449,6 +2475,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                                 </button>
                               )}
                               <button
+                                data-testid={`talent-hire-${dev.userId}`}
+                                type="button"
                                 disabled={isHired}
                                 onClick={() => {
                                   setHireTarget(dev);
@@ -2795,6 +2823,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                     {/* Input */}
                     <div className="p-4 border-t border-white/5 flex gap-3">
                       <input
+                        data-testid="chat-message-input"
                         value={chatText}
                         onChange={e => setChatText(e.target.value)}
                         onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendFireMessage()}
@@ -2802,6 +2831,8 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                         className="flex-1 bg-white/5 border border-white/10 focus:border-indigo-500/50 rounded-xl px-4 py-3 text-sm text-white placeholder-white/20 focus:outline-none transition-colors"
                       />
                       <button
+                        data-testid="chat-send"
+                        type="button"
                         onClick={sendFireMessage}
                         disabled={!chatText.trim() || chatSending}
                         className="px-4 py-3 silver-gradient text-black rounded-xl font-black disabled:opacity-40 flex items-center gap-2 transition-all"
@@ -3416,9 +3447,12 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                   Cancel
                 </button>
                 <button
+                  data-testid="hire-send-invitation"
+                  type="button"
                   onClick={() => hireTarget && sendHireRequest(hireTarget)}
                   disabled={hireSending || hireResult === "sent" || hireResult === "duplicate"}
-                  className="flex-1 py-3 silver-gradient text-black font-black uppercase tracking-widest text-xs rounded-xl flex items-center justify-center gap-2 disabled:opacity-50">
+                  className="flex-1 py-3 silver-gradient text-black font-black uppercase tracking-widest text-xs rounded-xl flex items-center justify-center gap-2 disabled:opacity-50"
+                >
                   {hireSending ? <><Loader2 className="w-4 h-4 animate-spin" /> Sending…</> : <><Mail className="w-4 h-4" /> Send Invitation</>}
                 </button>
               </div>

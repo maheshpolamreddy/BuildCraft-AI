@@ -1114,6 +1114,7 @@ export default function ArchitectureView() {
         body: JSON.stringify({
           projectName: project.name ?? "My App",
           projectIdea: project.idea ?? "",
+          ...(savedProjectId ? { projectId: savedProjectId } : {}),
         }),
       });
       const data = await parseApiJson<Record<string, unknown>>(res);
@@ -1154,6 +1155,7 @@ export default function ArchitectureView() {
           projectName: project.name ?? "My App",
           projectIdea: project.idea ?? "",
           tools: toolNames,
+          ...(savedProjectId ? { projectId: savedProjectId } : {}),
         }),
       });
       const data2 = await parseApiJson<Record<string, unknown>>(res2);
@@ -1195,7 +1197,7 @@ export default function ArchitectureView() {
     } finally {
       setPromptsLoading(false);
     }
-  }, [project, patchProject, setPromptsViewed, currentUser, incrementVersion]);
+  }, [project, patchProject, setPromptsViewed, currentUser, incrementVersion, savedProjectId]);
 
   /** Finish the plan when analysis is already in the project (e.g. prompts step failed earlier or partial save). */
   const runPromptsOnlyFromStoredAnalysis = useCallback(async () => {
@@ -1216,6 +1218,7 @@ export default function ArchitectureView() {
           projectName: project.name ?? "My App",
           projectIdea: project.idea ?? "",
           tools: toolNames,
+          ...(savedProjectId ? { projectId: savedProjectId } : {}),
         }),
       });
       const data2 = await parseApiJson<Record<string, unknown>>(res2);
@@ -1258,7 +1261,7 @@ export default function ArchitectureView() {
     } finally {
       setPromptsLoading(false);
     }
-  }, [project, patchProject, setPromptsViewed, currentUser, incrementVersion]);
+  }, [project, patchProject, setPromptsViewed, currentUser, incrementVersion, savedProjectId]);
 
   /** Keep latest callbacks off the auto-orchestrate effect deps (stable array length + fewer stale closures). */
   const runFullPlanOrchestrationRef = useRef(runFullPlanOrchestration);
@@ -1277,6 +1280,7 @@ export default function ArchitectureView() {
           projectName: project?.name ?? "My App",
           projectIdea: project?.idea ?? "",
           tools: toolNamesForPrompts,
+          ...(savedProjectId ? { projectId: savedProjectId } : {}),
         }),
       });
       const data = await parseApiJson(res);
@@ -1307,7 +1311,7 @@ export default function ArchitectureView() {
     } finally {
       setPromptsLoading(false);
     }
-  }, [project?.name, project?.idea, toolNamesForPrompts]);
+  }, [project?.name, project?.idea, toolNamesForPrompts, savedProjectId]);
 
   const requirementsReadyForOrchestration =
     !!project &&
@@ -1634,6 +1638,7 @@ export default function ArchitectureView() {
           {/* Project Workspace / lock — always visible */}
           {project?.locked ? (
             <button
+              data-testid="arch-open-project-room"
               type="button"
               onClick={() => router.push("/project-room")}
               className="flex items-center gap-3 w-full px-3 py-2.5 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 rounded-xl transition-all border border-indigo-500/20 group"
@@ -1643,6 +1648,7 @@ export default function ArchitectureView() {
             </button>
           ) : allToolsDecided ? (
             <button
+              data-testid="arch-lock-plan"
               type="button"
               onClick={handleLockAndProceed}
               disabled={!promptsViewed}
@@ -1840,6 +1846,8 @@ export default function ArchitectureView() {
               {tabs.map((t) => (
                 <button
                   key={t.id}
+                  type="button"
+                  data-testid={`arch-tab-${t.id}`}
                   onClick={() => {
                     setActiveTab(t.id);
                     if (t.id === "prompts") setPromptsViewed(true);
@@ -2293,6 +2301,7 @@ export default function ArchitectureView() {
                         </div>
                         <div className="relative z-10 w-full lg:w-40 flex flex-col justify-center gap-2.5 shrink-0">
                           <button 
+                            data-testid={i === 0 ? "arch-first-tool-approve" : undefined}
                             onClick={() => { setToolApproval(id, true);  if (currentUser) logAction(currentUser.uid, "tool.approved",  { tool: tool.name }); }} 
                             className={`py-3 rounded-2xl border font-bold text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
                               isApproved 

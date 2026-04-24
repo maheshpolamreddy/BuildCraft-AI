@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { readJsonBody } from "@/lib/read-json-body";
-import { runGeneratePromptsCore } from "@/lib/plan-orchestration";
+import { runGeneratePromptsCore, type GeneratedPromptRow, type ProjectBlueprint } from "@/lib/plan-orchestration";
 import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
+import {
+  getAiGenerationFirestore,
+  hashAiInputs,
+  setAiGenerationFirestore,
+} from "@/lib/ai-generation-cache";
 
 /** One model call (was two) — avoids chained timeouts. */
 export const maxDuration = 300;
@@ -24,8 +29,29 @@ export async function POST(req: NextRequest) {
         ? tools
         : "Next.js, Supabase, Tailwind CSS, TypeScript";
 
+  const projectId =
+    typeof b.projectId === "string" && b.projectId.trim() ? b.projectId.trim() : undefined;
+  const toolsKey = Array.isArray(toolInput)
+    ? [...toolInput].map((t) => String(t).trim().toLowerCase()).sort().join(",")
+    : String(toolInput).trim().toLowerCase();
+
   try {
+    const inputHash = await hashAiInputs("prompts", name, idea, toolsKey);
+    if (projectId) {
+      const cached = await getAiGenerationFirestore<{ prompts: GeneratedPromptRow[]; blueprint: ProjectBlueprint }>(
+        projectId,
+        "prompts",
+        inputHash,
+      );
+      if (cached?.prompts?.length) {
+        return NextResponse.json({ prompts: cached.prompts, blueprint: cached.blueprint });
+      }
+    }
+
     const { prompts, blueprint } = await runGeneratePromptsCore(name, idea, toolInput);
+    if (projectId) {
+      await setAiGenerationFirestore(projectId, "prompts", inputHash, { prompts, blueprint });
+    }
     return NextResponse.json({ prompts, blueprint });
   } catch (err) {
     console.error("[generate-prompts]", err);

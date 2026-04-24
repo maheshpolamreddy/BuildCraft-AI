@@ -404,6 +404,8 @@ function InvitePageInner() {
 
         <div className="flex gap-3">
           <button
+            data-testid="invite-accept"
+            type="button"
             onClick={() => respond("accept")}
             className="flex-1 py-4 silver-gradient text-black font-black uppercase tracking-widest text-xs rounded-2xl flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(255,255,255,0.15)] hover:shadow-[0_0_30px_rgba(255,255,255,0.25)] transition-all"
           >

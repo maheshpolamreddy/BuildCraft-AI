@@ -727,6 +727,7 @@ export default function DiscoveryHub() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <textarea
+                      data-testid="discovery-idea-input"
                       value={idea}
                       onChange={(e) => setIdea(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void runAnalysis(idea); } }}
@@ -745,6 +746,7 @@ export default function DiscoveryHub() {
                   </span>
                   <div className="flex items-center gap-2 shrink-0">
                     <button
+                      data-testid="discovery-analyze"
                       onClick={() => void runAnalysis(idea)}
                       disabled={!idea.trim() || isAnalyzing}
                       className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all duration-300 flex items-center gap-2 ${
@@ -1116,6 +1118,7 @@ export default function DiscoveryHub() {
 
                   <div className="flex flex-wrap gap-3">
                     <button
+                      data-testid="discovery-continue-architecture"
                       type="button"
                       onClick={() => router.push("/architecture")}
                       className="px-5 py-3 silver-gradient text-black font-black uppercase tracking-widest text-[10px] rounded-xl flex items-center gap-2"
@@ -1399,6 +1402,7 @@ export default function DiscoveryHub() {
                       {project.assumptions.map((a) => (
                         <div
                           key={a.id}
+                          data-testid={`discovery-assumption-${a.id}`}
                           onClick={() => toggleAssumption(a.id)}
                           className={`p-3.5 rounded-2xl border transition-all duration-300 flex gap-3 cursor-pointer group ${
                             a.accepted 
@@ -1449,6 +1453,7 @@ export default function DiscoveryHub() {
                       <p className="text-[10px] text-white/30 text-center font-light">Accept all assumptions to proceed</p>
                     )}
                     <button
+                      data-testid="discovery-accept-tools-cta"
                       disabled={!allAccepted}
                       onClick={() => router.push("/architecture")}
                       className={`w-full flex items-center justify-center gap-2 py-4 font-black uppercase tracking-[0.15em] text-[10px] transition-all duration-300 rounded-2xl ${
