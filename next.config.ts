@@ -1,13 +1,14 @@
 import type { NextConfig } from "next";
 
-const FIREBASE_PROJECT = "buildcraft-ai-d7b48";
+/** Must match NEXT_PUBLIC_FIREBASE_PROJECT_ID so /__/auth proxy hits the same Firebase project as the client SDK. */
+const FIREBASE_PROJECT =
+  process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() || "buildcraft-ai-d7b48";
 
 const nextConfig: NextConfig = {
   /**
-   * Proxy Firebase's auth handler through your own domain.
-   * This eliminates cross-origin cookie issues with getRedirectResult()
-   * because auth stays same-origin (buildcraft-omega.vercel.app/__/auth/*)
-   * instead of going through firebaseapp.com.
+   * Proxy Firebase's auth handler through your own domain when
+   * NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN is your Vercel host (not *.firebaseapp.com).
+   * Same-origin /__/auth/* avoids cross-origin issues with getRedirectResult().
    */
   async rewrites() {
     return [

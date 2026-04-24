@@ -11,5 +11,11 @@ export function getUserFacingError(err: unknown): string {
     return "Connection problem — check your network, VPN, or firewall. If the dev server was restarting, try again.";
   }
 
+  if (/^402\b|\b402\b|payment required|more credits|fewer max_tokens|can only afford/i.test(m)) {
+    return (
+      "AI credits or token limit: add balance at your provider (e.g. OpenRouter), or lower AI_MAX_COMPLETION_TOKENS in .env.local, then retry."
+    );
+  }
+
   return m;
 }

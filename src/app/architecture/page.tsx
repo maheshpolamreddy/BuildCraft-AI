@@ -1122,6 +1122,16 @@ export default function ArchitectureView() {
         throw new Error(typeof data.error === "string" ? data.error : "Analysis failed.");
       }
       setAiAnalysis(analysis);
+      const analysisPatch = { aiAnalysis: analysis };
+      patchProject(analysisPatch);
+      const stAnalysis = useStore.getState();
+      if (stAnalysis.currentUser && stAnalysis.savedProjectId && stAnalysis.project) {
+        updateProject(
+          stAnalysis.savedProjectId,
+          { ...stAnalysis.project, ...analysisPatch },
+          stAnalysis.approvedTools,
+        ).catch((err) => console.warn("[Firestore] analysis-only save failed:", err));
+      }
     } catch (err) {
       setAnalysisError(getUserFacingError(err));
       autoOrchestrateAttempted.current = false;
@@ -1133,13 +1143,17 @@ export default function ArchitectureView() {
     setAnalysisLoading(false);
 
     try {
+      const toolNames =
+        analysis.tools?.length && analysis.tools.length > 0
+          ? analysis.tools.map((t) => t.name)
+          : [];
       const res2 = await fetch("/api/generate-prompts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectName: project.name ?? "My App",
           projectIdea: project.idea ?? "",
-          tools: analysis.tools.map((t) => t.name),
+          tools: toolNames,
         }),
       });
       const data2 = await parseApiJson<Record<string, unknown>>(res2);
@@ -1181,7 +1195,76 @@ export default function ArchitectureView() {
     } finally {
       setPromptsLoading(false);
     }
-  }, [project, patchProject, setPromptsViewed]);
+  }, [project, patchProject, setPromptsViewed, currentUser, incrementVersion]);
+
+  /** Finish the plan when analysis is already in the project (e.g. prompts step failed earlier or partial save). */
+  const runPromptsOnlyFromStoredAnalysis = useCallback(async () => {
+    if (!project?.aiAnalysis) return;
+    autoOrchestrateAttempted.current = true;
+    setPromptsLoading(true);
+    setPromptsError(null);
+    const analysis = project.aiAnalysis;
+    try {
+      const toolNames =
+        analysis.tools?.length && analysis.tools.length > 0
+          ? analysis.tools.map((t) => t.name)
+          : [];
+      const res2 = await fetch("/api/generate-prompts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectName: project.name ?? "My App",
+          projectIdea: project.idea ?? "",
+          tools: toolNames,
+        }),
+      });
+      const data2 = await parseApiJson<Record<string, unknown>>(res2);
+      const prompts = data2.prompts as AiPrompt[] | undefined;
+      const blueprint = data2.blueprint as ProjectBlueprint | undefined;
+      if (!Array.isArray(prompts) || prompts.length === 0) {
+        throw new Error(
+          typeof data2.error === "string" ? data2.error : "Prompts generation failed.",
+        );
+      }
+      setAiPrompts(prompts);
+      if (blueprint && typeof blueprint === "object") {
+        setAiBlueprint(blueprint);
+      }
+      if (project.autoPlanPipelineDone) {
+        incrementVersion();
+      }
+      const partialUpdate = {
+        aiAnalysis: analysis,
+        aiPrompts: prompts as GeneratedPromptRow[],
+        aiBlueprint: blueprint as StoreProjectBlueprint | undefined,
+        autoPlanPipelineDone: true,
+      };
+      patchProject(partialUpdate);
+      setPromptsViewed(true);
+      if (currentUser) {
+        logAction(currentUser.uid, "project.updated", { action: "architecture_prompts_completed" }).catch(
+          () => {},
+        );
+      }
+      const st = useStore.getState();
+      if (st.currentUser && st.savedProjectId && st.project) {
+        updateProject(st.savedProjectId, { ...st.project, ...partialUpdate }, st.approvedTools).catch((err) =>
+          console.warn("[Firestore] prompts-only orchestration save failed:", err),
+        );
+      }
+    } catch (err) {
+      setPromptsError(getUserFacingError(err));
+      autoOrchestrateAttempted.current = false;
+    } finally {
+      setPromptsLoading(false);
+    }
+  }, [project, patchProject, setPromptsViewed, currentUser, incrementVersion]);
+
+  /** Keep latest callbacks off the auto-orchestrate effect deps (stable array length + fewer stale closures). */
+  const runFullPlanOrchestrationRef = useRef(runFullPlanOrchestration);
+  const runPromptsOnlyFromStoredAnalysisRef = useRef(runPromptsOnlyFromStoredAnalysis);
+  runFullPlanOrchestrationRef.current = runFullPlanOrchestration;
+  runPromptsOnlyFromStoredAnalysisRef.current = runPromptsOnlyFromStoredAnalysis;
 
   const generateBuildPrompts = useCallback(async () => {
     setPromptsLoading(true);
@@ -1231,30 +1314,41 @@ export default function ArchitectureView() {
     project.requirements.length >= 1 &&
     (project.idea?.trim().length ?? 0) >= 8;
 
+  const projectHasAiAnalysis = Boolean(project?.aiAnalysis);
+  const projectHasAiPrompts = Boolean(project?.aiPrompts);
+
   useEffect(() => {
     if (!requirementsReadyForOrchestration) return;
 
-    if (project?.aiAnalysis && project?.aiPrompts) {
+    if (projectHasAiAnalysis && projectHasAiPrompts) {
       // Deterministic retrieval: Data is already in the project, bypass orchestration
       return;
     }
 
-    if (project?.autoPlanPipelineDone) return;
+    // Do not gate on autoPlanPipelineDone: that flag can be true while aiPrompts failed to persist,
+    // which previously left users stuck with no AI results.
+
     if (analysisLoading || promptsLoading) return;
     if (autoOrchestrateAttempted.current) return;
 
     const t = window.setTimeout(() => {
-      void runFullPlanOrchestration();
+      const p = useStore.getState().project;
+      if (!p) return;
+      if (p.aiAnalysis && !p.aiPrompts) {
+        void runPromptsOnlyFromStoredAnalysisRef.current();
+      } else {
+        void runFullPlanOrchestrationRef.current();
+      }
     }, 450);
     return () => clearTimeout(t);
   }, [
     requirementsReadyForOrchestration,
-    project?.autoPlanPipelineDone,
+    projectHasAiAnalysis,
+    projectHasAiPrompts,
     project?.requirements?.length,
     project?.idea,
     analysisLoading,
     promptsLoading,
-    runFullPlanOrchestration,
   ]);
 
   useEffect(() => {

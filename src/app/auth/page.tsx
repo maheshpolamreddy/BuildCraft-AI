@@ -14,9 +14,10 @@ import type { EmployerProfile } from "@/store/useStore";
 import {
   signUpWithEmail,
   signInWithEmail,
+  signInWithGoogle,
+  signInWithGoogleInSameTab,
+  isAuthPopupBlockedError,
 } from "@/lib/auth";
-import { signInWithRedirect } from "firebase/auth";
-import { auth, googleProvider } from "@/lib/firebase";
 import { logAction } from "@/lib/auditLog";
 import { updateUserProfile } from "@/lib/firestore";
 import { getDeveloperProfile, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
@@ -214,12 +215,27 @@ function PlatformEntryInner() {
     setEmployerWebsite((prev) => (prev.trim() ? prev : ep.website));
   }, [step, name]);
 
-  function handleGoogleAuth() {
+  async function handleGoogleAuth() {
     if (authLoading) return;
     setAuthLoading(true);
     setAuthError(null);
-    signInWithRedirect(auth, googleProvider);
-    // Page will redirect to Google then return; AuthProvider handles getRedirectResult.
+    try {
+      const user = await signInWithGoogle();
+      setCurrentUser(user);
+      await logAction(user.uid, "auth.sign_in", { method: "google", via: "popup" });
+      userReturnedToAuth.current = false;
+      if (!asDeveloper) setRole(null);
+      setEmployerWizardOpen(false);
+    } catch (err: unknown) {
+      if (isAuthPopupBlockedError(err)) {
+        await signInWithGoogleInSameTab();
+        return;
+      }
+      const msg = err instanceof Error ? err.message : "Authentication failed.";
+      setAuthError(friendlyError(msg, err));
+    } finally {
+      setAuthLoading(false);
+    }
   }
 
   /** After choosing Developer: new users -> registration; completed profiles -> dashboard. */

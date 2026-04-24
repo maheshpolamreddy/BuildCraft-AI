@@ -43,5 +43,13 @@ export function messageForAiRouteFailure(err: unknown): string {
     return "The AI request timed out. Try again in a moment, or use a shorter description.";
   }
 
+  if (/^402\b|\b402\b|payment required|more credits|fewer max_tokens|can only afford/i.test(m)) {
+    return (
+      "Your AI provider rejected the request due to credits or token limits (HTTP 402). " +
+      "Add credits at your provider (e.g. OpenRouter → Settings → Credits), " +
+      "or set AI_MAX_COMPLETION_TOKENS lower in .env.local if you need a smaller max_tokens cap per call."
+    );
+  }
+
   return m;
 }

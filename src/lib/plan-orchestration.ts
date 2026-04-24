@@ -158,14 +158,39 @@ RULES:
 - risks: exactly 4 — one High, one or two Medium, one Low; consistent with overview.
 - Do not invent company facts beyond the description.`;
 
+/**
+ * Pulls the first complete `{ ... }` from model output. Uses brace depth + string awareness
+ * so `lastIndexOf("}")` never clips early when `}` appears inside string values or multiple objects exist.
+ */
 function extractJsonObject(raw: string): string {
-  const cleaned = raw.replace(/^```[\w]*\n?/gm, "").replace(/\n?```$/gm, "").trim();
-  const jsonStart = cleaned.indexOf("{");
-  const jsonEnd = cleaned.lastIndexOf("}");
-  if (jsonStart === -1 || jsonEnd === -1) {
+  const cleaned = raw.replace(/^```[\w]*\n?/gm, "").replace(/\n?```/gm, "").trim();
+  const start = cleaned.indexOf("{");
+  if (start === -1) {
     throw new Error("No JSON object found in model response");
   }
-  return cleaned.slice(jsonStart, jsonEnd + 1);
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (inString) {
+      if (ch === "\\") {
+        i++;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) return cleaned.slice(start, i + 1);
+    }
+  }
+  throw new Error("No complete JSON object found in model response");
 }
 
 function clipDescription(text: string): string {
@@ -207,6 +232,9 @@ Return ONE JSON object with overview, tools, and risks as specified.`;
   }
   if (!Array.isArray(parsed.tools) || !Array.isArray(parsed.risks)) {
     throw new Error("Analysis missing tools or risks. Please try again.");
+  }
+  if (parsed.tools.length === 0) {
+    throw new Error("Analysis returned no tools. Please try again.");
   }
 
   return {
@@ -278,10 +306,16 @@ Produce ONLY the tools and risks JSON.`;
     throw new Error("Analysis step 2 returned invalid JSON. Please try again.");
   }
 
+  const tools = Array.isArray(phase2.tools) ? phase2.tools : [];
+  const risks = Array.isArray(phase2.risks) ? phase2.risks : [];
+  if (tools.length === 0) {
+    throw new Error("Analysis step 2 returned no tools. Please try again.");
+  }
+
   return {
     overview: phase1.overview,
-    tools: Array.isArray(phase2.tools) ? phase2.tools : [],
-    risks: Array.isArray(phase2.risks) ? phase2.risks : [],
+    tools,
+    risks,
   };
 }
 
@@ -408,7 +442,14 @@ export async function runGeneratePromptsCore(
     throw new Error(NIM_KEY_ERROR);
   }
 
-  const toolStack = Array.isArray(tools) ? tools.join(", ") : tools || "Next.js, Supabase, Tailwind CSS, TypeScript";
+  const defaultStack = "Next.js, Supabase, Tailwind CSS, TypeScript";
+  const toolStack = Array.isArray(tools)
+    ? tools.length > 0
+      ? tools.join(", ")
+      : defaultStack
+    : typeof tools === "string" && tools.trim()
+      ? tools
+      : defaultStack;
 
   const cacheKey = await generateCacheKey("prompts", projectName, projectIdea, toolStack);
   const cached = await getCachedOrchestration<{ prompts: GeneratedPromptRow[]; blueprint: ProjectBlueprint }>(cacheKey);

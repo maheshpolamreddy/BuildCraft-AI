@@ -1396,7 +1396,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
 
         if (i === DEPLOY_STAGES.length - 1) {
           setDeploying(false);
-          setDeployLogs(prev => [...prev, "[deploy] Live URL generated: buildcraft-eight.vercel.app", "[system] Deployment stable 100%"]);
+          setDeployLogs(prev => [...prev, "[deploy] Live URL generated: buildcraft-omega.vercel.app", "[system] Deployment stable 100%"]);
           if (currentUser) logAction(currentUser.uid, "project.updated", { 
             action: "deployed", 
             version,
@@ -3063,9 +3063,9 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                   <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-white/50 mb-4">Environments</h3>
                   <div className="space-y-3">
                     {[
-                      { env: "Production",  url: "buildcraft-eight.vercel.app", status: deployStage >= DEPLOY_STAGES.length ? "live" : "pending", branch: "main" },
-                      { env: "Staging",     url: "staging.buildcraft-eight.vercel.app", status: "live", branch: "develop" },
-                      { env: "Preview",     url: "pr-preview.buildcraft-eight.vercel.app", status: "building", branch: "feature/*" },
+                      { env: "Production",  url: "buildcraft-omega.vercel.app", status: deployStage >= DEPLOY_STAGES.length ? "live" : "pending", branch: "main" },
+                      { env: "Staging",     url: "staging.buildcraft-omega.vercel.app", status: "live", branch: "develop" },
+                      { env: "Preview",     url: "pr-preview.buildcraft-omega.vercel.app", status: "building", branch: "feature/*" },
                     ].map(e => (
                       <div key={e.env} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
                         <div>
