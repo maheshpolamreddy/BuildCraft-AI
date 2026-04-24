@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local helper (CommonJS); not part of the Next app bundle.
+    "sync-env.js",
   ]),
 ]);
 

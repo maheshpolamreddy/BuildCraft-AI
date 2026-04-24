@@ -178,7 +178,8 @@ export function isFirestoreCredentialsError(err: unknown): boolean {
   );
 }
 
-/** Use for JSON `error` fields — always user-safe. */
+/** Use for JSON `error` fields — always user-safe. (Callers may pass a caught error for API symmetry; it is not logged here.) */
 export function firebaseAdminUnavailableMessage(_err?: unknown): string {
+  void _err;
   return SERVER_CONFIG_USER_FACING_ERROR;
 }
