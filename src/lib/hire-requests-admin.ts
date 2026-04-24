@@ -1,9 +1,8 @@
-// Server-only hire requests and chat bootstrap via Firebase Admin (no browser Firebase session on Vercel).
+// Server-only hire request reads via Firebase Admin (no browser session on Vercel).
 
 import { adminDb } from "@/lib/firebase-admin";
 import type { HireRequest } from "@/lib/hireRequests";
-import type { ChatRoom } from "@/lib/chat";
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { Timestamp } from "firebase-admin/firestore";
 
 export async function getHireRequestAdmin(token: string): Promise<HireRequest | null> {
   const ref = adminDb.collection("hireRequests").doc(token);
@@ -19,29 +18,4 @@ export async function getHireRequestAdmin(token: string): Promise<HireRequest | 
     }
   }
   return data as HireRequest;
-}
-
-export async function respondToHireRequestAdmin(
-  token: string,
-  status: "accepted" | "rejected",
-): Promise<void> {
-  await adminDb.collection("hireRequests").doc(token).update({
-    status,
-    respondedAt: FieldValue.serverTimestamp(),
-  });
-}
-
-export async function createOrGetChatAdmin(
-  data: Omit<ChatRoom, "lastMessage" | "lastMessageAt" | "lastSenderUid" | "createdAt">,
-): Promise<void> {
-  const ref = adminDb.collection("chats").doc(data.chatId);
-  const snap = await ref.get();
-  if (snap.exists) return;
-  await ref.set({
-    ...data,
-    lastMessage: "",
-    lastMessageAt: FieldValue.serverTimestamp(),
-    lastSenderUid: "",
-    createdAt: FieldValue.serverTimestamp(),
-  });
 }

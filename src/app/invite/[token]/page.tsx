@@ -106,7 +106,7 @@ function InvitePageInner() {
         console.warn("[invite] post-accept chat:", e);
       }
       if (req.projectId) {
-        router.replace(`/developer/workspace/${encodeURIComponent(req.projectId)}?tab=chat`);
+        router.replace(`/workspace/${encodeURIComponent(req.projectId)}?tab=chat`);
       } else {
         router.push("/discovery");
       }

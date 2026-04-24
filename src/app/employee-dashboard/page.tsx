@@ -786,7 +786,16 @@ function EmployeeDashboardInner() {
         body: JSON.stringify({ token, action }),
       });
       const { ok, data } = await parseJsonResponse(res);
-      if (!ok) throw new Error(String(data?.error || "Failed to respond to invitation"));
+      if (!ok) {
+        const raw = String(data?.error || "").trim();
+        const looksLikeServerConfig =
+          /firebase admin|firestore|credentials|service account|not configured|FIREBASE_/i.test(raw);
+        throw new Error(
+          looksLikeServerConfig
+            ? "Unable to accept offer right now. Please try again later or contact support if this continues."
+            : raw || "Unable to accept offer. Please try again.",
+        );
+      }
 
       if (action === "accept") {
         const pid = String(
@@ -816,7 +825,7 @@ function EmployeeDashboardInner() {
       });
       setSavedProjectId(pid);
     }
-    router.push(`/developer/workspace/${encodeURIComponent(pid)}`);
+    router.push(`/workspace/${encodeURIComponent(pid)}`);
   }
 
   function renderOpportunitiesProjectCard(assignment: HireRequest) {

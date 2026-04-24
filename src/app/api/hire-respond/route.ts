@@ -1,9 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  createOrGetChatAdmin,
-  getHireRequestAdmin,
-  respondToHireRequestAdmin,
-} from "@/lib/hire-requests-admin";
+import { getHireRequestAdmin } from "@/lib/hire-requests-admin";
+import type { HireRequest } from "@/lib/hireRequests";
 import { sendHireAccepted, transactionalEmailConfigured } from "@/lib/email";
 import {
   adminDb,
@@ -12,8 +9,9 @@ import {
   isFirestoreCredentialsError,
 } from "@/lib/firebase-admin";
 import type { Firestore } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
+import { initProjectExecutionAdmin } from "@/lib/project-execution-admin";
 
-/** Prefer deployment host so server-side fetch() works on Vercel (localhost would fail). */
 function appBaseUrl(): string {
   const v = process.env.VERCEL_URL?.trim();
   if (v) return v.startsWith("http") ? v : `https://${v}`;
@@ -24,10 +22,6 @@ function normalizeProjectNameKey(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-/**
- * When hire was created without savedProjectId, resolve the Firestore `projects` doc id by creator + name
- * so acceptance still links developerUid, execution, and dashboard listeners.
- */
 async function resolveProjectDocIdForHire(
   adb: Firestore,
   creatorUid: string,
@@ -56,6 +50,120 @@ async function resolveProjectDocIdForHire(
   }
 }
 
+async function runRejectTransaction(token: string): Promise<void> {
+  await adminDb.runTransaction(async (t) => {
+    const hireRef = adminDb.collection("hireRequests").doc(token);
+    const hireSnap = await t.get(hireRef);
+    if (!hireSnap.exists) {
+      throw Object.assign(new Error("Invite not found"), { code: "NOT_FOUND" });
+    }
+    const st = hireSnap.data()!.status as string;
+    if (st !== "pending") {
+      throw Object.assign(new Error(`This invite is already ${st}`), { code: "CONFLICT" });
+    }
+    t.update(hireRef, {
+      status: "rejected",
+      respondedAt: FieldValue.serverTimestamp(),
+    });
+  });
+}
+
+/**
+ * Single transaction: accept invite, assign developer on project + workspace, create chat if missing.
+ * No partial accept: if this throws, Firestore stays unchanged.
+ */
+async function runAcceptTransaction(
+  token: string,
+  hire: HireRequest,
+  projectDocId: string,
+): Promise<void> {
+  await adminDb.runTransaction(async (t) => {
+    const hireRef = adminDb.collection("hireRequests").doc(token);
+    const hireSnap = await t.get(hireRef);
+    if (!hireSnap.exists) {
+      throw Object.assign(new Error("Invite not found"), { code: "NOT_FOUND" });
+    }
+    const hr = hireSnap.data()!;
+    if (hr.status !== "pending") {
+      throw Object.assign(new Error(`This invite is already ${hr.status}`), { code: "CONFLICT" });
+    }
+
+    const projRef = adminDb.collection("projects").doc(projectDocId);
+    const projSnap = await t.get(projRef);
+    if (!projSnap.exists) {
+      throw Object.assign(new Error("Project not found"), { code: "NOT_FOUND" });
+    }
+    const projData = projSnap.data()!;
+    const ownerUid = typeof projData.uid === "string" ? projData.uid : "";
+    if (ownerUid && ownerUid !== hire.creatorUid) {
+      throw Object.assign(new Error("Project creator does not match this invite"), { code: "FORBIDDEN" });
+    }
+
+    const chatRef = adminDb.collection("chats").doc(token);
+    const chatSnap = await t.get(chatRef);
+    const wsRef = adminDb.collection("projectWorkspaces").doc(projectDocId);
+    const wsSnap = await t.get(wsRef);
+
+    t.update(hireRef, {
+      status: "accepted",
+      respondedAt: FieldValue.serverTimestamp(),
+      projectId: projectDocId,
+    });
+
+    t.update(projRef, { developerUid: hire.developerUid });
+
+    const creatorUidForWorkspace = ownerUid || hire.creatorUid;
+
+    if (wsSnap.exists) {
+      t.update(wsRef, {
+        developerUid: hire.developerUid,
+        updatedAt: Date.now(),
+      });
+    } else {
+      t.set(wsRef, {
+        projectId: projectDocId,
+        uid: creatorUidForWorkspace,
+        developerUid: hire.developerUid,
+        milestones: [],
+        updatedAt: Date.now(),
+      });
+    }
+
+    if (!chatSnap.exists) {
+      t.set(chatRef, {
+        chatId: token,
+        projectName: hire.projectName,
+        creatorUid: hire.creatorUid,
+        creatorName: hire.creatorName,
+        creatorEmail: hire.creatorEmail,
+        developerUid: hire.developerUid,
+        developerName: hire.developerName,
+        developerEmail: hire.developerEmail,
+        lastMessage: "",
+        lastMessageAt: FieldValue.serverTimestamp(),
+        lastSenderUid: "",
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    }
+  });
+}
+
+function mapTransactionError(err: unknown): NextResponse {
+  const code =
+    typeof err === "object" && err !== null && "code" in err ? String((err as { code: string }).code) : "";
+  const msg = err instanceof Error ? err.message : "Unable to accept offer. Please try again.";
+  if (code === "NOT_FOUND") {
+    return NextResponse.json({ error: msg }, { status: 404 });
+  }
+  if (code === "CONFLICT") {
+    return NextResponse.json({ error: msg }, { status: 409 });
+  }
+  if (code === "FORBIDDEN") {
+    return NextResponse.json({ error: msg }, { status: 403 });
+  }
+  return NextResponse.json({ error: "Unable to accept offer. Please try again." }, { status: 500 });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { token, action } = await req.json();
@@ -64,127 +172,104 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });
     }
 
-    const request = await getHireRequestAdmin(token);
-    if (!request) {
+    const requestRow = await getHireRequestAdmin(token);
+    if (!requestRow) {
       return NextResponse.json({ error: "Invite not found" }, { status: 404 });
     }
-    if (request.status !== "pending") {
-      return NextResponse.json({ error: `This invite is already ${request.status}` }, { status: 409 });
+    if (requestRow.status !== "pending") {
+      return NextResponse.json({ error: `This invite is already ${requestRow.status}` }, { status: 409 });
     }
 
     if (action === "reject") {
-      await respondToHireRequestAdmin(token, "rejected");
+      try {
+        await runRejectTransaction(token);
+      } catch (err) {
+        return mapTransactionError(err);
+      }
       return NextResponse.json({ success: true, status: "rejected" });
     }
 
-    // ── Accept flow ────────────────────────────────────────────────────────────
     if (!transactionalEmailConfigured()) {
       return NextResponse.json(
         {
           error:
-            "Email is not configured. Set GMAIL_USER + GMAIL_APP_PASSWORD (sends to any address as BUILDCRAFT AI), or BREVO_* / RESEND_* — see .env.example.",
+            "Email is not configured. Set GMAIL_USER + GMAIL_APP_PASSWORD, or BREVO_* / RESEND_* — see .env.example.",
           hint:
-            "Local: use buildcraft/.env.local and restart dev. Vercel: enable these variables for Preview and Development, not only Production, then redeploy.",
+            "Vercel: add these variables for Production (and Preview if needed), then redeploy.",
         },
         { status: 503 },
       );
     }
 
-    await respondToHireRequestAdmin(token, "accepted");
-
-    let effectiveProjectId = request.projectId?.trim() || null;
+    let effectiveProjectId = requestRow.projectId?.trim() || null;
     if (!effectiveProjectId) {
-      const resolved = await resolveProjectDocIdForHire(
+      effectiveProjectId = await resolveProjectDocIdForHire(
         adminDb,
-        request.creatorUid,
-        request.projectName,
+        requestRow.creatorUid,
+        requestRow.projectName,
       );
-      if (resolved) {
-        effectiveProjectId = resolved;
-        try {
-          await adminDb.collection("hireRequests").doc(token).update({ projectId: resolved });
-        } catch (e) {
-          console.warn("[hire-respond] backfill projectId on hireRequests:", e);
-        }
-      }
     }
 
-    // 1. Send confirmation email to project creator
+    if (!effectiveProjectId) {
+      return NextResponse.json(
+        {
+          error:
+            "Could not link this invite to a saved project. Ask the client to open Project Room and re-send the hire invite so the project ID is attached.",
+        },
+        { status: 409 },
+      );
+    }
+
+    try {
+      await runAcceptTransaction(token, requestRow, effectiveProjectId);
+    } catch (err) {
+      console.error("[hire-respond] accept transaction:", err);
+      return mapTransactionError(err);
+    }
+
     const emailResult = await sendHireAccepted({
-      creatorEmail:  request.creatorEmail,
-      creatorName:   request.creatorName,
-      developerName: request.developerName,
-      projectName:   request.projectName,
-      dashboardUrl:  `${appBaseUrl()}/project-room?tab=chat&chat=${encodeURIComponent(token)}`,
+      creatorEmail: requestRow.creatorEmail,
+      creatorName: requestRow.creatorName,
+      developerName: requestRow.developerName,
+      projectName: requestRow.projectName,
+      dashboardUrl: `${appBaseUrl()}/project-room?tab=chat&chat=${encodeURIComponent(token)}`,
     });
     if (!emailResult.ok) {
       console.error("[hire-respond] sendHireAccepted failed:", emailResult.error);
     }
 
-    // 2. Create chat room (chatId = token) — Admin SDK so Vercel isn’t blocked by client API key / auth.
-    await createOrGetChatAdmin({
-      chatId:         token,
-      projectName:    request.projectName,
-      creatorUid:     request.creatorUid,
-      creatorName:    request.creatorName,
-      creatorEmail:   request.creatorEmail,
-      developerUid:   request.developerUid,
-      developerName:  request.developerName,
-      developerEmail: request.developerEmail,
-    });
-
-    // 3. Authorize developer on project and workspace via Admin SDK
-    if (effectiveProjectId) {
-      try {
-        const projRef = adminDb.collection("projects").doc(effectiveProjectId);
-        const workRef = adminDb.collection("projectWorkspaces").doc(effectiveProjectId);
-        // We use update and ignore failures (e.g. if the workspace doesn't exist yet)
-        await Promise.allSettled([
-          projRef.update({ developerUid: request.developerUid }),
-          workRef.update({ developerUid: request.developerUid })
-        ]);
-      } catch (e) {
-        console.warn("[hire-respond] admin authorization error:", e);
-      }
+    try {
+      await initProjectExecutionAdmin({
+        projectId: effectiveProjectId,
+        savedProjectId: effectiveProjectId,
+        projectName: requestRow.projectName,
+        creatorUid: requestRow.creatorUid,
+        developerUid: requestRow.developerUid,
+        hireToken: token,
+      });
+    } catch (e) {
+      console.warn("[hire-respond] project execution init error:", e);
     }
 
-    // 4. Initialize project execution tracking (fire and forget)
-    if (effectiveProjectId) {
-      try {
-        const { initProjectExecution } = await import("@/lib/project-execution");
-        await initProjectExecution({
-          projectId: effectiveProjectId,
-          savedProjectId: effectiveProjectId,
-          projectName: request.projectName,
-          creatorUid: request.creatorUid,
-          developerUid: request.developerUid,
-          hireToken: token,
-        });
-      } catch (e) {
-        console.warn("[hire-respond] project execution init error:", e);
-      }
-    }
-
-    // 5. Trigger PRD generation (fire and forget)
     fetch(`${appBaseUrl()}/api/generate-prd`, {
-      method:  "POST",
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({
-        projectName:    request.projectName,
-        projectIdea:    request.projectIdea,
-        projectSummary: request.projectSummary,
-        techStack:      [],
-        creatorUid:     request.creatorUid,
-        developerUid:   request.developerUid,
-        hireToken:      token,
+      body: JSON.stringify({
+        projectName: requestRow.projectName,
+        projectIdea: requestRow.projectIdea,
+        projectSummary: requestRow.projectSummary,
+        techStack: [],
+        creatorUid: requestRow.creatorUid,
+        developerUid: requestRow.developerUid,
+        hireToken: token,
       }),
-    }).catch(err => console.error("[hire-respond] PRD generation failed:", err));
+    }).catch((err) => console.error("[hire-respond] PRD generation failed:", err));
 
     return NextResponse.json({
       success: true,
       status: "accepted",
       chatId: token,
-      projectId: effectiveProjectId ?? null,
+      projectId: effectiveProjectId,
     });
   } catch (err) {
     console.error("[hire-respond]", err);
@@ -200,8 +285,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "Database permission denied. Deploy updated Firestore rules (chat room after accept), then try again.",
-          hint: "From the buildcraft folder: npm run deploy:firestore — or paste firestore.rules into the Firebase console and Publish.",
+            "Database permission denied. Deploy updated Firestore rules, then try again.",
         },
         { status: 503 },
       );
@@ -211,7 +295,7 @@ export async function POST(req: NextRequest) {
         error:
           process.env.NODE_ENV === "development"
             ? `Internal server error: ${message}`
-            : "Something went wrong accepting this invite. Confirm Firebase Admin (FIREBASE_SERVICE_ACCOUNT) is set on Vercel, email is configured, then redeploy.",
+            : "Unable to accept offer. Please try again.",
       },
       { status: 500 },
     );

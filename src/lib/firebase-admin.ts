@@ -1,105 +1,167 @@
-import * as admin from "firebase-admin";
-import type { Auth } from "firebase-admin/auth";
-import type { Firestore } from "firebase-admin/firestore";
+import { cert, getApps, initializeApp, applicationDefault } from "firebase-admin/app";
+import { getAuth, type Auth } from "firebase-admin/auth";
+import { getFirestore, type Firestore } from "firebase-admin/firestore";
 
-let initAttempted = false;
-let dbInstance: Firestore | null = null;
-let authInstance: Auth | null = null;
-
-/** Thrown when Admin SDK cannot start (missing/invalid env). API routes map this to HTTP 503. */
 export class FirebaseAdminConfigurationError extends Error {
-  readonly statusCode = 503 as const;
-  constructor() {
-    super(
-      "Firebase Admin is not configured. Set FIREBASE_SERVICE_ACCOUNT (JSON from a service account), or use Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS or gcloud auth application-default login).",
-    );
+  constructor(message: string) {
+    super(message);
     this.name = "FirebaseAdminConfigurationError";
   }
 }
 
-const FIRESTORE_CRED_HINT =
-  "Firebase Admin cannot access Firestore. Set FIREBASE_SERVICE_ACCOUNT (service account JSON in env) or valid Application Default Credentials.";
+/** Normalize private key from env (Vercel often stores \n as literal backslash-n). */
+function normalizeServiceAccountPrivateKey(raw: string): string {
+  let k = raw.trim();
+  if (k.startsWith('"') && k.endsWith('"')) k = k.slice(1, -1);
+  k = k.replace(/\\n/g, "\n");
+  return k;
+}
 
-/** True when Admin/Firestore failed because credentials are missing or invalid (common locally). */
+function resolveProjectIdForAdmin(): string | undefined {
+  const explicit = process.env.FIREBASE_PROJECT_ID?.trim();
+  if (explicit) return explicit;
+  return process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() || undefined;
+}
+
+function tryInitFromServiceAccountJson(): boolean {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT?.trim();
+  if (!raw) return false;
+  try {
+    const parsed = JSON.parse(raw) as { project_id?: string; private_key?: string };
+    if (parsed.private_key) {
+      parsed.private_key = normalizeServiceAccountPrivateKey(String(parsed.private_key));
+    }
+    initializeApp({ credential: cert(parsed as Parameters<typeof cert>[0]) });
+    return true;
+  } catch (e) {
+    console.error("Firebase Admin: FIREBASE_SERVICE_ACCOUNT JSON parse/init failed:", e);
+    return false;
+  }
+}
+
+function tryInitFromSplitEnv(): boolean {
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL?.trim();
+  const privateKeyRaw = process.env.FIREBASE_PRIVATE_KEY?.trim();
+  if (!clientEmail || !privateKeyRaw) return false;
+  const projectId = resolveProjectIdForAdmin();
+  if (!projectId) {
+    console.warn(
+      "Firebase Admin: FIREBASE_CLIENT_EMAIL and FIREBASE_PRIVATE_KEY are set but FIREBASE_PROJECT_ID (or NEXT_PUBLIC_FIREBASE_PROJECT_ID) is missing."
+    );
+    return false;
+  }
+  try {
+    const privateKey = normalizeServiceAccountPrivateKey(privateKeyRaw);
+    initializeApp({
+      credential: cert({
+        projectId,
+        clientEmail,
+        privateKey,
+      }),
+    });
+    return true;
+  } catch (e) {
+    console.error("Firebase Admin: split env (CLIENT_EMAIL/PRIVATE_KEY) init failed:", e);
+    return false;
+  }
+}
+
+function tryInitApplicationDefault(): boolean {
+  try {
+    initializeApp({ credential: applicationDefault() });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensureFirebaseAdminApp() {
+  if (getApps().length > 0) return;
+
+  if (tryInitFromServiceAccountJson()) return;
+  if (tryInitFromSplitEnv()) return;
+  if (tryInitApplicationDefault()) return;
+
+  throw new FirebaseAdminConfigurationError(
+    "Firebase Admin is not configured. Set FIREBASE_SERVICE_ACCOUNT (JSON), or FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY (private key with \\n for newlines), or use gcloud application-default credentials locally."
+  );
+}
+
+export const CONFIG_HINT =
+  "Set FIREBASE_SERVICE_ACCOUNT (service account JSON), or FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY on the server (Vercel env).";
+
+export const FIRESTORE_CRED_HINT =
+  "Firebase Admin cannot access Firestore. Set FIREBASE_SERVICE_ACCOUNT or FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY (service account JSON or split vars in env), or valid Application Default Credentials.";
+
+let adminDbSingleton: Firestore | null = null;
+
+function getAdminDbInternal(): Firestore {
+  ensureFirebaseAdminApp();
+  if (!adminDbSingleton) adminDbSingleton = getFirestore();
+  return adminDbSingleton;
+}
+
+/** Lazy Firestore instance for API routes (same as getAdminDb()). */
+export const adminDb = new Proxy({} as Firestore, {
+  get(_target, prop, receiver) {
+    const db = getAdminDbInternal();
+    const value = Reflect.get(db as object, prop, receiver);
+    if (typeof value === "function") {
+      return (value as (...a: unknown[]) => unknown).bind(db);
+    }
+    return value;
+  },
+});
+
 export function isFirestoreCredentialsError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const m = err.message;
+  if (err instanceof FirebaseAdminConfigurationError) return true;
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: string; message?: string };
+  const code = e.code ? String(e.code).toLowerCase() : "";
+  if (code === "app/invalid-credential" || code === "unauthenticated" || code === "invalid_grant") {
+    return true;
+  }
+  const msg = String(e.message || "").toLowerCase();
   return (
-    m.includes("Could not load the default credentials") ||
-    m.includes("Could not refresh access token") ||
-    m.includes("UNAUTHENTICATED") ||
-    m.includes("invalid authentication credentials")
+    msg.includes("could not load the default credentials") ||
+    msg.includes("application default credentials") ||
+    msg.includes("invalid_grant") ||
+    (msg.includes("private_key") && msg.includes("invalid")) ||
+    (msg.includes("service account") && msg.includes("credential")) ||
+    (msg.includes("failed to parse") && msg.includes("private key"))
   );
 }
 
 export function firebaseAdminUnavailableMessage(err: unknown): string {
   if (err instanceof FirebaseAdminConfigurationError) return err.message;
   if (isFirestoreCredentialsError(err)) return FIRESTORE_CRED_HINT;
-  return err instanceof Error ? err.message : "Service unavailable";
+  return FIRESTORE_CRED_HINT;
 }
 
-/** Initializes the default app once; throws if configuration is missing or invalid. */
-function ensureFirebaseAdminApp(): admin.app.App {
-  if (admin.apps.length > 0) {
-    return admin.app();
-  }
-  if (initAttempted) {
-    throw new FirebaseAdminConfigurationError();
-  }
-  initAttempted = true;
-  try {
-    const raw = process.env.FIREBASE_SERVICE_ACCOUNT?.trim();
-    if (raw) {
-      const parsed = JSON.parse(raw) as admin.ServiceAccount;
-      admin.initializeApp({
-        credential: admin.credential.cert(parsed),
-      });
-      return admin.app();
-    }
-    const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim();
-    admin.initializeApp({
-      credential: admin.credential.applicationDefault(),
-      ...(projectId ? { projectId } : {}),
-    });
-    return admin.app();
-  } catch (err) {
-    console.warn("Firebase Admin init error:", err);
-    throw new FirebaseAdminConfigurationError();
-  }
-}
+let adminAuthSingleton: Auth | null = null;
 
-function getDb(): Firestore {
+function getAdminAuthInternal(): Auth {
   ensureFirebaseAdminApp();
-  dbInstance ??= admin.firestore();
-  return dbInstance;
+  if (!adminAuthSingleton) adminAuthSingleton = getAuth();
+  return adminAuthSingleton;
 }
 
-function getAuth(): Auth {
-  ensureFirebaseAdminApp();
-  authInstance ??= admin.auth();
-  return authInstance;
-}
-
-/**
- * Lazy Firestore handle so importing this module never throws when Admin is
- * misconfigured — callers get a clear error on first use instead of a boot-time 500.
- */
-export const adminDb = new Proxy({} as Firestore, {
-  get(_target, prop) {
-    const db = getDb();
-    const value = Reflect.get(db as object, prop, db);
-    return typeof value === "function"
-      ? (value as (...args: unknown[]) => unknown).bind(db)
-      : value;
-  },
-});
-
+/** Lazy Auth instance (verifyIdToken, etc.). */
 export const adminAuth = new Proxy({} as Auth, {
-  get(_target, prop) {
-    const auth = getAuth();
-    const value = Reflect.get(auth as object, prop, auth);
-    return typeof value === "function"
-      ? (value as (...args: unknown[]) => unknown).bind(auth)
-      : value;
+  get(_target, prop, receiver) {
+    const auth = getAdminAuthInternal();
+    const value = Reflect.get(auth as object, prop, receiver);
+    if (typeof value === "function") {
+      return (value as (...a: unknown[]) => unknown).bind(auth);
+    }
+    return value;
   },
 });
+
+export function getAdminAuth(): Auth {
+  return getAdminAuthInternal();
+}
+
+export function getAdminDb(): Firestore {
+  return getAdminDbInternal();
+}
