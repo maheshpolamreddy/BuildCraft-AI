@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getHireRequest, respondToHireRequest } from "@/lib/hireRequests";
+import {
+  createOrGetChatAdmin,
+  getHireRequestAdmin,
+  respondToHireRequestAdmin,
+} from "@/lib/hire-requests-admin";
 import { sendHireAccepted, transactionalEmailConfigured } from "@/lib/email";
-import { createOrGetChat } from "@/lib/chat";
 import {
   adminDb,
   FirebaseAdminConfigurationError,
@@ -61,7 +64,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid request" }, { status: 400 });
     }
 
-    const request = await getHireRequest(token);
+    const request = await getHireRequestAdmin(token);
     if (!request) {
       return NextResponse.json({ error: "Invite not found" }, { status: 404 });
     }
@@ -70,7 +73,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "reject") {
-      await respondToHireRequest(token, "rejected");
+      await respondToHireRequestAdmin(token, "rejected");
       return NextResponse.json({ success: true, status: "rejected" });
     }
 
@@ -87,7 +90,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await respondToHireRequest(token, "accepted");
+    await respondToHireRequestAdmin(token, "accepted");
 
     let effectiveProjectId = request.projectId?.trim() || null;
     if (!effectiveProjectId) {
@@ -118,8 +121,8 @@ export async function POST(req: NextRequest) {
       console.error("[hire-respond] sendHireAccepted failed:", emailResult.error);
     }
 
-    // 2. Create chat room (chatId = token)
-    await createOrGetChat({
+    // 2. Create chat room (chatId = token) — Admin SDK so Vercel isn’t blocked by client API key / auth.
+    await createOrGetChatAdmin({
       chatId:         token,
       projectName:    request.projectName,
       creatorUid:     request.creatorUid,
@@ -205,8 +208,10 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json(
       {
-        error: "Internal server error",
-        hint: process.env.NODE_ENV === "development" ? message : undefined,
+        error:
+          process.env.NODE_ENV === "development"
+            ? `Internal server error: ${message}`
+            : "Something went wrong accepting this invite. Confirm Firebase Admin (FIREBASE_SERVICE_ACCOUNT) is set on Vercel, email is configured, then redeploy.",
       },
       { status: 500 },
     );
