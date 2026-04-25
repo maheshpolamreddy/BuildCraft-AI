@@ -1,6 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useState, type RefObject } from "react";
+import { usePathname } from "next/navigation";
+import { ReactLenis, useLenis } from "lenis/react";
+import type { LenisOptions } from "lenis";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type RefObject } from "react";
 
 export type ScrollRailMetrics = { pctTop: number; pctHeight: number; scrollable: boolean };
 
@@ -123,7 +126,7 @@ export function ScrollGlowRail({
         />
         {metrics.scrollable ? (
           <div
-            className={`absolute left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-gradient-to-b ${thumbGradient} shadow-[0_0_16px_rgba(99,102,241,0.75),0_0_28px_rgba(34,211,238,0.25)] transition-[top,height] duration-150 ease-out`}
+            className={`absolute left-1/2 w-[3px] -translate-x-1/2 rounded-full bg-gradient-to-b ${thumbGradient} shadow-[0_0_16px_rgba(99,102,241,0.75),0_0_28px_rgba(34,211,238,0.25)]`}
             style={{ top: `${metrics.pctTop}%`, height: `${metrics.pctHeight}%` }}
           />
         ) : null}
@@ -149,4 +152,83 @@ export function DocumentScrollGlowRail() {
       </div>
     </div>
   );
+}
+
+function subscribeReducedMotion(onChange: () => void) {
+  const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+}
+
+function getReducedMotionSnapshot() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function getReducedMotionServerSnapshot() {
+  return false;
+}
+
+const lenisOptions: LenisOptions = {
+  autoRaf: true,
+  smoothWheel: true,
+  syncTouch: false,
+  lerp: 0.08,
+  wheelMultiplier: 0.85,
+  touchMultiplier: 1.6,
+  anchors: true,
+  infinite: false,
+};
+
+/**
+ * Smoothes main-document wheel scroll. Respects `prefers-reduced-motion`. Nested
+ * scroll areas can use `data-lenis-prevent` on a wrapper (see Lenis docs).
+ */
+export function SmoothScrollProvider({ children }: { children: React.ReactNode }) {
+  const reduceMotion = useSyncExternalStore(
+    subscribeReducedMotion,
+    getReducedMotionSnapshot,
+    getReducedMotionServerSnapshot,
+  );
+
+  if (reduceMotion) {
+    return <>{children}</>;
+  }
+
+  return (
+    <ReactLenis root options={lenisOptions}>
+      {children}
+    </ReactLenis>
+  );
+}
+
+/** Scroll to top on client-side path changes (works with and without Lenis). */
+export function ScrollToTopOnRoute() {
+  const pathname = usePathname();
+  const lenis = useLenis();
+  const first = useRef(true);
+
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    if (lenis) {
+      lenis.scrollTo(0, { immediate: true });
+    } else {
+      window.scrollTo(0, 0);
+    }
+  }, [pathname, lenis]);
+
+  return null;
+}
+
+export function useScrollToPageTop() {
+  const lenis = useLenis();
+  return useCallback(() => {
+    if (lenis) {
+      lenis.scrollTo(0, { lerp: 0.1 });
+      return;
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [lenis]);
 }

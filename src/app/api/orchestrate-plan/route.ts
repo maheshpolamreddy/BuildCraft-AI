@@ -1,12 +1,17 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
+import { NextRequest } from "next/server";
 import { readJsonBody } from "@/lib/read-json-body";
-import { runFullPlanOrchestration } from "@/lib/plan-orchestration";
-import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
+import { buildFailsafeProjectAnalysis, buildFailsafePromptPack } from "@/lib/ai-failsafe";
+import { ensureValidAiResponse } from "@/lib/ai-guaranteed-response";
+import { scheduleBackgroundRecovery } from "@/lib/ai-recovery-probe";
+import {
+  runFullPlanOrchestration,
+  type ProjectAnalysis,
+  type ProjectBlueprint,
+  type GeneratedPromptRow,
+} from "@/lib/plan-orchestration";
+import { aiSuccessJson } from "@/lib/ai-response-envelope";
 
-/**
- * Single server invocation: architecture analysis (2 LLM phases) + build prompts (1 LLM call).
- * Avoids chained client requests and cold starts between /analyze-project and /generate-prompts.
- */
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
@@ -16,19 +21,39 @@ export async function POST(req: NextRequest) {
   const b = parsed.body as Record<string, unknown>;
   const name = (typeof b.projectName === "string" ? b.projectName : "My App").trim();
   const idea = (typeof b.projectIdea === "string" ? b.projectIdea : "").trim();
+  const projectId =
+    typeof b.projectId === "string" && b.projectId.trim() ? b.projectId.trim() : undefined;
+
+  const ppF = buildFailsafePromptPack(name);
+  const failPack = {
+    analysis: buildFailsafeProjectAnalysis(name, idea),
+    prompts: ppF.prompts,
+    blueprint: ppF.blueprint,
+  };
 
   try {
     const { analysis, prompts, blueprint } = await runFullPlanOrchestration(name, idea);
-    return NextResponse.json({
-      analysis,
-      prompts,
-      blueprint,
-    });
-  } catch (err) {
-    console.error("[orchestrate-plan]", err);
-    return NextResponse.json(
-      { error: messageForAiRouteFailure(err) },
-      { status: httpStatusForAiFailure(err) },
+    const out = {
+      analysis: ensureValidAiResponse<ProjectAnalysis>(
+        analysis,
+        failPack.analysis,
+        (a) => Boolean(a?.overview?.summary) && Array.isArray(a?.tools) && a.tools.length > 0,
+      ),
+      prompts: ensureValidAiResponse<GeneratedPromptRow[]>(prompts, failPack.prompts, (p) => Array.isArray(p) && p.length > 0),
+      blueprint: ensureValidAiResponse<ProjectBlueprint>(blueprint, failPack.blueprint, (bl) => Array.isArray(bl?.pages) && bl.pages.length > 0),
+    };
+    scheduleBackgroundRecovery(after, { name, idea, projectId });
+    return aiSuccessJson(out, "ai");
+  } catch {
+    console.error("[orchestrate-plan] fallback path");
+    scheduleBackgroundRecovery(after, { name, idea, projectId });
+    return aiSuccessJson(
+      {
+        analysis: buildFailsafeProjectAnalysis(name, idea),
+        prompts: buildFailsafePromptPack(name).prompts,
+        blueprint: buildFailsafePromptPack(name).blueprint,
+      },
+      "fallback",
     );
   }
 }

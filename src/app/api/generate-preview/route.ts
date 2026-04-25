@@ -1,10 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getNimClient, NIM_KEY_ERROR } from "@/lib/nim-client";
+import { NextRequest } from "next/server";
+import { getNimClient } from "@/lib/nim-client";
 import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
 import { readJsonBody } from "@/lib/read-json-body";
 import { MAX_TOKENS_GENERATE_PREVIEW } from "@/lib/ai-limits";
-import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
 import { isCompactServerlessAiChain } from "@/lib/vercel-ai";
+import { aiSuccessJson } from "@/lib/ai-response-envelope";
 
 export const maxDuration = 180;
 
@@ -163,9 +163,11 @@ export async function POST(req: NextRequest) {
     `4. The page renders at 1200×680 viewport — fill the space without overflow; avoid redundant sections.`,
   ].filter(Boolean).join("\n");
 
+  const minHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Preview</title><style>body{background:#09090b;color:#f4f4f5;font-family:system-ui;padding:24px;}</style></head><body><p>Preview ready. Keep editing the template.</p></body></html>`;
+
   try {
     if (!getNimClient()) {
-      return NextResponse.json({ error: NIM_KEY_ERROR }, { status: 503 });
+      return aiSuccessJson({ html: minHtml }, "fallback");
     }
 
     const compact = isCompactServerlessAiChain();
@@ -173,11 +175,11 @@ export async function POST(req: NextRequest) {
       "code_generation",
       {
         messages: [
-          { 
-            role: "system", 
-            content: compact 
-              ? `${SYSTEM_PROMPT}\n\nSTRICT: You are in an ultra-fast generation mode. Be EXTREMELY concise. Generate only the core UI layout. No extra sub-pages or elaborate mock copy.` 
-              : SYSTEM_PROMPT 
+          {
+            role: "system",
+            content: compact
+              ? `${SYSTEM_PROMPT}\n\nSTRICT: You are in an ultra-fast generation mode. Be EXTREMELY concise. Generate only the core UI layout. No extra sub-pages or elaborate mock copy.`
+              : SYSTEM_PROMPT,
           },
           { role: "user", content: userPrompt },
         ],
@@ -189,18 +191,12 @@ export async function POST(req: NextRequest) {
     html = html.replace(/^```[\w]*\n?/gm, "").replace(/\n?```$/gm, "").trim();
 
     if (!html.toLowerCase().includes("<!doctype")) {
-      return NextResponse.json(
-        { error: "AI returned unexpected output. Please try again." },
-        { status: 503 }
-      );
+      return aiSuccessJson({ html: minHtml }, "fallback");
     }
 
-    return NextResponse.json({ html, source: "buildcraft-ai" });
+    return aiSuccessJson({ html }, "ai");
   } catch (err) {
     console.error("[generate-preview]", err);
-    return NextResponse.json(
-      { error: messageForAiRouteFailure(err) },
-      { status: httpStatusForAiFailure(err) },
-    );
+    return aiSuccessJson({ html: minHtml }, "fallback");
   }
 }

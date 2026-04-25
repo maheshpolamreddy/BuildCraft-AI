@@ -1,10 +1,15 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import "lenis/dist/lenis.css";
 import "./globals.css";
 import AuthProvider from "@/components/AuthProvider";
 import AnimatedFavicon from "@/components/AnimatedFavicon";
 import NextTopLoader from "nextjs-toploader";
-import { DocumentScrollGlowRail } from "@/components/scroll-glow/ScrollGlowRail";
+import {
+  DocumentScrollGlowRail,
+  ScrollToTopOnRoute,
+  SmoothScrollProvider,
+} from "@/components/scroll-glow/ScrollGlowRail";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -26,10 +31,13 @@ export default function RootLayout({
       <body suppressHydrationWarning className="bg-black text-on-surface font-body selection:bg-primary selection:text-on-primary min-h-screen threads-bg relative overflow-x-hidden">
         <NextTopLoader color="#4f46e5" showSpinner={false} />
         <AnimatedFavicon />
-        <AuthProvider>
-          <DocumentScrollGlowRail />
-          {children}
-        </AuthProvider>
+        <SmoothScrollProvider>
+          <ScrollToTopOnRoute />
+          <AuthProvider>
+            <DocumentScrollGlowRail />
+            {children}
+          </AuthProvider>
+        </SmoothScrollProvider>
       </body>
     </html>
   );

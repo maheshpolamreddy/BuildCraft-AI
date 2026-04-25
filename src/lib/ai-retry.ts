@@ -38,6 +38,7 @@ export function isTransientChatError(err: unknown): boolean {
  * rate limits, overload, upstream 5xx, or transient network issues.
  */
 export function isRetryableWithFallback(err: unknown): boolean {
+  if (isPaymentOrQuotaError(err)) return true;
   if (isTransientChatError(err)) return true;
   if (!(err instanceof Error)) return false;
   const any = err as Error & { status?: number; code?: string };
@@ -78,7 +79,11 @@ export async function runChatWithRetry(
   const tryPaymentBackoff = async (firstErr: unknown): Promise<string> => {
     if (!isPaymentOrQuotaError(firstErr)) throw firstErr;
     const requested = typeof params.max_tokens === "number" ? params.max_tokens : 2048;
+    let i = 0;
     for (const cap of completionMaxTokensRetrySequence(requested)) {
+      if (i++ > 0) {
+        await new Promise((r) => setTimeout(r, 600));
+      }
       try {
         return await exec(cap);
       } catch (e2) {
@@ -98,11 +103,20 @@ export async function runChatWithRetry(
       throw err;
     }
     if (isTransientChatError(err)) {
-      await new Promise((r) => setTimeout(r, 700));
+      await new Promise((r) => setTimeout(r, 600));
       try {
         return await exec();
       } catch (err2) {
         if (isPaymentOrQuotaError(err2)) return tryPaymentBackoff(err2);
+        if (isTransientChatError(err2)) {
+          await new Promise((r) => setTimeout(r, 900));
+          try {
+            return await exec();
+          } catch (err3) {
+            if (isPaymentOrQuotaError(err3)) return tryPaymentBackoff(err3);
+            throw err3;
+          }
+        }
         throw err2;
       }
     }

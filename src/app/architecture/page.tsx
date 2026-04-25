@@ -1093,6 +1093,8 @@ export default function ArchitectureView() {
   }, [analysisLoading, promptsLoading, orchestrationLabels.length]);
 
   const autoOrchestrateAttempted = useRef(false);
+  /** Prevents double-submit / rapid duplicate Analyze clicks. */
+  const planOrchestrateInFlight = useRef(false);
   const asideScrollRef = useRef<HTMLDivElement>(null);
   const mainScrollRef = useRef<HTMLDivElement>(null);
   const asideRail = useScrollRailMetrics(asideScrollRef);
@@ -1100,6 +1102,9 @@ export default function ArchitectureView() {
 
   const runFullPlanOrchestration = useCallback(async () => {
     if (!project) return;
+    if (planOrchestrateInFlight.current) return;
+    planOrchestrateInFlight.current = true;
+    try {
     autoOrchestrateAttempted.current = true;
     setAnalysisLoading(true);
     setPromptsLoading(true);
@@ -1197,6 +1202,9 @@ export default function ArchitectureView() {
       autoOrchestrateAttempted.current = false;
     } finally {
       setPromptsLoading(false);
+    }
+    } finally {
+      planOrchestrateInFlight.current = false;
     }
   }, [project, patchProject, setPromptsViewed, currentUser, incrementVersion, savedProjectId]);
 
@@ -1602,6 +1610,7 @@ export default function ArchitectureView() {
       <aside className="relative w-64 shrink-0 border-r border-white/5 bg-[#030303]/90 backdrop-blur-2xl flex flex-col sticky top-0 h-screen shadow-[inset_-1px_0_0_rgba(255,255,255,0.03)]">
         <div
           ref={asideScrollRef}
+          data-lenis-prevent
           className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col p-6"
         >
         <div className="mb-8">
@@ -1844,6 +1853,7 @@ export default function ArchitectureView() {
       <main className="relative flex-1 min-w-0 min-h-0 flex flex-col bg-[#030303]">
         <div
           ref={mainScrollRef}
+          data-lenis-prevent
           className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-8 lg:p-10"
         >
         <div className="max-w-5xl space-y-8">

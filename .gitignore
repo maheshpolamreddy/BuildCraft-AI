@@ -47,3 +47,6 @@ next-env.d.ts
 
 # Local helper that reads .env.local for Vercel — do not commit.
 sync-env.js
+
+# Cursor / local IDE
+.cursor/

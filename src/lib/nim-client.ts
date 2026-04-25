@@ -192,6 +192,15 @@ export function getAiFallbackModelId(): string | undefined {
 }
 
 /**
+ * Optional low-cost model for 402 / quota recovery after max_tokens backoff (same primary API).
+ * E.g. `openai/gpt-4o-mini` or `mistralai/mistral-small-3.1-24b-instruct:free` on OpenRouter.
+ */
+export function getAiBudgetModelId(): string | undefined {
+  const id = process.env.AI_BUDGET_MODEL_ID?.trim();
+  return id || undefined;
+}
+
+/**
  * Lower-latency model for routing, validation, and lightweight JSON tasks.
  * Defaults to primary model if `AI_FAST_MODEL_ID` is unset.
  */

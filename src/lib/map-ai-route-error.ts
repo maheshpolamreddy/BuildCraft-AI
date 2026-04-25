@@ -1,4 +1,4 @@
-import { isTimeoutLikeError, isPaymentOrQuotaError } from "@/lib/ai-retry";
+import { isPaymentOrQuotaError } from "@/lib/ai-retry";
 import { AI_ORCHESTRATION_CONFIG_ERROR } from "@/lib/ai-provider-registry";
 import { NIM_KEY_ERROR } from "@/lib/nim-client";
 
@@ -12,22 +12,22 @@ function isConnectionLike(err: unknown): boolean {
   );
 }
 
-/** HTTP status for AI route failures (timeouts vs connection vs generic). */
-export function httpStatusForAiFailure(err: unknown): number {
-  if (err instanceof Error && err.message === "NO_AI_CLIENT") return 503;
-  if (err instanceof Error && err.message === NIM_KEY_ERROR) return 503;
-  if (isTimeoutLikeError(err)) return 504;
-  if (isConnectionLike(err)) return 503;
-  if (isPaymentOrQuotaError(err)) return 402;
-  return 500;
+/**
+ * AI routes return HTTP 200 with valid structured payloads; callers use fallbacks, not 5xx, for model issues.
+ * (Still used when an optional `{ error: string }` must be sent without breaking clients — always 200.)
+ */
+export function httpStatusForAiFailure(_err: unknown): number {
+  return 200;
 }
 
+const NEUTRAL = "Generating optimized results…";
+
 /**
- * Maps OpenAI SDK / network errors to safe, actionable messages (no raw "Connection error").
+ * Maps OpenAI SDK / network errors to safe, non-raw messages (no token/credit/provider text).
  */
 export function messageForAiRouteFailure(err: unknown): string {
   if (!(err instanceof Error)) {
-    return "Something went wrong. Please try again.";
+    return NEUTRAL;
   }
   const m = err.message;
   const name = err.name;
@@ -36,21 +36,24 @@ export function messageForAiRouteFailure(err: unknown): string {
     return AI_ORCHESTRATION_CONFIG_ERROR;
   }
 
-  if (isConnectionLike(err)) {
-    return "Could not reach the AI service. Check your internet connection, confirm your AI API key in .env.local, and try again.";
+  if (m === "AI_ORCHESTRATION_SKIPPED_SAFE_MODE") {
+    return NEUTRAL;
+  }
+
+  if (isConnectionLike(err) || isPaymentOrQuotaError(err)) {
+    return NEUTRAL;
   }
 
   if (name === "APIConnectionTimeoutError" || /timed?\s*out|timeout|ETIMEDOUT|AbortError/i.test(m)) {
-    return "The AI request timed out. Try again in a moment, or use a shorter description.";
+    return NEUTRAL;
   }
 
-  if (isPaymentOrQuotaError(err)) {
-    return (
-      "Your AI provider rejected the request due to credits or token limits (HTTP 402). " +
-      "Add credits at your provider (e.g. OpenRouter → Settings → Credits), " +
-      "or set AI_MAX_COMPLETION_TOKENS lower in .env.local if you need a smaller max_tokens cap per call."
-    );
+  if (m === "ANALYSIS_PHASE_JSON" || m === "PROMPTS_JSON_RETRY_FAIL" || m === "AI_INPUT_CONTEXT_EXCEEDED") {
+    return NEUTRAL;
+  }
+  if (/invalid JSON|Analysis step|missing overview|No JSON|unexpected format/i.test(m)) {
+    return NEUTRAL;
   }
 
-  return m;
+  return NEUTRAL;
 }

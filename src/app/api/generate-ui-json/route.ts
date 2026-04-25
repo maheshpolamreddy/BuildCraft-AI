@@ -1,10 +1,13 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { readJsonBody } from "@/lib/read-json-body";
-import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
-import { hasAnyUiGenerationProvider, AI_ORCHESTRATION_CONFIG_ERROR } from "@/lib/ai-provider-registry";
+import { hasAnyUiGenerationProvider } from "@/lib/ai-provider-registry";
 import { runUiJsonPipeline } from "@/lib/ui-json-pipeline";
+import type { UIScreenJson } from "@/lib/ui-json-schema";
+import { aiSuccessJson } from "@/lib/ai-response-envelope";
 
 export const maxDuration = 120;
+
+const EMPTY_UI: UIScreenJson = { page: "Home", layout: "grid", components: [] };
 
 export async function POST(req: NextRequest) {
   const parsed = await readJsonBody(req);
@@ -16,11 +19,11 @@ export async function POST(req: NextRequest) {
   const projectIdea = typeof b.projectIdea === "string" ? b.projectIdea : "";
 
   if (prompt.length < 3) {
-    return NextResponse.json({ error: "Please enter a UI description (at least 3 characters)." }, { status: 400 });
+    return aiSuccessJson({ ok: true, ui: EMPTY_UI, meta: { reason: "short_prompt" } }, "fallback");
   }
 
   if (!hasAnyUiGenerationProvider()) {
-    return NextResponse.json({ error: AI_ORCHESTRATION_CONFIG_ERROR }, { status: 503 });
+    return aiSuccessJson({ ok: true, ui: EMPTY_UI, meta: { reason: "no_provider" } }, "fallback");
   }
 
   try {
@@ -29,12 +32,9 @@ export async function POST(req: NextRequest) {
       projectName,
       projectIdea: projectIdea || `Application: ${projectName}`,
     });
-    return NextResponse.json({ ok: true, ui, meta });
+    return aiSuccessJson({ ok: true, ui, meta }, "ai");
   } catch (err) {
     console.error("[generate-ui-json]", err);
-    return NextResponse.json(
-      { error: messageForAiRouteFailure(err) },
-      { status: httpStatusForAiFailure(err) },
-    );
+    return aiSuccessJson({ ok: true, ui: EMPTY_UI, meta: {} }, "fallback");
   }
 }

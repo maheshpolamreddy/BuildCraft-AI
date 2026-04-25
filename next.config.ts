@@ -6,7 +6,7 @@ const FIREBASE_PROJECT = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID?.trim() ?? 
 const nextConfig: NextConfig = {
   experimental: {
     /** Smaller dev + prod client bundles for framer-motion imports */
-    optimizePackageImports: ["framer-motion"],
+    optimizePackageImports: ["framer-motion", "lenis"],
   },
   /**
    * Proxy Firebase's auth handler through your own domain when

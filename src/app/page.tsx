@@ -10,15 +10,20 @@ import AnimatedLogoOverlay from "@/components/AnimatedLogoOverlay";
 import { useStore } from "@/store/useStore";
 import { signOutUser } from "@/lib/auth";
 import { consumeOpenMarketingHome, isDeveloperRegistrationComplete } from "@/lib/developerProfile";
+import { useScrollToPageTop } from "@/components/scroll-glow/ScrollGlowRail";
 
 const Threads = dynamic(() => import("@/components/Threads"), { ssr: false });
 
+/** Slightly early trigger + one-shot = fewer scroll recalculations on long pages. */
+const LANDING_MOTION_VIEWPORT = { once: true, amount: 0.2, margin: "0px 0px -40px 0px" } as const;
+
 // Smooth-scroll back to the very top of the page
-function GoHome() {
+function GoHome({ onBackToTop }: { onBackToTop: () => void }) {
   return (
     <div className="flex justify-end pt-6">
       <button
-        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        type="button"
+        onClick={onBackToTop}
         className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/20 hover:text-white/60 transition-colors group"
       >
         <ChevronUp className="w-3.5 h-3.5 group-hover:-translate-y-0.5 transition-transform" />
@@ -31,6 +36,7 @@ function GoHome() {
 export default function LandingPage() {
   const { authReady, currentUser, developerProfile, project, userRoles, role, reset } = useStore();
   const [showLogoEasterEgg, setShowLogoEasterEgg] = useState(false);
+  const scrollToPageTop = useScrollToPageTop();
 
   const isDeveloper = isDeveloperRegistrationComplete(developerProfile);
   const isLoggedIn = !!currentUser && currentUser.uid !== "demo-guest";
@@ -220,7 +226,7 @@ export default function LandingPage() {
           </div>
         </motion.div>
 
-        <GoHome />
+        <GoHome onBackToTop={scrollToPageTop} />
       </section>
 
       {/* ── Core Pillars / Features ───────────────────────────────────────────── */}
@@ -240,7 +246,7 @@ export default function LandingPage() {
             <motion.div 
               initial={{ opacity: 0, y: 30 }}
               whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
+              viewport={LANDING_MOTION_VIEWPORT}
               className="group relative h-full flex flex-col p-[1px] rounded-[2.5rem] bg-gradient-to-b from-white/10 to-transparent hover:from-blue-500/50 transition-colors duration-700 overflow-hidden"
             >
               <div className="absolute inset-0 bg-blue-500/10 opacity-0 group-hover:opacity-100 transition-opacity duration-700 blur-2xl z-0" />
@@ -279,7 +285,7 @@ export default function LandingPage() {
             <motion.div 
               initial={{ opacity: 0, y: 30 }}
               whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
+              viewport={LANDING_MOTION_VIEWPORT}
               transition={{ delay: 0.1 }}
               className="group relative h-full flex flex-col p-[1px] rounded-[2.5rem] bg-gradient-to-b from-white/10 to-transparent hover:from-emerald-500/50 transition-colors duration-700 overflow-hidden"
             >
@@ -320,7 +326,7 @@ export default function LandingPage() {
             <motion.div 
               initial={{ opacity: 0, y: 30 }}
               whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
+              viewport={LANDING_MOTION_VIEWPORT}
               transition={{ delay: 0.2 }}
               className="group relative h-full flex flex-col p-[1px] rounded-[2.5rem] bg-gradient-to-b from-white/10 to-transparent hover:from-purple-500/50 transition-colors duration-700 overflow-hidden"
             >
@@ -366,7 +372,7 @@ export default function LandingPage() {
             </motion.div>
           </div>
 
-          <GoHome />
+          <GoHome onBackToTop={scrollToPageTop} />
         </div>
       </section>
 
@@ -383,7 +389,7 @@ export default function LandingPage() {
             <motion.div 
               initial={{ opacity: 0, x: -30 }}
               whileInView={{ opacity: 1, x: 0 }}
-              viewport={{ once: true }}
+              viewport={LANDING_MOTION_VIEWPORT}
               className="space-y-6"
             >
               <h2 className="text-[10px] font-black uppercase tracking-[0.3em] text-yellow-500 flex items-center gap-2 bg-yellow-500/10 w-fit px-4 py-2 rounded-full border border-yellow-500/20 shadow-[0_0_15px_rgba(234,179,8,0.2)]">
@@ -400,7 +406,7 @@ export default function LandingPage() {
             <motion.div 
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
+              viewport={LANDING_MOTION_VIEWPORT}
               transition={{ delay: 0.2 }}
               className="flex flex-wrap gap-3"
             >
@@ -426,7 +432,7 @@ export default function LandingPage() {
           <motion.div 
             initial={{ opacity: 0, scale: 0.9, rotateY: -15 }}
             whileInView={{ opacity: 1, scale: 1, rotateY: 0 }}
-            viewport={{ once: true }}
+            viewport={LANDING_MOTION_VIEWPORT}
             transition={{ duration: 0.8, ease: "easeOut" }}
             className="flex-1 w-full perspective-[1000px]"
           >
@@ -464,7 +470,7 @@ export default function LandingPage() {
                     <motion.div 
                       initial={{ opacity: 0, x: 20 }}
                       whileInView={{ opacity: 1, x: 0 }}
-                      viewport={{ once: true }}
+                      viewport={LANDING_MOTION_VIEWPORT}
                       transition={{ delay: 0.3 }}
                       className="p-5 bg-gradient-to-r from-blue-500/10 to-transparent rounded-2xl border border-blue-500/20 backdrop-blur-sm relative overflow-hidden"
                     >
@@ -482,7 +488,7 @@ export default function LandingPage() {
                     <motion.div 
                       initial={{ opacity: 0, x: 20 }}
                       whileInView={{ opacity: 1, x: 0 }}
-                      viewport={{ once: true }}
+                      viewport={LANDING_MOTION_VIEWPORT}
                       transition={{ delay: 0.5 }}
                       className="p-5 bg-gradient-to-r from-emerald-500/10 to-transparent rounded-2xl border border-emerald-500/20 backdrop-blur-sm relative overflow-hidden"
                     >
@@ -498,7 +504,7 @@ export default function LandingPage() {
                     <motion.div 
                       initial={{ opacity: 0, x: 20 }}
                       whileInView={{ opacity: 1, x: 0 }}
-                      viewport={{ once: true }}
+                      viewport={LANDING_MOTION_VIEWPORT}
                       transition={{ delay: 0.7 }}
                       className="p-5 bg-gradient-to-r from-white/5 to-transparent rounded-2xl border border-white/10 backdrop-blur-sm relative overflow-hidden opacity-50"
                     >
@@ -517,7 +523,7 @@ export default function LandingPage() {
         </div>
 
         <div className="max-w-7xl mx-auto">
-          <GoHome />
+          <GoHome onBackToTop={scrollToPageTop} />
         </div>
       </section>
 
@@ -537,7 +543,7 @@ export default function LandingPage() {
         </div>
 
         <div className="max-w-4xl mx-auto">
-          <GoHome />
+          <GoHome onBackToTop={scrollToPageTop} />
         </div>
       </section>
 
@@ -594,7 +600,8 @@ export default function LandingPage() {
               <a href="/privacy" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Privacy Policy</a>
               <a href="/terms" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Terms of Service</a>
               <button 
-                onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                type="button"
+                onClick={scrollToPageTop}
                 className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/30 hover:text-white transition-all group/bt"
               >
                 Back To Top <ChevronUp className="w-3.5 h-3.5 group-hover/bt:-translate-y-0.5 transition-transform" />

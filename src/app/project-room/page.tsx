@@ -1610,6 +1610,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       <aside className="relative w-64 shrink-0 border-r border-white/5 bg-[#050505]/80 backdrop-blur-xl flex flex-col sticky top-0 h-screen">
         <div
           ref={asideScrollRef}
+          data-lenis-prevent
           className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col p-6"
         >
         <div className="mb-6">
@@ -1745,6 +1746,7 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
       <main className="relative flex-1 min-w-0 min-h-0 flex flex-col">
         <div
           ref={mainScrollRef}
+          data-lenis-prevent
           className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-10"
         >
         <div className="max-w-4xl space-y-10">

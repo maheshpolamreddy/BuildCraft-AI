@@ -933,6 +933,7 @@ function EmployeeDashboardInner() {
       <aside className="relative w-72 shrink-0 border-r border-white/5 bg-[#050505]/80 backdrop-blur-xl sticky top-0 h-screen flex flex-col shadow-[inset_-1px_0_0_rgba(255,255,255,0.04)]">
         <div
           ref={sidebarScrollRef}
+          data-lenis-prevent
           className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col p-6"
         >
         {/* Avatar + name — live from developerProfile */}
@@ -1196,6 +1197,7 @@ function EmployeeDashboardInner() {
       <main className="relative flex-grow min-w-0 min-h-0 h-screen flex flex-col bg-[#030303]/40">
         <div
           ref={mainScrollRef}
+          data-lenis-prevent
           className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col"
         >
         <DeveloperFlowBreadcrumb className="px-10 pt-4 shrink-0 border-b border-white/5 bg-[#030303]/50" />

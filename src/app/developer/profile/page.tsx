@@ -308,6 +308,7 @@ export default function DeveloperProfilePage() {
         <aside className="relative lg:w-80 shrink-0 border-b lg:border-b-0 lg:border-r border-white/5 lg:sticky lg:top-[69px] lg:h-[calc(100vh-69px)] flex flex-col lg:min-h-0">
           <div
             ref={asideScrollRef}
+            data-lenis-prevent
             className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-6 space-y-4"
           >
 
@@ -497,6 +498,7 @@ export default function DeveloperProfilePage() {
         <main className="relative flex-1 min-h-0 min-w-0 flex flex-col">
           <div
             ref={mainScrollRef}
+            data-lenis-prevent
             className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-6 lg:p-10"
           >
           <div className="max-w-2xl mx-auto space-y-6">

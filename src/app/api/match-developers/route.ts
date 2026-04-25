@@ -1,16 +1,14 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { readJsonBody } from "@/lib/read-json-body";
-import { messageForAiRouteFailure } from "@/lib/map-ai-route-error";
 import { normalizeSkillsFromFirestore } from "@/lib/developerProfile";
 import {
   explainDeveloperMatch,
   rankDevelopersForProject,
   type RankableDeveloper,
 } from "@/lib/ml-matching/rank-developers";
+import { aiSuccessJson } from "@/lib/ai-response-envelope";
 
 export const maxDuration = 30;
-
-// ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface DevCandidate {
   userId: string;
@@ -29,7 +27,6 @@ export interface DevCandidate {
   payMax: number;
   payCurrency: string;
   profileStatus: string;
-  /** Dual-approved completions (from developer profile). */
   completedProjectsCount?: number;
 }
 
@@ -44,7 +41,6 @@ export interface MatchedDeveloper extends DevCandidate {
   rank: number;
 }
 
-/** Coerce Firestore / client payloads so scoring never throws on missing arrays. */
 function toDevCandidate(raw: unknown): DevCandidate | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
@@ -107,8 +103,6 @@ function toRankable(dev: DevCandidate): RankableDeveloper {
   };
 }
 
-// ── Handler ───────────────────────────────────────────────────────────────────
-
 export async function POST(req: NextRequest) {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -127,7 +121,7 @@ export async function POST(req: NextRequest) {
       .filter((c: DevCandidate | null): c is DevCandidate => c !== null);
 
     if (!normalized.length) {
-      return NextResponse.json({ developers: [] });
+      return aiSuccessJson({ developers: [] }, "fallback");
     }
 
     const skillsList = requiredSkills.map((s) => String(s));
@@ -139,7 +133,6 @@ export async function POST(req: NextRequest) {
       skillsList,
     );
 
-    /** Enough slots that CI/E2E accounts (e.g. a specific test developer) usually appear even with diversity bucketing. */
     const maxMatches = Math.min(20, ranked.length);
     const seenIds = new Set<string>();
     const bucketSeen = new Set<string>();
@@ -214,12 +207,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ developers });
+    return aiSuccessJson({ developers }, "ai");
   } catch (err) {
     console.error("[match-developers]", err);
-    return NextResponse.json(
-      { developers: [], error: messageForAiRouteFailure(err) },
-      { status: 500 },
-    );
+    return aiSuccessJson({ developers: [] }, "fallback");
   }
 }

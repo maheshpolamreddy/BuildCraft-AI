@@ -60,10 +60,17 @@
 }
 
 @layer base {
+  /* Lenis animates scroll; avoid native smooth so we do not double-smooth. */
+  html {
+    scroll-behavior: auto;
+  }
   body {
     background-color: var(--color-background);
     color: var(--color-on-surface);
     font-family: var(--font-body);
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
 

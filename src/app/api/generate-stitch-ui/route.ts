@@ -1,7 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { readJsonBody } from "@/lib/read-json-body";
 import { MAX_STITCH_IDEA_CHARS, MAX_TOKENS_GENERATE_STITCH_UI } from "@/lib/ai-limits";
-import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
 import {
   buildFallbackStitchBodyContent,
   buildStitchSystemPrompt,
@@ -10,8 +9,9 @@ import {
   finalizeStitchHtml,
 } from "@/lib/stitch-landing-html";
 import { completeChatMultiModel } from "@/lib/multi-model-completion";
-import { hasAnyUiGenerationProvider, AI_ORCHESTRATION_CONFIG_ERROR } from "@/lib/ai-provider-registry";
+import { hasAnyUiGenerationProvider } from "@/lib/ai-provider-registry";
 import { isCompactServerlessAiChain } from "@/lib/vercel-ai";
+import { aiSuccessJson } from "@/lib/ai-response-envelope";
 
 /** Vercel Hobby caps serverless execution at ~60s; higher values only apply on Pro+. */
 export const maxDuration = 60;
@@ -65,7 +65,17 @@ export async function POST(req: NextRequest) {
 
   try {
     if (!hasAnyUiGenerationProvider()) {
-      return NextResponse.json({ error: AI_ORCHESTRATION_CONFIG_ERROR }, { status: 503 });
+      const raw = buildFallbackStitchBodyContent(name, ideaRaw);
+      const htmlFb = finalizeStitchHtml(name, raw, palette, visualVariant);
+      return aiSuccessJson(
+        {
+          html: htmlFb || `<!DOCTYPE html><html><body style="background:#09090b;color:#fff;font-family:system-ui;padding:24px">Stitch UI</body></html>`,
+          palette: palette.name,
+          visualVariant,
+          orchestration: { provider: "fallback" as const },
+        },
+        "fallback",
+      );
     }
 
     const compact = isCompactServerlessAiChain();
@@ -85,37 +95,55 @@ export async function POST(req: NextRequest) {
 
     const html = finalizeStitchHtml(name, raw, palette, visualVariant);
     if (!html) {
-      return NextResponse.json(
-        { error: "AI returned unexpected output. Please try again." },
-        { status: 503 },
+      const rawFb = buildFallbackStitchBodyContent(name, ideaRaw);
+      const h = finalizeStitchHtml(name, rawFb, palette, visualVariant);
+      return aiSuccessJson(
+        {
+          html: h || `<!DOCTYPE html><html><body style="background:#09090b">Ready</body></html>`,
+          palette: palette.name,
+          visualVariant,
+          orchestration: { provider: "fallback" as const },
+        },
+        "fallback",
       );
     }
 
-    return NextResponse.json({
-      html,
-      source: "buildcraft-ai",
-      palette: palette.name,
-      visualVariant,
-      orchestration: { provider },
-    });
+    return aiSuccessJson(
+      {
+        html,
+        palette: palette.name,
+        visualVariant,
+        orchestration: { provider },
+      },
+      "ai",
+    );
   } catch (err) {
     console.error("[generate-stitch-ui]", err);
     if (err instanceof Error && err.message === "NO_AI_CLIENT") {
       const raw = buildFallbackStitchBodyContent(name, ideaRaw);
       const html = finalizeStitchHtml(name, raw, palette, visualVariant);
       if (html) {
-        return NextResponse.json({
-          html,
-          source: "fallback-template",
-          palette: palette.name,
-          visualVariant,
-          orchestration: { provider: "fallback" as const },
-        });
+        return aiSuccessJson(
+          {
+            html,
+            palette: palette.name,
+            visualVariant,
+            orchestration: { provider: "fallback" as const },
+          },
+          "fallback",
+        );
       }
     }
-    return NextResponse.json(
-      { error: messageForAiRouteFailure(err) },
-      { status: httpStatusForAiFailure(err) },
+    const rawFallback = buildFallbackStitchBodyContent(name, ideaRaw);
+    const htmlFallback = finalizeStitchHtml(name, rawFallback, palette, visualVariant);
+    return aiSuccessJson(
+      {
+        html: htmlFallback || `<!DOCTYPE html><html><body style="background:#09090b">Ready</body></html>`,
+        palette: palette.name,
+        visualVariant,
+        orchestration: { provider: "fallback" as const },
+      },
+      "fallback",
     );
   }
 }

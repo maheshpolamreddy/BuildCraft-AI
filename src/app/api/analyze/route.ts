@@ -1,11 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getNimClient, NIM_KEY_ERROR } from "@/lib/nim-client";
+import { NextRequest } from "next/server";
+import { getNimClient } from "@/lib/nim-client";
 import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
 import { readJsonBody } from "@/lib/read-json-body";
-import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
+import { httpStatusForAiFailure } from "@/lib/map-ai-route-error";
 import { resolveProjectDisplayName } from "@/lib/projectName";
+import { aiSuccessJson } from "@/lib/ai-response-envelope";
+import type { AiResponseSource } from "@/lib/ai-response-envelope";
 
-/** Seconds — Vercel/serverless limit; prevents 504 on slow LLM responses. */
 export const maxDuration = 180;
 
 const SYSTEM_PROMPT = `You are an expert AI project analyst for BuildCraft, an enterprise platform that helps turn software ideas into detailed technical plans.
@@ -67,6 +68,28 @@ export interface AnalyzeResponse {
 
 const MAX_IDEA_CHARS = 100_000;
 
+function buildFallbackAnalyze(idea: string, fileName: string | undefined): AnalyzeResponse {
+  return {
+    idea: idea.trim(),
+    name: resolveProjectDisplayName("My App", fileName),
+    confidence: 60,
+    requirements: [
+      { id: "r1", title: "Core experience", description: "Build the main user journey.", type: "feature" },
+      { id: "r2", title: "Security & privacy", description: "Protect user data in transit and at rest.", type: "security" },
+      { id: "r3", title: "Performance", description: "Keep interactions responsive and reliable.", type: "performance" },
+      { id: "r4", title: "Compliance", description: "Respect data handling obligations.", type: "compliance" },
+    ],
+    assumptions: [
+      { id: "a1", text: "We assume a modern web or mobile client.", accepted: false },
+      { id: "a2", text: "We assume cloud hosting is available.", accepted: false },
+      { id: "a3", text: "We assume standard authentication patterns apply.", accepted: false },
+    ],
+    uncertainties: ["Exact scale and feature depth", "Third-party integrations"],
+    version: "v1.0",
+    locked: false,
+  };
+}
+
 export async function POST(req: NextRequest) {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -81,19 +104,16 @@ export async function POST(req: NextRequest) {
         : undefined;
 
     if (!idea || typeof idea !== "string" || idea.trim().length < 5) {
-      return NextResponse.json({ error: "Please provide a project idea (at least 5 characters)." }, { status: 400 });
+      return aiSuccessJson({ code: "idea_too_short" as const }, "fallback", { status: 400 });
     }
 
     const trimmed = idea.trim();
     if (trimmed.length > MAX_IDEA_CHARS) {
-      return NextResponse.json(
-        { error: `Project description is too long (max ${MAX_IDEA_CHARS.toLocaleString()} characters).` },
-        { status: 400 },
-      );
+      return aiSuccessJson({ code: "idea_too_long" as const }, "fallback", { status: 400 });
     }
 
     if (!getNimClient()) {
-      return NextResponse.json({ error: NIM_KEY_ERROR }, { status: 503 });
+      return aiSuccessJson(buildFallbackAnalyze(trimmed, fileName), "fallback");
     }
 
     const userContent = fileName
@@ -110,21 +130,19 @@ export async function POST(req: NextRequest) {
       top_p: 0.9,
     });
 
-    // Extract JSON even if the model wraps it in markdown fences
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       console.error("[analyze] AI response did not contain JSON:", raw);
-      return NextResponse.json({ error: "AI returned an unexpected format. Please try again." }, { status: 502 });
+      return aiSuccessJson(buildFallbackAnalyze(trimmed, fileName), "fallback");
     }
 
     let aiParsed: Record<string, unknown>;
     try {
       aiParsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
     } catch {
-      return NextResponse.json({ error: "AI returned invalid JSON. Please try again." }, { status: 502 });
+      return aiSuccessJson(buildFallbackAnalyze(trimmed, fileName), "fallback");
     }
 
-    // Validate and enforce required fields
     const result: AnalyzeResponse = {
       idea: trimmed,
       name: resolveProjectDisplayName(aiParsed.name, fileName),
@@ -142,12 +160,26 @@ export async function POST(req: NextRequest) {
       locked: false,
     };
 
-    return NextResponse.json(result);
+    const source: AiResponseSource = "ai";
+    return aiSuccessJson(result, source);
   } catch (err) {
     console.error("[analyze] AI service error:", err);
-    return NextResponse.json(
-      { error: messageForAiRouteFailure(err) },
-      { status: httpStatusForAiFailure(err) },
+    const status = httpStatusForAiFailure(err);
+    if (status >= 500) {
+      return aiSuccessJson(
+        buildFallbackAnalyze(
+          typeof (parsed.body as { idea?: string }).idea === "string" ? (parsed.body as { idea: string }).idea : "Project",
+          undefined,
+        ),
+        "fallback",
+      );
+    }
+    return aiSuccessJson(
+      buildFallbackAnalyze(
+        typeof (parsed.body as { idea?: string }).idea === "string" ? (parsed.body as { idea: string }).idea : "Project",
+        undefined,
+      ),
+      "fallback",
     );
   }
 }

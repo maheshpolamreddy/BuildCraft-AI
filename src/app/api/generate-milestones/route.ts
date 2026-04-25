@@ -1,122 +1,80 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getNimClient, NIM_KEY_ERROR } from "@/lib/nim-client";
-import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
+import { after } from "next/server";
+import { NextRequest } from "next/server";
 import { readJsonBody } from "@/lib/read-json-body";
-import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
+import { ensureValidAiResponse } from "@/lib/ai-guaranteed-response";
+import { scheduleBackgroundRecovery } from "@/lib/ai-recovery-probe";
+import { hashAiInputs, setAiGenerationFirestore, setRedisAiCache } from "@/lib/ai-generation-cache";
+import { normalizeAnalyzeTextInputs } from "@/lib/ai-input-normalize";
+import { withInflightDedup } from "@/lib/ai-inflight-guard";
+import { buildFailsafeMilestonesPayload } from "@/lib/ai-milestone-failsafe";
 import {
-  getAiGenerationFirestore,
-  getRedisAiCache,
-  hashAiInputs,
-  setAiGenerationFirestore,
-  setRedisAiCache,
-} from "@/lib/ai-generation-cache";
+  canRunDeferredJobs,
+  createDeferredJobId,
+  setDeferredJobComplete,
+  setDeferredJobPending,
+} from "@/lib/ai-deferred-jobs";
+import { buildMilestonesPayloadCore, isValidMilestonesPayload } from "@/lib/ai-milestones-build";
+import { aiSuccessJson } from "@/lib/ai-response-envelope";
+import type { AiResponseSource } from "@/lib/ai-response-envelope";
+import { rateLimitAiRoute } from "@/lib/cache";
 
 export const maxDuration = 180;
 
-const SYSTEM = `You are a senior engineering project manager. Given a project name and description, generate a structured development plan broken into milestones and tasks.
-
-Return ONLY valid JSON — no markdown, no explanation.
-
-Format:
-{
-  "milestones": [
-    {
-      "id": "m1",
-      "phase": "Phase 1",
-      "title": "Foundation & Setup",
-      "description": "2-sentence description",
-      "estimatedDays": 7,
-      "color": "blue",
-      "tasks": [
-        {
-          "id": "t1",
-          "title": "Short task title",
-          "description": "What the developer needs to build",
-          "type": "frontend" | "backend" | "database" | "auth" | "devops" | "testing",
-          "estimatedHours": 4,
-          "priority": "high" | "medium" | "low",
-          "aiPrompt": "A detailed 200-300 word developer prompt starting with 'You are building [task] for [project]...' that describes exactly what to implement, which files to create, and what the output should be."
-        }
-      ]
-    }
-  ]
+function deferredAcceptedJson(jobId: string) {
+  return { success: true as const, data: { jobId, status: "pending" as const }, source: "ai" as const };
 }
-
-Rules:
-- Generate exactly 4 milestones
-- Each milestone has 3-4 tasks
-- Tasks must be specific to the project name and description
-- aiPrompt must be actionable and reference the project name
-- Colors: m1=blue, m2=purple, m3=emerald, m4=orange
-- Total tasks: 12-16`;
 
 export async function POST(req: NextRequest) {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
 
   const b = parsed.body as Record<string, unknown>;
-  const name = (typeof b.projectName === "string" ? b.projectName : "My App").trim();
-  const idea = (typeof b.projectIdea === "string" ? b.projectIdea : "").trim();
+  const rawName = (typeof b.projectName === "string" ? b.projectName : "My App").trim();
+  const rawIdea = (typeof b.projectIdea === "string" ? b.projectIdea : "").trim();
+  const { name, idea } = normalizeAnalyzeTextInputs(rawName, rawIdea);
   const projectId =
     typeof b.projectId === "string" && b.projectId.trim() ? b.projectId.trim() : undefined;
+  const deferred = b.deferred === true;
+
+  const limited = await rateLimitAiRoute(req, "generate-milestones");
+  if (limited) return limited;
+
+  const inputHash = await hashAiInputs("milestones", name, idea);
+  const inflightKey = `milestone_ai:${inputHash}`;
 
   try {
-    if (!getNimClient()) {
-      return NextResponse.json({ error: NIM_KEY_ERROR }, { status: 503 });
+    if (deferred && canRunDeferredJobs()) {
+      const jobId = await createDeferredJobId();
+      await setDeferredJobPending(jobId);
+      after(async () => {
+        try {
+          const { payload } = await buildMilestonesPayloadCore({ name, idea, projectId, inputHash });
+          await setDeferredJobComplete(jobId, payload);
+        } catch {
+          await setDeferredJobComplete(jobId, buildFailsafeMilestonesPayload(name, idea));
+        }
+      });
+      return Response.json(deferredAcceptedJson(jobId), { status: 202 });
     }
 
-    const inputHash = await hashAiInputs("milestones", name, idea);
-    if (projectId) {
-      const fsHit = await getAiGenerationFirestore<Record<string, unknown>>(projectId, "milestones", inputHash);
-      if (fsHit && Array.isArray((fsHit as { milestones?: unknown }).milestones)) {
-        const m = (fsHit as { milestones: unknown[] }).milestones;
-        if (m.length > 0) return NextResponse.json(fsHit);
-      }
-    }
-    const redisHit = await getRedisAiCache<Record<string, unknown>>("milestones", [name, idea]);
-    if (redisHit && Array.isArray((redisHit as { milestones?: unknown }).milestones)) {
-      const m = (redisHit as { milestones: unknown[] }).milestones;
-      if (m.length > 0) {
-        if (projectId) await setAiGenerationFirestore(projectId, "milestones", inputHash, redisHit);
-        return NextResponse.json(redisHit);
-      }
-    }
-
-    let raw = await orchestrateChatCompletion(
-      "structured_json",
-      {
-        messages: [
-          { role: "system", content: SYSTEM },
-          {
-            role: "user",
-            content: `Project: "${name}"\nDescription: ${idea || `A modern web application called ${name}`}\n\nGenerate the full development milestone plan. Return only JSON.`,
-          },
-        ],
-        temperature: 0.4,
-        max_tokens: 4096,
-      },
-      { minContentLength: 80 },
-    );
-    raw = raw.replace(/^```[\w]*\n?/gm, "").replace(/\n?```$/gm, "").trim();
-    const start = raw.indexOf("{");
-    const end   = raw.lastIndexOf("}");
-    if (start === -1) throw new Error("No JSON found");
-    let data: unknown;
-    try {
-      data = JSON.parse(raw.slice(start, end + 1));
-    } catch {
-      throw new Error("Model returned invalid JSON");
-    }
-    const payload = data as Record<string, unknown>;
-    await setRedisAiCache("milestones", [name, idea], payload);
-    if (projectId) {
-      await setAiGenerationFirestore(projectId, "milestones", inputHash, payload);
-    }
-    return NextResponse.json(payload);
+    return await withInflightDedup(inflightKey, async () => {
+      const { payload, source: buildSource } = await buildMilestonesPayloadCore({
+        name,
+        idea,
+        projectId,
+        inputHash,
+      });
+      const fall = buildFailsafeMilestonesPayload(name, idea) as unknown as Record<string, unknown>;
+      const out = ensureValidAiResponse(payload, fall, (p) => isValidMilestonesPayload(p));
+      const source: AiResponseSource = out === fall ? "fallback" : buildSource;
+      scheduleBackgroundRecovery(after, { name, idea, projectId });
+      return aiSuccessJson(out, source);
+    });
   } catch (err) {
-    return NextResponse.json(
-      { error: messageForAiRouteFailure(err) },
-      { status: httpStatusForAiFailure(err) },
-    );
+    const fall = buildFailsafeMilestonesPayload(name, idea) as unknown as Record<string, unknown>;
+    await setRedisAiCache("milestones", [name, idea], fall).catch(() => {});
+    if (projectId) await setAiGenerationFirestore(projectId, "milestones", inputHash, fall).catch(() => {});
+    scheduleBackgroundRecovery(after, { name, idea, projectId });
+    return aiSuccessJson(fall, "fallback");
   }
 }

@@ -1,10 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getNimClient, NIM_KEY_ERROR } from "@/lib/nim-client";
+import { NextRequest } from "next/server";
+import { getNimClient } from "@/lib/nim-client";
 import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
 import { readJsonBody } from "@/lib/read-json-body";
 import { MAX_TOKENS_GENERATE_CODE } from "@/lib/ai-limits";
-import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
+import { isSafeModeSkipsLlmError } from "@/lib/ai-global-mode";
 import { isCompactServerlessAiChain } from "@/lib/vercel-ai";
+import { aiSuccessJson } from "@/lib/ai-response-envelope";
+import type { AiResponseSource } from "@/lib/ai-response-envelope";
 
 export const maxDuration = 180;
 
@@ -37,6 +39,12 @@ export interface GenerateCodeRequest {
   componentDesc: string;
 }
 
+const PLACE = `"use client";\nimport React from "react";\nexport default function BuildCraftFallback() {\n  return (\n    <div className="min-h-[200px] flex items-center justify-center rounded-2xl border border-white/10 bg-black/40 p-8 text-center text-sm text-white/50">\n      Generating optimized results. You can keep editing this component.\n    </div>\n  );\n}\n`;
+
+function payload(code: string, source: AiResponseSource) {
+  return aiSuccessJson({ code }, source);
+}
+
 export async function POST(req: NextRequest) {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -46,14 +54,11 @@ export async function POST(req: NextRequest) {
       parsed.body as GenerateCodeRequest;
 
     if (!componentType || !projectIdea) {
-      return NextResponse.json(
-        { error: "Missing componentType or projectIdea" },
-        { status: 400 }
-      );
+      return payload(PLACE, "fallback");
     }
 
     if (!getNimClient()) {
-      return NextResponse.json({ error: NIM_KEY_ERROR }, { status: 503 });
+      return payload(PLACE, "fallback");
     }
 
     const userPrompt = `Generate a ${componentType} component for a "${projectName}" application.
@@ -70,11 +75,11 @@ Return ONLY the complete .tsx component code — no explanations, no markdown.`;
       "code_generation",
       {
         messages: [
-          { 
-            role: "system", 
-            content: compact 
-              ? `${SYSTEM_PROMPT}\n\nSTRICT: You are currently in an ultra-fast generation mode. Be EXTREMELY concise. Generate only the core component logic. No extra fields, mock data, or elaborate comments.` 
-              : SYSTEM_PROMPT 
+          {
+            role: "system",
+            content: compact
+              ? `${SYSTEM_PROMPT}\n\nSTRICT: You are currently in an ultra-fast generation mode. Be EXTREMELY concise. Generate only the core component logic. No extra fields, mock data, or elaborate comments.`
+              : SYSTEM_PROMPT,
           },
           { role: "user", content: userPrompt },
         ],
@@ -85,25 +90,21 @@ Return ONLY the complete .tsx component code — no explanations, no markdown.`;
       { minContentLength: 50 },
     );
 
-    // Strip markdown fences if the model added them anyway
     const cleaned = raw
       .replace(/^```(?:tsx?|jsx?|typescript|javascript)?\n?/i, "")
       .replace(/\n?```$/i, "")
       .trim();
 
     if (!cleaned || cleaned.length < 50) {
-      return NextResponse.json(
-        { error: "AI returned empty code. Please try again." },
-        { status: 502 }
-      );
+      return payload(PLACE, "fallback");
     }
 
-    return NextResponse.json({ code: cleaned });
+    return payload(cleaned, "ai");
   } catch (err) {
+    if (isSafeModeSkipsLlmError(err)) {
+      return payload(PLACE, "fallback");
+    }
     console.error("[generate-code] AI service error:", err);
-    return NextResponse.json(
-      { error: messageForAiRouteFailure(err) },
-      { status: httpStatusForAiFailure(err) },
-    );
+    return payload(PLACE, "fallback");
   }
 }

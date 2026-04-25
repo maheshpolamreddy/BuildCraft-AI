@@ -444,6 +444,7 @@ export default function DiscoveryHub() {
       <aside className="relative w-64 shrink-0 border-r border-white/5 bg-[#030303]/90 backdrop-blur-2xl flex flex-col sticky top-0 h-screen shadow-[inset_-1px_0_0_rgba(255,255,255,0.03)]">
         <div
           ref={asideScrollRef}
+          data-lenis-prevent
           className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex flex-col p-6"
         >
         <div className="mb-8">
@@ -670,6 +671,7 @@ export default function DiscoveryHub() {
       <main className="relative flex-1 min-w-0 min-h-0 flex flex-col bg-[#030303]">
         <div
           ref={mainScrollRef}
+          data-lenis-prevent
           className="no-scrollbar flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-8 lg:p-10 lg:flex lg:gap-10"
         >
         <div className="flex-grow max-w-4xl space-y-10">

@@ -1,14 +1,18 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
+import { NextRequest } from "next/server";
 import { readJsonBody } from "@/lib/read-json-body";
+import { buildFailsafePromptPack } from "@/lib/ai-failsafe";
+import { ensureValidAiResponse } from "@/lib/ai-guaranteed-response";
+import { scheduleBackgroundRecovery } from "@/lib/ai-recovery-probe";
 import { runGeneratePromptsCore, type GeneratedPromptRow, type ProjectBlueprint } from "@/lib/plan-orchestration";
-import { httpStatusForAiFailure, messageForAiRouteFailure } from "@/lib/map-ai-route-error";
 import {
   getAiGenerationFirestore,
   hashAiInputs,
   setAiGenerationFirestore,
 } from "@/lib/ai-generation-cache";
+import { rateLimitAiRoute } from "@/lib/cache";
+import { aiSuccessJson } from "@/lib/ai-response-envelope";
 
-/** One model call (was two) — avoids chained timeouts. */
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
@@ -35,6 +39,12 @@ export async function POST(req: NextRequest) {
     ? [...toolInput].map((t) => String(t).trim().toLowerCase()).sort().join(",")
     : String(toolInput).trim().toLowerCase();
 
+  const limited = await rateLimitAiRoute(req, "generate-prompts");
+  if (limited) return limited;
+
+  const fb = buildFailsafePromptPack(name);
+  const fallPayload = { prompts: fb.prompts, blueprint: fb.blueprint };
+
   try {
     const inputHash = await hashAiInputs("prompts", name, idea, toolsKey);
     if (projectId) {
@@ -44,20 +54,32 @@ export async function POST(req: NextRequest) {
         inputHash,
       );
       if (cached?.prompts?.length) {
-        return NextResponse.json({ prompts: cached.prompts, blueprint: cached.blueprint });
+        scheduleBackgroundRecovery(after, { name, idea, projectId });
+        return aiSuccessJson(
+          { prompts: cached.prompts, blueprint: cached.blueprint },
+          "cache",
+        );
       }
     }
 
     const { prompts, blueprint } = await runGeneratePromptsCore(name, idea, toolInput);
+    const outP = ensureValidAiResponse<GeneratedPromptRow[]>(prompts, fb.prompts, (p) => Array.isArray(p) && p.length > 0);
+    const outB = ensureValidAiResponse<ProjectBlueprint>(blueprint, fb.blueprint, (bl) => Array.isArray(bl?.pages) && bl.pages.length > 0);
     if (projectId) {
-      await setAiGenerationFirestore(projectId, "prompts", inputHash, { prompts, blueprint });
+      await setAiGenerationFirestore(projectId, "prompts", inputHash, { prompts: outP, blueprint: outB });
     }
-    return NextResponse.json({ prompts, blueprint });
+    const payload = { prompts: outP, blueprint: outB };
+    scheduleBackgroundRecovery(after, { name, idea, projectId });
+    return aiSuccessJson(payload, "ai");
   } catch (err) {
     console.error("[generate-prompts]", err);
-    return NextResponse.json(
-      { error: messageForAiRouteFailure(err) },
-      { status: httpStatusForAiFailure(err) },
-    );
+    const inputHash = await hashAiInputs("prompts", name, idea, toolsKey);
+    if (projectId) {
+      await setAiGenerationFirestore(projectId, "prompts", inputHash, { prompts: fallPayload.prompts, blueprint: fallPayload.blueprint }).catch(
+        () => {},
+      );
+    }
+    scheduleBackgroundRecovery(after, { name, idea, projectId });
+    return aiSuccessJson(fallPayload, "fallback");
   }
 }

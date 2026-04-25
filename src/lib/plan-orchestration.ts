@@ -5,6 +5,9 @@
 
 import { getNimClient, NIM_KEY_ERROR } from "@/lib/nim-client";
 import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
+import { normalizeAnalyzeTextInputs } from "@/lib/ai-input-normalize";
+import { buildFailsafeProjectAnalysis, buildFailsafePromptPack } from "@/lib/ai-failsafe";
+import { recordAiSample } from "@/lib/ai-prod-metrics";
 import {
   MAX_TOKENS_ANALYZE_PHASE1,
   MAX_TOKENS_ANALYZE_PHASE2,
@@ -13,6 +16,26 @@ import {
   MAX_TOKENS_GENERATE_PROMPTS,
 } from "@/lib/ai-limits";
 import { getCachedOrchestration, setCachedOrchestration, generateCacheKey } from "@/lib/cache";
+import { shouldSkipLlmCalls } from "@/lib/ai-global-mode";
+import {
+  MIN_ANALYSIS_CONFIDENCE,
+  MIN_PROMPTS_CONFIDENCE,
+  scoreProjectAnalysisQuality,
+  scorePromptPackQuality,
+} from "@/lib/ai-response-confidence";
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+function logAiMonitor(event: string, payload: Record<string, unknown>): void {
+  if (process.env.NODE_ENV === "test") return;
+  try {
+    console.log(
+      JSON.stringify({ tag: "ai-monitor", ts: new Date().toISOString(), event, ...payload }),
+    );
+  } catch {
+    console.log("[ai-monitor]", event);
+  }
+}
 
 // ── Analysis types (aligned with /api/analyze-project) ───────────────────────
 
@@ -198,7 +221,11 @@ function clipDescription(text: string): string {
   return `${text.slice(0, MAX_PROJECT_DESCRIPTION_CHARS)}\n\n[Note: description was truncated for processing.]`;
 }
 
-async function runAnalyzeProjectMerged(projectName: string, projectIdea: string): Promise<ProjectAnalysis> {
+async function runAnalyzeProjectMergedOnce(
+  projectName: string,
+  projectIdea: string,
+  extraUserHint = "",
+): Promise<ProjectAnalysis> {
   const name = projectName.trim() || "My App";
   const idea = projectIdea.trim();
   const description = clipDescription(idea || `A modern web application called ${name}`);
@@ -206,7 +233,7 @@ async function runAnalyzeProjectMerged(projectName: string, projectIdea: string)
   const userMsg = `Project name: "${name}"
 Description: ${description}
 
-Return ONE JSON object with overview, tools, and risks as specified.`;
+Return ONE JSON object with overview, tools, and risks as specified.${extraUserHint ? `\n\n${extraUserHint}` : ""}`;
 
   const raw = await orchestrateChatCompletion(
     "architecture_deep",
@@ -244,6 +271,46 @@ Return ONE JSON object with overview, tools, and risks as specified.`;
   };
 }
 
+/** Retries: parse/validation failures, and one low-confidence reprompt. */
+async function runAnalyzeProjectMerged(projectName: string, projectIdea: string): Promise<ProjectAnalysis> {
+  let last: unknown;
+  let lowConfRetry = false;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) {
+      await sleep(650);
+      logAiMonitor("analyze_merged_retry", { attempt: attempt + 1, lowConfRetry });
+    }
+    try {
+      const hint =
+        lowConfRetry
+          ? "The previous pass looked incomplete or generic. Tighten every field: use concrete product-specific detail, no placeholders."
+          : "";
+      const result = await runAnalyzeProjectMergedOnce(projectName, projectIdea, hint);
+      const conf = scoreProjectAnalysisQuality(result);
+      if (conf >= MIN_ANALYSIS_CONFIDENCE || attempt === 1) {
+        if (lowConfRetry) {
+          logAiMonitor("analyze_merged_confidence_ok", { conf });
+        }
+        return result;
+      }
+      if (attempt === 0) {
+        logAiMonitor("analyze_merged_low_confidence", { conf });
+        lowConfRetry = true;
+        continue;
+      }
+      return result;
+    } catch (e) {
+      last = e;
+      const msg = e instanceof Error ? e.message : "";
+      const retryable =
+        /invalid JSON|missing overview|missing tools|No JSON|No complete JSON|Please try again/i.test(msg);
+      if (attempt === 0 && retryable) continue;
+      throw e;
+    }
+  }
+  throw last instanceof Error ? last : new Error(String(last));
+}
+
 /** Legacy two-call path — used when \`AI_ANALYZE_TWO_PHASE=1\` or merged parse fails. */
 async function runAnalyzeProjectTwoPhase(projectName: string, projectIdea: string): Promise<ProjectAnalysis> {
   const name = projectName.trim() || "My App";
@@ -255,7 +322,7 @@ Description: ${description}
 
 Produce the overview JSON only (summary + architecture layers).`;
 
-  const raw1 = await orchestrateChatCompletion(
+  let raw1 = await orchestrateChatCompletion(
     "architecture_deep",
     {
       messages: [
@@ -268,13 +335,36 @@ Produce the overview JSON only (summary + architecture layers).`;
     { minContentLength: 80 },
   );
 
-  let phase1: { overview: ProjectAnalysis["overview"] };
+  let phase1: { overview: ProjectAnalysis["overview"] } | null = null;
+  let phase1Ok = false;
   try {
     phase1 = JSON.parse(extractJsonObject(raw1)) as { overview: ProjectAnalysis["overview"] };
+    phase1Ok = true;
   } catch {
-    throw new Error("Analysis step 1 returned invalid JSON. Please try again.");
+    /* retry once */
   }
-  if (!phase1.overview?.summary || !Array.isArray(phase1.overview.architecture)) {
+  if (!phase1Ok) {
+    logAiMonitor("analyze_phase1_retry", {});
+    await sleep(600);
+    raw1 = await orchestrateChatCompletion(
+      "architecture_deep",
+      {
+        messages: [
+          { role: "system", content: SYSTEM_PHASE1 },
+          { role: "user", content: userMsgPhase1 },
+        ],
+        temperature: 0.35,
+        max_tokens: MAX_TOKENS_ANALYZE_PHASE1,
+      },
+      { minContentLength: 80 },
+    );
+    try {
+      phase1 = JSON.parse(extractJsonObject(raw1)) as { overview: ProjectAnalysis["overview"] };
+    } catch {
+      throw new Error("ANALYSIS_PHASE_JSON");
+    }
+  }
+  if (!phase1 || !phase1.overview?.summary || !Array.isArray(phase1.overview.architecture)) {
     throw new Error("Analysis step 1 missing required fields. Please try again.");
   }
 
@@ -286,7 +376,7 @@ ${JSON.stringify(phase1.overview, null, 2)}
 
 Produce ONLY the tools and risks JSON.`;
 
-  const raw2 = await orchestrateChatCompletion(
+  let raw2 = await orchestrateChatCompletion(
     "architecture_deep",
     {
       messages: [
@@ -299,11 +389,37 @@ Produce ONLY the tools and risks JSON.`;
     { minContentLength: 120 },
   );
 
-  let phase2: { tools: AiTool[]; risks: AiRisk[] };
+  let phase2: { tools: AiTool[]; risks: AiRisk[] } | null = null;
+  let phase2Ok = false;
   try {
     phase2 = JSON.parse(extractJsonObject(raw2)) as { tools: AiTool[]; risks: AiRisk[] };
+    phase2Ok = true;
   } catch {
-    throw new Error("Analysis step 2 returned invalid JSON. Please try again.");
+    /* retry once */
+  }
+  if (!phase2Ok) {
+    logAiMonitor("analyze_phase2_retry", {});
+    await sleep(600);
+    raw2 = await orchestrateChatCompletion(
+      "architecture_deep",
+      {
+        messages: [
+          { role: "system", content: SYSTEM_PHASE2 },
+          { role: "user", content: userMsgPhase2 },
+        ],
+        temperature: 0.36,
+        max_tokens: MAX_TOKENS_ANALYZE_PHASE2,
+      },
+      { minContentLength: 120 },
+    );
+    try {
+      phase2 = JSON.parse(extractJsonObject(raw2)) as { tools: AiTool[]; risks: AiRisk[] };
+    } catch {
+      throw new Error("ANALYSIS_PHASE_JSON");
+    }
+  }
+  if (!phase2) {
+    throw new Error("ANALYSIS_PHASE_JSON");
   }
 
   const tools = Array.isArray(phase2.tools) ? phase2.tools : [];
@@ -324,26 +440,47 @@ export async function runAnalyzeProjectCore(projectName: string, projectIdea: st
     throw new Error(NIM_KEY_ERROR);
   }
 
-  const cacheKey = await generateCacheKey("analysis", projectName, projectIdea);
+  const { name, idea } = normalizeAnalyzeTextInputs(projectName, projectIdea);
+  const cacheKey = await generateCacheKey("analysis", name, idea);
   const cached = await getCachedOrchestration<ProjectAnalysis>(cacheKey);
   if (cached) {
     console.log("[cache] Hit for analyze project:", cacheKey);
     return cached;
   }
 
-  let result: ProjectAnalysis;
-  if (process.env.AI_ANALYZE_TWO_PHASE?.trim() === "1") {
-    result = await runAnalyzeProjectTwoPhase(projectName, projectIdea);
-  } else {
-    try {
-      result = await runAnalyzeProjectMerged(projectName, projectIdea);
-    } catch (e) {
-      console.warn("[plan-orchestration] merged analyze failed, using two-phase fallback:", e);
-      result = await runAnalyzeProjectTwoPhase(projectName, projectIdea);
-    }
+  if (shouldSkipLlmCalls()) {
+    logAiMonitor("analyze_safe_mode_static", { name });
+    const fb = buildFailsafeProjectAnalysis(name, idea);
+    await setCachedOrchestration(cacheKey, fb, 45 * 24 * 60 * 60);
+    recordAiSample(true, "analyze_safe_failsafe");
+    return fb;
   }
 
-  await setCachedOrchestration(cacheKey, result);
+  let result: ProjectAnalysis;
+  try {
+    if (process.env.AI_ANALYZE_TWO_PHASE?.trim() === "1") {
+      result = await runAnalyzeProjectTwoPhase(name, idea);
+    } else {
+      try {
+        result = await runAnalyzeProjectMerged(name, idea);
+      } catch (e) {
+        console.warn("[plan-orchestration] merged analyze failed, using two-phase fallback:", e);
+        result = await runAnalyzeProjectTwoPhase(name, idea);
+      }
+    }
+  } catch (e) {
+    if (e instanceof Error && (e.message === NIM_KEY_ERROR || e.message === "NO_AI_CLIENT")) {
+      throw e;
+    }
+    recordAiSample(false, "analyze_fail");
+    const fb = buildFailsafeProjectAnalysis(name, idea);
+    await setCachedOrchestration(cacheKey, fb, 45 * 24 * 60 * 60);
+    return fb;
+  }
+
+  recordAiSample(true, "analyze");
+  const cacheTtl = 45 * 24 * 60 * 60;
+  await setCachedOrchestration(cacheKey, result, cacheTtl);
   return result;
 }
 
@@ -451,64 +588,160 @@ export async function runGeneratePromptsCore(
       ? tools
       : defaultStack;
 
-  const cacheKey = await generateCacheKey("prompts", projectName, projectIdea, toolStack);
+  const { name, idea: rawIdea } = normalizeAnalyzeTextInputs(projectName, projectIdea);
+  const idea = clipDescription(rawIdea);
+
+  const cacheKey = await generateCacheKey("prompts", name, idea, toolStack);
   const cached = await getCachedOrchestration<{ prompts: GeneratedPromptRow[]; blueprint: ProjectBlueprint }>(cacheKey);
   if (cached) {
     console.log("[cache] Hit for generate prompts:", cacheKey);
     return cached;
   }
 
-  const name = projectName.trim() || "My App";
-  const idea = projectIdea.trim();
+  if (shouldSkipLlmCalls()) {
+    const fb = buildFailsafePromptPack(name);
+    await setCachedOrchestration(cacheKey, fb, 45 * 24 * 60 * 60);
+    recordAiSample(true, "prompts_safe_failsafe");
+    return fb;
+  }
 
-  const userMsg = `Project name: "${name}"
+  try {
+    const userMsg = `Project name: "${name}"
 Description: ${idea || `A web application called ${name}`}
 Tech stack context: ${toolStack}
 
 Return ONE JSON object with "blueprint" and "prompts" (6 items) as specified.`;
 
-  const raw = (
-    await orchestrateChatCompletion(
-      "prompt_generation",
-      {
-        messages: [
-          { role: "system", content: COMBINED_SYSTEM },
-          { role: "user", content: userMsg },
-        ],
-        temperature: 0.4,
-        max_tokens: MAX_TOKENS_GENERATE_PROMPTS,
-      },
-      { minContentLength: 200 },
-    )
-  ).trim();
+    let raw = (
+      await orchestrateChatCompletion(
+        "prompt_generation",
+        {
+          messages: [
+            { role: "system", content: COMBINED_SYSTEM },
+            { role: "user", content: userMsg },
+          ],
+          temperature: 0.4,
+          max_tokens: MAX_TOKENS_GENERATE_PROMPTS,
+        },
+        { minContentLength: 200 },
+      )
+    ).trim();
 
-  let root: { blueprint?: Partial<ProjectBlueprint>; prompts?: unknown[] };
-  try {
-    root = JSON.parse(extractJsonObject(raw)) as typeof root;
-  } catch {
-    throw new Error("AI returned unexpected format. Please try again.");
+    type RootShape = { blueprint?: Partial<ProjectBlueprint>; prompts?: unknown[] };
+    let root: RootShape | null = null;
+    let parseOk = false;
+    try {
+      root = JSON.parse(extractJsonObject(raw)) as RootShape;
+      parseOk = true;
+    } catch {
+      /* one retry */
+    }
+    if (!parseOk) {
+      logAiMonitor("generate_prompts_parse_retry", {});
+      await sleep(550);
+      raw = (
+        await orchestrateChatCompletion(
+          "prompt_generation",
+          {
+            messages: [
+              { role: "system", content: COMBINED_SYSTEM },
+              { role: "user", content: userMsg },
+            ],
+            temperature: 0.38,
+            max_tokens: MAX_TOKENS_GENERATE_PROMPTS,
+          },
+          { minContentLength: 200 },
+        )
+      ).trim();
+      try {
+        root = JSON.parse(extractJsonObject(raw)) as RootShape;
+      } catch {
+        throw new Error("PROMPTS_JSON_RETRY_FAIL");
+      }
+    }
+    if (!root) {
+      throw new Error("PROMPTS_JSON_RETRY_FAIL");
+    }
+
+    const blueprint = normalizeBlueprint(root.blueprint);
+    const promptsRaw = root.prompts;
+    if (!Array.isArray(promptsRaw) || promptsRaw.length === 0) {
+      throw new Error("AI returned an empty response. Please try again.");
+    }
+
+    const COLORS = ["indigo", "blue", "emerald", "yellow", "pink", "orange"];
+    const validated = (promptsRaw as Record<string, unknown>[]).slice(0, 6).map((p, i) => ({
+      phase: String(p.phase ?? `Step ${i + 1}`),
+      title: String(p.title ?? ""),
+      icon: String(p.icon ?? "⚡"),
+      color: COLORS[i],
+      target: String(p.target ?? "Cursor / AI assistant"),
+      desc: String(p.desc ?? ""),
+      prompt: String(p.prompt ?? ""),
+    }));
+
+    const draftData = { prompts: validated, blueprint };
+    if (scorePromptPackQuality(draftData) < MIN_PROMPTS_CONFIDENCE) {
+      logAiMonitor("generate_prompts_low_confidence", {});
+      await sleep(500);
+      let raw2 = "";
+      try {
+        raw2 = (
+          await orchestrateChatCompletion(
+            "prompt_generation",
+            {
+              messages: [
+                { role: "system", content: COMBINED_SYSTEM },
+                {
+                  role: "user",
+                  content: `${userMsg}\n\nThe previous plan was too thin. Strengthen: longer prompt bodies, concrete file names, and 6 full phases.`,
+                },
+              ],
+              temperature: 0.35,
+              max_tokens: MAX_TOKENS_GENERATE_PROMPTS,
+            },
+            { minContentLength: 200 },
+          )
+        ).trim();
+        const root2 = JSON.parse(extractJsonObject(raw2)) as RootShape;
+        const b2 = normalizeBlueprint(root2?.blueprint);
+        const pr2 = root2?.prompts;
+        if (Array.isArray(pr2) && pr2.length > 0) {
+          const v2 = (pr2 as Record<string, unknown>[]).slice(0, 6).map((p, i) => ({
+            phase: String(p.phase ?? `Step ${i + 1}`),
+            title: String(p.title ?? ""),
+            icon: String(p.icon ?? "⚡"),
+            color: COLORS[i],
+            target: String(p.target ?? "Cursor / AI assistant"),
+            desc: String(p.desc ?? ""),
+            prompt: String(p.prompt ?? ""),
+          }));
+          const finalData2 = { prompts: v2, blueprint: b2 };
+          const cacheTtl = 45 * 24 * 60 * 60;
+          await setCachedOrchestration(cacheKey, finalData2, cacheTtl);
+          recordAiSample(true, "prompts");
+          return finalData2;
+        }
+      } catch {
+        /* keep draftData */
+      }
+    }
+
+    const finalData = { prompts: validated, blueprint };
+    const cacheTtl = 45 * 24 * 60 * 60;
+    await setCachedOrchestration(cacheKey, finalData, cacheTtl);
+    recordAiSample(true, "prompts");
+    return finalData;
+  } catch (e) {
+    if (e instanceof Error && (e.message === NIM_KEY_ERROR || e.message === "NO_AI_CLIENT")) {
+      throw e;
+    }
+    recordAiSample(false, "prompts_fail");
+    const fb = buildFailsafePromptPack(name);
+    const ttl = 45 * 24 * 60 * 60;
+    await setCachedOrchestration(cacheKey, fb, ttl);
+    return fb;
   }
-
-  const blueprint = normalizeBlueprint(root.blueprint);
-  const promptsRaw = root.prompts;
-  if (!Array.isArray(promptsRaw) || promptsRaw.length === 0) {
-    throw new Error("AI returned an empty response. Please try again.");
-  }
-
-  const COLORS = ["indigo", "blue", "emerald", "yellow", "pink", "orange"];
-  const validated = (promptsRaw as Record<string, unknown>[]).slice(0, 6).map((p, i) => ({
-    phase: String(p.phase ?? `Step ${i + 1}`),
-    title: String(p.title ?? ""),
-    icon: String(p.icon ?? "⚡"),
-    color: COLORS[i],
-    target: String(p.target ?? "Cursor / AI assistant"),
-    desc: String(p.desc ?? ""),
-    prompt: String(p.prompt ?? ""),
-  }));
-
-  const finalData = { prompts: validated, blueprint };
-  await setCachedOrchestration(cacheKey, finalData);
-  return finalData;
 }
 
 export async function runFullPlanOrchestration(
