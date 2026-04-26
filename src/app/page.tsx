@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowRight, Shield, Zap, Search, Layers, UserCheck, ShieldCheck, Code2 as Code2Icon, LogOut, ChevronUp, Command } from "lucide-react";
 import type { SVGProps } from "react";
@@ -585,10 +586,10 @@ export default function LandingPage() {
           <div className="space-y-6">
             <h4 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Resources</h4>
             <nav className="flex flex-col gap-4">
-              <a href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">API Docs</a>
-              <a href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Trust Center</a>
-              <a href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Dispute Resolution</a>
-              <a href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Brand Assets</a>
+              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">API Docs</Link>
+              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Trust Center</Link>
+              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Dispute Resolution</Link>
+              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Brand Assets</Link>
             </nav>
           </div>
 
@@ -596,7 +597,7 @@ export default function LandingPage() {
           <div className="space-y-6">
             <h4 className="text-[10px] font-black text-white uppercase tracking-[0.3em]">Company</h4>
             <nav className="flex flex-col gap-4">
-              <a href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">About Us</a>
+              <Link href="/#top" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">About Us</Link>
               <a href="/privacy" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Privacy Policy</a>
               <a href="/terms" className="text-[10px] font-black uppercase tracking-[0.2em] text-[#555] hover:text-white transition-colors">Terms of Service</a>
               <button 

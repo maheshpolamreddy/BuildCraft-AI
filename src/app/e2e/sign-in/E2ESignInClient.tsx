@@ -18,16 +18,17 @@ export function E2ESignInClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const returnTo = sanitizeInternalReturnPath(searchParams.get("returnTo"), "/discovery");
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(() =>
+    ENABLED
+      ? null
+      : "E2E sign-in is disabled for this build (set NEXT_PUBLIC_ENABLE_E2E_SIGNIN=true on test deployments only).",
+  );
 
   useEffect(() => {
-    if (!ENABLED) {
-      setMessage("E2E sign-in is disabled for this build (set NEXT_PUBLIC_ENABLE_E2E_SIGNIN=true on test deployments only).");
-      return;
-    }
+    if (!ENABLED) return;
     const token = typeof window !== "undefined" ? window.__E2E_CUSTOM_TOKEN__ : undefined;
     if (!token) {
-      setMessage("Missing E2E token. Run Playwright global setup.");
+      queueMicrotask(() => setMessage("Missing E2E token. Run Playwright global setup."));
       return;
     }
     let cancelled = false;

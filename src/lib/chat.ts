@@ -167,7 +167,8 @@ export async function maybeSetOfflinePingForPartner(chatId: string, senderUid: s
 
   const otherLastKey = isCreator ? "developerLastSeenAt" : "creatorLastSeenAt";
   const pingKey      = isCreator ? "offlinePingForDeveloper" : "offlinePingForCreator";
-  const otherName    = isCreator ? (room.developerName || "Developer") : (room.creatorName || "Project creator");
+  /** Name + role of the *sender* (the party trying to reach the offline recipient). */
+  const otherName    = isCreator ? (room.creatorName || "Project creator") : (room.developerName || "Developer");
   const roleLabel    = isCreator ? "client" : "developer";
 
   const otherMs = firestoreTimestampMs((room as unknown as Record<string, unknown>)[otherLastKey]);

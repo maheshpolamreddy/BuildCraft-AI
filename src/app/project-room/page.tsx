@@ -543,15 +543,16 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
   const chatPartnerDisplayName = useMemo(() => {
     const req = activeChatHire;
     if (viewerIsDeveloperRole) {
+      /** Prefer `chats/{id}` (live thread) over hire doc so header matches the room used for messages. */
       return (
-        (req?.creatorName || "").trim() ||
         (chatRoom?.creatorName || "").trim() ||
+        (req?.creatorName || "").trim() ||
         "Client"
       );
     }
     return (
-      (req?.developerName || "").trim() ||
       (chatRoom?.developerName || "").trim() ||
+      (req?.developerName || "").trim() ||
       "Developer"
     );
   }, [viewerIsDeveloperRole, activeChatHire, chatRoom?.creatorName, chatRoom?.developerName]);
@@ -1007,9 +1008,11 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
     };
   }, [activeChatId, currentUser?.uid]);
 
+  /** `useFirebaseUid` can be briefly empty; fall back so “You” / mine vs theirs stays correct. */
+  const effectiveChatViewerUid = (chatViewerUid || currentUser?.uid || "").trim();
   const chatBubbleRows = useMemo(
-    () => fireMsgs.map(msg => ({ msg, ...classifyChatBubble(msg, chatViewerUid, chatRoom) })),
-    [fireMsgs, chatViewerUid, chatRoom],
+    () => fireMsgs.map(msg => ({ msg, ...classifyChatBubble(msg, effectiveChatViewerUid, chatRoom) })),
+    [fireMsgs, effectiveChatViewerUid, chatRoom],
   );
 
   // ── Chat tab: load hire requests, restore thread from ?chat= or sessionStorage ─
@@ -2706,15 +2709,15 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
                   </div>
                 )}
 
-                {activeChatId && chatRoom && chatViewerUid && (() => {
+                {activeChatId && chatRoom && effectiveChatViewerUid && (() => {
                   const ping =
-                    chatRoom.creatorUid === chatViewerUid
+                    chatRoom.creatorUid === effectiveChatViewerUid
                       ? chatRoom.offlinePingForCreator
-                      : chatRoom.developerUid === chatViewerUid
+                      : chatRoom.developerUid === effectiveChatViewerUid
                         ? chatRoom.offlinePingForDeveloper
                         : null;
                   if (!ping) return null;
-                  const which = chatRoom.creatorUid === chatViewerUid ? "creator" as const : "developer" as const;
+                  const which = chatRoom.creatorUid === effectiveChatViewerUid ? "creator" as const : "developer" as const;
                   return (
                     <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                       <p className="text-sm text-amber-100/90 font-light">{ping}</p>
