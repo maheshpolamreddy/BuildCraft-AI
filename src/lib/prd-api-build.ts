@@ -1,11 +1,34 @@
 import { getNimClient } from "@/lib/nim-client";
 import { orchestrateChatCompletion } from "@/lib/ai-orchestrator";
-import { savePRD, type PRDMilestone } from "@/lib/prd";
-import { setPrdOnRequest } from "@/lib/hireRequests";
+import { type PRDDocument, type PRDMilestone } from "@/lib/prd";
+import { FieldValue } from "firebase-admin/firestore";
+import { getAdminDbSafe, SERVER_CONFIG_USER_FACING_ERROR } from "@/lib/firebase-admin";
 import { setAiGenerationFirestore, setRedisAiCache } from "@/lib/ai-generation-cache";
 import { MAX_TOKENS_STRUCTURED_JSON_RETRY, MAX_TOKENS_STRUCTURED_JSON_ROUTE } from "@/lib/ai-limits";
 import { tryParseJsonObject } from "@/lib/ai-json-helpers";
 import { shouldSkipLlmCalls } from "@/lib/ai-global-mode";
+
+async function savePrdWithAdminServer(
+  data: Omit<PRDDocument, "id" | "createdAt" | "updatedAt">,
+): Promise<string> {
+  const db = getAdminDbSafe();
+  if (!db) throw new Error(SERVER_CONFIG_USER_FACING_ERROR);
+  const ref = db.collection("prds").doc();
+  const id = ref.id;
+  await ref.set({
+    ...data,
+    id,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+  return id;
+}
+
+async function setPrdIdOnHireRequestAdmin(hireToken: string, prdId: string): Promise<void> {
+  const db = getAdminDbSafe();
+  if (!db) throw new Error(SERVER_CONFIG_USER_FACING_ERROR);
+  await db.collection("hireRequests").doc(hireToken.trim()).update({ prdId });
+}
 
 export type PrdApiResponse = {
   success: true;
@@ -106,8 +129,7 @@ export async function runFullPrdBuild(a: PrdBuildArgs): Promise<PrdApiResponse> 
   const milestones = Array.isArray(prdData.milestones) ? prdData.milestones : [];
   const risks = Array.isArray(prdData.risks) ? (prdData.risks as unknown[]).map((x) => String(x)) : [];
 
-  const prdId = await savePRD({
-    id: "",
+  const prdId = await savePrdWithAdminServer({
     version: "v1.0",
     projectName: String(projectName ?? ""),
     creatorUid: String(creatorUid ?? ""),
@@ -123,7 +145,7 @@ export async function runFullPrdBuild(a: PrdBuildArgs): Promise<PrdApiResponse> 
   });
 
   if (hireToken.trim()) {
-    await setPrdOnRequest(hireToken, prdId);
+    await setPrdIdOnHireRequestAdmin(hireToken, prdId);
   }
 
   const responseBody: PrdApiResponse = {

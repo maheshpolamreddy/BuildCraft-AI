@@ -958,15 +958,47 @@ export function ProjectRoomContent({ initialProjectId = null, isDeveloperWorkspa
           ...(workspaceProjectId ? { savedProjectId: workspaceProjectId } : {}),
         }),
       });
-      const { ok, data } = await parseJsonResponse(res);
+      const { ok, data, status } = await parseJsonResponse(res);
       if (!ok) {
-        setPrdRetryMessage(String((data as { error?: string })?.error || "Could not generate PRD"));
+        const d = data as { error?: string; code?: string; message?: string };
+        const line =
+          d.error ||
+          d.message ||
+          (d.code === "body_required" || d.code === "invalid_json"
+            ? "Request could not be read. Refresh the page and try again."
+            : null) ||
+          (status >= 500 ? "Server error while generating the PRD. Try again in a moment." : null) ||
+          `Could not generate PRD (${status}).`;
+        setPrdRetryMessage(line);
         return;
       }
-      const prdId = (data as { prdId?: string })?.prdId;
+      const envelope = data as { prdId?: string; jobId?: string; status?: string; success?: boolean };
+      let prdId = envelope.prdId;
+      if (!prdId && envelope.jobId) {
+        const jobId = envelope.jobId;
+        for (let i = 0; i < 90; i++) {
+          await new Promise((r) => setTimeout(r, 1_000));
+          const poll = await fetch(`/api/ai-deferred/${encodeURIComponent(jobId)}`);
+          const p = await parseJsonResponse(poll);
+          if (!p.ok) break;
+          const row = p.data as { status?: string; result?: { prdId?: string } };
+          if (row.status === "complete" && row.result && typeof row.result === "object" && "prdId" in row.result) {
+            prdId = (row.result as { prdId: string }).prdId;
+            break;
+          }
+          if (row.status === "unknown") break;
+        }
+        if (!prdId) {
+          setPrdRetryMessage("PRD is still generating. Wait a few seconds and refresh, or try again.");
+          return;
+        }
+      }
       if (prdId) {
         const one = await getPRD(String(prdId));
         if (one) setPrds([one]);
+        else setPrdRetryMessage("PRD was created but could not be loaded. Refresh the page.");
+      } else {
+        setPrdRetryMessage("No PRD id returned. Refresh the page or try again.");
       }
     } catch (e) {
       setPrdRetryMessage(e instanceof Error ? e.message : "Request failed");
